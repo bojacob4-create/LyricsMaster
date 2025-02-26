@@ -42,7 +42,7 @@ def index():
 
 def run_flask():
     """Run Flask app"""
-    flask_app.run(host='0.0.0.0', port=5000)
+    flask_app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
 
 def error_handler(update, context):
     """Log Errors caused by Updates."""

@@ -554,6 +554,7 @@ dependencies = [
     { name = "requests" },
     { name = "schedule" },
     { name = "spotipy" },
+    { name = "sqlalchemy" },
     { name = "telegram" },
 ]
 
@@ -572,6 +573,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.32.3" },
     { name = "schedule", specifier = ">=1.2.2" },
     { name = "spotipy", specifier = ">=2.25.0" },
+    { name = "sqlalchemy", specifier = ">=2.0.38" },
     { name = "telegram", specifier = ">=0.0.1" },
 ]
 
