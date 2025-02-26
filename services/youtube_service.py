@@ -7,7 +7,7 @@ from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
-@lru_cache(maxsize=100, timeout=3600)  # Cache for 1 hour
+@lru_cache(maxsize=100)
 def get_youtube_link(artist: str, song: str) -> Optional[str]:
     """
     Get YouTube video link for a song with caching.

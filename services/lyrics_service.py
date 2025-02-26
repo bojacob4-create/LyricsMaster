@@ -4,9 +4,11 @@ import time
 import requests
 from typing import Optional
 from urllib.parse import quote
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
+@lru_cache(maxsize=100)
 def get_song_lyrics(artist: str, song: str) -> Optional[str]:
     """
     Get lyrics for a specific song by artist using lyrics.ovh API.
@@ -20,46 +22,64 @@ def get_song_lyrics(artist: str, song: str) -> Optional[str]:
     """
     try:
         # Clean up search terms
-        artist = artist.strip()
-        song = song.strip()
+        artist = artist.strip().replace("'", "'")  # Handle special apostrophes
+        song = song.strip().replace("'", "'")
 
         logger.info(f"Searching for lyrics: {artist} - {song}")
 
-        # URL encode the artist and song names
-        artist_encoded = quote(artist)
-        song_encoded = quote(song)
+        # URL encode the artist and song names properly
+        artist_encoded = quote(artist, safe='')
+        song_encoded = quote(song, safe='')
 
         # Lyrics.ovh API endpoint
         url = f"https://api.lyrics.ovh/v1/{artist_encoded}/{song_encoded}"
 
+        # Configure session with retries
+        session = requests.Session()
+        retries = requests.packages.urllib3.util.retry.Retry(
+            total=3,
+            backoff_factor=0.3,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        session.mount('https://', requests.adapters.HTTPAdapter(max_retries=retries))
+
         # Try up to 3 times
-        retries = 3
-        for attempt in range(retries):
+        for attempt in range(3):
             try:
-                response = requests.get(url, timeout=10)
+                response = session.get(url, timeout=10)
 
                 if response.status_code == 200:
-                    lyrics = response.json().get('lyrics')
+                    data = response.json()
+                    lyrics = data.get('lyrics')
                     if lyrics:
-                        logger.info("Successfully found lyrics")
+                        # Clean up lyrics formatting
+                        lyrics = lyrics.replace('\r', '')
+                        lyrics = '\n'.join(line.strip() for line in lyrics.split('\n'))
                         return lyrics
                     logger.warning("Empty lyrics returned from API")
-                    return None
 
                 elif response.status_code == 404:
+                    # Try with slightly modified search terms
+                    if attempt == 0:
+                        # Try without special characters
+                        artist_clean = ''.join(c for c in artist if c.isalnum() or c.isspace())
+                        song_clean = ''.join(c for c in song if c.isalnum() or c.isspace())
+                        if artist_clean != artist or song_clean != song:
+                            artist, song = artist_clean, song_clean
+                            continue
                     logger.info(f"No lyrics found for: {artist} - {song}")
                     return None
 
                 else:
                     logger.warning(f"API request failed with status {response.status_code}")
-                    if attempt < retries - 1:
+                    if attempt < 2:
                         time.sleep(1)  # Wait before retry
                         continue
                     return None
 
             except requests.exceptions.RequestException as e:
                 logger.error(f"Request error on attempt {attempt + 1}: {str(e)}")
-                if attempt < retries - 1:
+                if attempt < 2:
                     time.sleep(1)  # Wait before retry
                     continue
                 return None

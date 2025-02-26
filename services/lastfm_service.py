@@ -52,7 +52,7 @@ def get_lastfm_network() -> Optional[pylast.LastFMNetwork]:
         logger.error(f"Error initializing Last.fm network: {str(e)}")
         return None
 
-@lru_cache(maxsize=50, timeout=300)  # Cache results for 5 minutes
+@lru_cache(maxsize=50)
 def get_top_tracks(limit: int = 10) -> List[Dict]:
     """Get top tracks from Last.fm metro area with caching."""
     try:

@@ -19,7 +19,7 @@ retries = Retry(
 )
 session.mount('https://', HTTPAdapter(max_retries=retries, pool_connections=10, pool_maxsize=10))
 
-@lru_cache(maxsize=100, timeout=3600)  # Cache token for 1 hour
+@lru_cache(maxsize=100)
 def get_spotify_token() -> Optional[str]:
     """Get Spotify access token with caching."""
     try:
@@ -60,7 +60,7 @@ def get_spotify_token() -> Optional[str]:
         logger.error(f"Error getting token: {str(e)}")
         return None
 
-@lru_cache(maxsize=50, timeout=300)  # Cache results for 5 minutes
+@lru_cache(maxsize=50)
 def get_top_tracks(limit: int = 10) -> List[Dict]:
     """Get currently trending tracks from Spotify Charts with caching."""
     try:
