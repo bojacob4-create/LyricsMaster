@@ -25,20 +25,20 @@ def format_lyrics(lyrics: str) -> str:
 def format_top_tracks(tracks: List[Dict]) -> str:
     """
     Format top tracks for Telegram message.
-    
+
     Args:
         tracks (List[Dict]): List of track information
-    
+
     Returns:
         str: Formatted track list
     """
     if not tracks:
         return "No tracks available."
-    
-    header = "🎵 Spotify Global Top 10:\n\n"
+
+    header = "🎵 Last.fm Global Top 10:\n\n"
     formatted_tracks = [
         f"{i+1}. {track['artist']} - {track['name']}"
         for i, track in enumerate(tracks)
     ]
-    
+
     return header + '\n'.join(formatted_tracks)
