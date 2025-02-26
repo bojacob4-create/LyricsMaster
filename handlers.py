@@ -25,6 +25,7 @@ from utils import (
     format_detailed_analysis
 )
 from services.youtube_service import get_youtube_link, format_youtube_response
+from app import app #Import added here
 from services.favorites_service import add_favorite, remove_favorite, get_favorites, format_favorites_list
 
 logger = logging.getLogger(__name__)
@@ -648,17 +649,18 @@ def favorite_command(update: Update, context: CallbackContext):
         artist, song = query.split("-", 1)
         logger.info(f"User {user_id} adding favorite: '{artist.strip()} - {song.strip()}'")
 
-        # Add to favorites
-        if add_favorite(user_id, artist.strip(), song.strip()):
-            update.message.reply_text(
-                f"⭐ Added to favorites: {artist.strip()} - {song.strip()}\n\n"
-                "Use /favorites to see your list!"
-            )
-        else:
-            update.message.reply_text(
-                "This song is already in your favorites! 😊\n"
-                "Use /favorites to see your list."
-            )
+        # Add to favorites with proper app context
+        with app.app_context():
+            if add_favorite(user_id, artist.strip(), song.strip()):
+                update.message.reply_text(
+                    f"⭐ Added to favorites: {artist.strip()} - {song.strip()}\n\n"
+                    "Use /favorites to see your list!"
+                )
+            else:
+                update.message.reply_text(
+                    "This song is already in your favorites! 😊\n"
+                    "Use /favorites to see your list."
+                )
 
     except Exception as e:
         logger.error(f"Error in favorite command for user {user_id}: {str(e)}")
@@ -685,17 +687,18 @@ def unfavorite_command(update: Update, context: CallbackContext):
         artist, song = query.split("-", 1)
         logger.info(f"User {user_id} removing favorite: '{artist.strip()} - {song.strip()}'")
 
-        # Remove from favorites
-        if remove_favorite(user_id, artist.strip(), song.strip()):
-            update.message.reply_text(
-                f"✨ Removed from favorites: {artist.strip()} - {song.strip()}\n\n"
-                "Use /favorites to see your updated list!"
-            )
-        else:
-            update.message.reply_text(
-                "This song wasn't in your favorites! 🤔\n"
-                "Use /favorites to see your list."
-            )
+        # Remove from favorites with proper app context
+        with app.app_context():
+            if remove_favorite(user_id, artist.strip(), song.strip()):
+                update.message.reply_text(
+                    f"✨ Removed from favorites: {artist.strip()} - {song.strip()}\n\n"
+                    "Use /favorites to see your updated list!"
+                )
+            else:
+                update.message.reply_text(
+                    "This song wasn't in your favorites! 🤔\n"
+                    "Use /favorites to see your list."
+                )
 
     except Exception as e:
         logger.error(f"Error in unfavorite command for user {user_id}: {str(e)}")
@@ -710,9 +713,10 @@ def favorites_command(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     try:
         logger.info(f"User {user_id} requesting favorites list")
-        favorites = get_favorites(user_id)
-        response = format_favorites_list(favorites)
-        update.message.reply_text(response)
+        with app.app_context():
+            favorites = get_favorites(user_id)
+            response = format_favorites_list(favorites)
+            update.message.reply_text(response)
 
     except Exception as e:
         logger.error(f"Error in favorites command for user {user_id}: {str(e)}")
@@ -755,7 +759,7 @@ def main():
     dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
     dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
 
-    # Add# Add message handler for quiz answers
+    # Add message handler for quiz answers
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
 
     # Set command list
