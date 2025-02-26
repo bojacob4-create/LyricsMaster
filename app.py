@@ -3,32 +3,30 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import DeclarativeBase
 
-# Debug logging for database configuration
 print("Starting database configuration...")
-database_url = os.environ.get("DATABASE_URL")
-print(f"Initial DATABASE_URL status: {'Present' if database_url else 'Missing'}")
 
-if not database_url:
-    # Check for alternative PostgreSQL environment variables
-    pg_vars = {
-        'PGUSER': os.environ.get('PGUSER'),
-        'PGPASSWORD': os.environ.get('PGPASSWORD'),
-        'PGHOST': os.environ.get('PGHOST'),
-        'PGPORT': os.environ.get('PGPORT'),
-        'PGDATABASE': os.environ.get('PGDATABASE')
-    }
+# First try to use individual PostgreSQL variables
+pg_vars = {
+    'PGUSER': os.environ.get('PGUSER'),
+    'PGPASSWORD': os.environ.get('PGPASSWORD'),
+    'PGHOST': os.environ.get('PGHOST'),
+    'PGPORT': os.environ.get('PGPORT'),
+    'PGDATABASE': os.environ.get('PGDATABASE')
+}
 
-    if all(pg_vars.values()):
-        database_url = f"postgresql://{pg_vars['PGUSER']}:{pg_vars['PGPASSWORD']}@{pg_vars['PGHOST']}:{pg_vars['PGPORT']}/{pg_vars['PGDATABASE']}"
-        print("Using constructed PostgreSQL URL from environment variables")
-    else:
-        missing_params = [k for k, v in pg_vars.items() if not v]
-        error_msg = ("Database configuration is missing. Ensure DATABASE_URL or PostgreSQL variables are set.\n"
-                    f"Missing variables: {', '.join(missing_params)}" if missing_params else "DATABASE_URL not set")
-        print(error_msg)
-        raise RuntimeError(error_msg)
+print("Checking PostgreSQL environment variables...")
+for key, value in pg_vars.items():
+    print(f"{key} status: {'Present' if value else 'Missing'}")
 
-print(f"Database configuration status: {'Using DATABASE_URL' if os.environ.get('DATABASE_URL') else 'Using individual PostgreSQL variables'}")
+if not all(pg_vars.values()):
+    missing_params = [k for k, v in pg_vars.items() if not v]
+    error_msg = f"Missing required PostgreSQL variables: {', '.join(missing_params)}"
+    print(error_msg)
+    raise RuntimeError(error_msg)
+
+# Construct database URL from individual variables
+database_url = f"postgresql://{pg_vars['PGUSER']}:{pg_vars['PGPASSWORD']}@{pg_vars['PGHOST']}:{pg_vars['PGPORT']}/{pg_vars['PGDATABASE']}"
+print("Successfully constructed database URL from environment variables")
 
 class Base(DeclarativeBase):
     pass
