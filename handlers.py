@@ -5,7 +5,10 @@ from telegram.ext import CallbackContext, CommandHandler, Updater, MessageHandle
 from services.lyrics_service import get_song_lyrics
 from services.translator_service import translate_to_arabic
 from services.recommendation_service import get_similar_songs, format_recommendations
-from services.quiz_service import start_quiz, check_answer, get_quiz_stats, end_quiz
+from services.quiz_service import (
+    start_quiz, check_answer, get_quiz_stats, end_quiz,
+    format_multiple_choice_options, active_quizzes  # Import active_quizzes from quiz_service
+)
 from services.daily_song_service import (
     subscribe_user,
     unsubscribe_user,
@@ -22,13 +25,10 @@ from utils import (
     format_detailed_analysis
 )
 from services.youtube_service import get_youtube_link, format_youtube_response
-from services.favorites_service import add_favorite, remove_favorite, get_favorites, format_favorites_list # Added import for favorites
-
+from services.favorites_service import add_favorite, remove_favorite, get_favorites, format_favorites_list
 
 logger = logging.getLogger(__name__)
 
-# Store active quiz sessions globally
-active_quizzes = {}
 
 def start_command(update: Update, context: CallbackContext):
     """Send a message when the command /start is issued."""
@@ -53,6 +53,7 @@ def start_command(update: Update, context: CallbackContext):
         "/lyrics Ed Sheeran - Perfect"
     )
     update.message.reply_text(welcome_message)
+
 
 def help_command(update: Update, context: CallbackContext):
     """Send a message when the command /help is issued."""
@@ -89,6 +90,7 @@ def help_command(update: Update, context: CallbackContext):
         "Ready to explore some music? Try one of the commands above! 🚀"
     )
     update.message.reply_text(help_text)
+
 
 def quiz_command(update: Update, context: CallbackContext):
     """Handle the /quiz command to start a lyrics quiz."""
@@ -128,12 +130,16 @@ def quiz_command(update: Update, context: CallbackContext):
             "Please try again in a moment! 🔄"
         )
 
+
 def quiz_answer(update: Update, context: CallbackContext):
     """Handle quiz answers in regular messages."""
     user_id = update.effective_user.id
     try:
         answer = update.message.text.strip().upper()
         logger.debug(f"Quiz answer received from user {user_id}: {answer}")
+
+        # Immediate confirmation of receiving answer
+        update.message.reply_text(f"📝 Received your answer: {answer}")
 
         if not answer or len(answer) != 1 or answer not in 'ABCD':
             logger.debug(f"Invalid quiz answer format: {answer}")
@@ -143,10 +149,8 @@ def quiz_answer(update: Update, context: CallbackContext):
         quiz_data = active_quizzes.get(user_id)
         if not quiz_data or quiz_data["state"] != "active":
             logger.debug(f"No active quiz found for user {user_id}")
+            update.message.reply_text("No active quiz found! Start a new quiz with /quiz")
             return
-
-        # Send confirmation that we received the answer
-        update.message.reply_text(f"Processing your answer: {answer}...")
 
         # Get the selected option
         options = quiz_data["current_question"]["options"]
@@ -197,6 +201,7 @@ def quiz_answer(update: Update, context: CallbackContext):
             "Try /quiz to start a new game! 🔄"
         )
 
+
 def end_quiz_command(update: Update, context: CallbackContext):
     """Handle the /endquiz command."""
     user_id = update.effective_user.id
@@ -211,6 +216,7 @@ def end_quiz_command(update: Update, context: CallbackContext):
             "😓 Oops! Something went wrong ending the quiz.\n"
             "Try /quiz to start a new game! 🔄"
         )
+
 
 def lyrics_command(update: Update, context: CallbackContext):
     """Handle the /lyrics command."""
@@ -294,6 +300,7 @@ def lyrics_command(update: Update, context: CallbackContext):
             "Please try again in a moment! 🔄"
         )
 
+
 def stats_command(update: Update, context: CallbackContext):
     """Handle the /stats command."""
     user_id = update.effective_user.id
@@ -344,6 +351,7 @@ def stats_command(update: Update, context: CallbackContext):
             "Please try again in a moment! 🔄"
         )
 
+
 def recommend_command(update: Update, context: CallbackContext):
     """Handle the /recommend command."""
     user_id = update.effective_user.id
@@ -388,6 +396,7 @@ def recommend_command(update: Update, context: CallbackContext):
             "😓 Oops! Something went wrong while getting recommendations.\n"
             "Please try again in a moment! 🔄"
         )
+
 
 def translate_lyrics_command(update: Update, context: CallbackContext):
     """Handle the /translate command."""
@@ -441,6 +450,7 @@ def translate_lyrics_command(update: Update, context: CallbackContext):
             "Let's try that again in a moment! 🔄"
         )
 
+
 def send_daily_song(context: CallbackContext):
     """Send daily song to all subscribed users."""
     try:
@@ -468,6 +478,7 @@ def send_daily_song(context: CallbackContext):
 
     except Exception as e:
         logger.error(f"Error in daily song distribution: {str(e)}")
+
 
 def subscribe_daily_command(update: Update, context: CallbackContext):
     """Handle the /subscribe command."""
@@ -499,6 +510,7 @@ def subscribe_daily_command(update: Update, context: CallbackContext):
             "Please try again later! 🔄"
         )
 
+
 def unsubscribe_daily_command(update: Update, context: CallbackContext):
     """Handle the /unsubscribe command."""
     user_id = update.effective_user.id
@@ -523,6 +535,7 @@ def unsubscribe_daily_command(update: Update, context: CallbackContext):
             "😓 Something went wrong with the unsubscription.\n"
             "Please try again later! 🔄"
         )
+
 
 def youtube_command(update: Update, context: CallbackContext):
     """Handle the /youtube command."""
@@ -559,6 +572,7 @@ def youtube_command(update: Update, context: CallbackContext):
             "😓 Oops! Something went wrong while getting the YouTube link.\n"
             "Please try again in a moment! 🔄"
         )
+
 
 def analyze_command(update: Update, context: CallbackContext):
     """Handle the /analyze command for detailed song analysis."""
@@ -615,6 +629,10 @@ def favorite_command(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     try:
         logger.debug(f"Favorite command received from user {user_id}")
+
+        # Send immediate confirmation that command was received
+        update.message.reply_text("⭐ Processing your favorite request...")
+
         query = " ".join(context.args)
         logger.debug(f"Favorite command args: {query}")
 
@@ -629,9 +647,6 @@ def favorite_command(update: Update, context: CallbackContext):
 
         artist, song = query.split("-", 1)
         logger.info(f"User {user_id} adding favorite: '{artist.strip()} - {song.strip()}'")
-
-        # Send confirmation that we're processing
-        update.message.reply_text("Processing your request...")
 
         # Add to favorites
         if add_favorite(user_id, artist.strip(), song.strip()):
@@ -651,6 +666,7 @@ def favorite_command(update: Update, context: CallbackContext):
             "😓 Something went wrong while adding to favorites.\n"
             "Please try again later! 🔄"
         )
+
 
 def unfavorite_command(update: Update, context: CallbackContext):
     """Handle the /unfavorite command."""
@@ -688,6 +704,7 @@ def unfavorite_command(update: Update, context: CallbackContext):
             "Please try again later! 🔄"
         )
 
+
 def favorites_command(update: Update, context: CallbackContext):
     """Handle the /favorites command."""
     user_id = update.effective_user.id
@@ -704,12 +721,14 @@ def favorites_command(update: Update, context: CallbackContext):
             "Please try again later! 🔄"
         )
 
+
 def format_multiple_choice_options(options):
     """Helper function to format multiple choice options neatly."""
     option_strings = []
     for i, option in enumerate(options):
         option_strings.append(f"{chr(65 + i)}. {option['artist']} - {option['song']}")
     return "\n".join(option_strings)
+
 
 def main():
     """Initialize bot handlers and start the bot."""
@@ -736,7 +755,7 @@ def main():
     dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
     dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
 
-    # Add message handler for quiz answers
+    # Add# Add message handler for quiz answers
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
 
     # Set command list
@@ -762,6 +781,7 @@ def main():
     # Start the bot
     updater.start_polling()
     updater.idle()
+
 
 if __name__ == "__main__":
     main()

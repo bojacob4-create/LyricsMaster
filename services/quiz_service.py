@@ -38,6 +38,13 @@ def generate_multiple_choice_options(correct_song: Dict, all_songs: List[Dict]) 
     random.shuffle(options)
     return options
 
+def format_multiple_choice_options(options: List[Dict]) -> str:
+    """Format multiple choice options for display."""
+    formatted = []
+    for i, option in enumerate(['A', 'B', 'C', 'D'][:len(options)]):
+        formatted.append(f"{option}) {options[i]['artist']} - {options[i]['song']}")
+    return '\n'.join(formatted)
+
 def get_quiz_question(exclude_songs: List[Dict] = None, last_artist: str = None) -> Optional[Dict]:
     """Get a random quiz question, excluding used songs and avoiding same artist."""
     try:
@@ -72,8 +79,7 @@ def get_quiz_question(exclude_songs: List[Dict] = None, last_artist: str = None)
                 "artist": song_choice["artist"],
                 "song": song_choice["song"],
                 "snippet": snippet,
-                "options": options,
-                "start_time": None  # Will be set when quiz starts
+                "options": options
             }
 
         return None
@@ -105,8 +111,7 @@ def start_quiz(user_id: int, mode: str = "multiple_choice") -> Optional[Dict]:
                 "artist": question["artist"],
                 "song": question["song"]
             }],
-            "last_artist": question["artist"],
-            "time_bonus": 0  # For time-based scoring
+            "last_artist": question["artist"]
         }
 
         active_quizzes[user_id] = quiz_data
@@ -160,13 +165,6 @@ def check_answer(user_id: int, answer: str) -> Tuple[bool, str]:
     except Exception as e:
         logger.error(f"Error checking answer: {str(e)}")
         return False, "Sorry, something went wrong! Try /quiz to start a new game"
-
-def format_multiple_choice_options(options: List[Dict]) -> str:
-    """Format multiple choice options for display."""
-    formatted = []
-    for i, option in enumerate(['A', 'B', 'C', 'D'][:len(options)]):
-        formatted.append(f"{option}) {options[i]['artist']} - {options[i]['song']}")
-    return '\n'.join(formatted)
 
 def get_quiz_stats(user_id: int) -> str:
     """Get the user's current quiz statistics."""
