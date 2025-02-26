@@ -2,6 +2,7 @@ from googletrans import Translator
 from typing import Optional
 import logging
 import time
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,24 @@ def get_translator():
 # Initialize translator
 translator = get_translator()
 
+@lru_cache(maxsize=100)
+def translate_chunk(text: str, dest_lang: str = 'ar') -> Optional[str]:
+    """Translate a single chunk of text with caching."""
+    try:
+        if not translator:
+            logger.error("Translator not initialized")
+            return None
+
+        if not text:
+            return None
+
+        translation = translator.translate(text, dest=dest_lang)
+        return translation.text if translation else None
+
+    except Exception as e:
+        logger.error(f"Error translating chunk: {e}")
+        return None
+
 def translate_to_arabic(text: str) -> Optional[str]:
     """
     Translate text to Arabic.
@@ -45,29 +64,23 @@ def translate_to_arabic(text: str) -> Optional[str]:
             logger.warning("Empty text provided for translation")
             return None
 
-        logger.info("Starting translation...")
-
         # Split text into smaller chunks to avoid length limitations
+        # and to leverage caching effectively
         chunks = [text[i:i+1000] for i in range(0, len(text), 1000)]
         translated_chunks = []
 
         for chunk in chunks:
-            try:
-                translation = translator.translate(chunk, dest='ar')
-                if translation and translation.text:
-                    translated_chunks.append(translation.text)
-                else:
-                    logger.warning("Received empty translation for chunk")
-            except Exception as chunk_error:
-                logger.error(f"Error translating chunk: {chunk_error}")
-                continue
+            translated_chunk = translate_chunk(chunk)
+            if translated_chunk:
+                translated_chunks.append(translated_chunk)
+            else:
+                logger.warning("Received empty translation for chunk")
 
         if not translated_chunks:
             logger.error("No chunks were successfully translated")
             return None
 
         result = '\n'.join(translated_chunks)
-        logger.info("Translation completed successfully")
         return result
 
     except Exception as e:

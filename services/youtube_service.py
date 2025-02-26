@@ -3,17 +3,19 @@ import logging
 import requests
 from typing import Optional
 from urllib.parse import quote
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
+@lru_cache(maxsize=100, timeout=3600)  # Cache for 1 hour
 def get_youtube_link(artist: str, song: str) -> Optional[str]:
     """
-    Get YouTube video link for a song.
-    
+    Get YouTube video link for a song with caching.
+
     Args:
         artist (str): Artist name
         song (str): Song name
-        
+
     Returns:
         Optional[str]: YouTube video URL or None if not found
     """
@@ -21,11 +23,9 @@ def get_youtube_link(artist: str, song: str) -> Optional[str]:
         # Format search query
         query = f"{artist} {song} official music video"
         encoded_query = quote(query)
-        
-        # Search YouTube
+
+        # Return YouTube search URL
         search_url = f"https://www.youtube.com/results?search_query={encoded_query}"
-        
-        # Return the search URL since we can't directly get video ID without API
         return search_url
 
     except Exception as e:
