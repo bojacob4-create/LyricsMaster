@@ -78,6 +78,9 @@ def top_tracks_command(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     try:
         logger.info(f"User {user_id} requested top tracks")
+
+        update.message.reply_text("🎵 Fetching top tracks, please wait...")
+
         tracks = get_top_tracks()
         if not tracks:
             logger.warning("Failed to fetch top tracks")
@@ -113,6 +116,8 @@ def translate_lyrics_command(update: Update, context: CallbackContext):
 
         artist, song = query.split("-", 1)
         logger.info(f"User {user_id} requested translation for '{artist.strip()} - {song.strip()}'")
+
+        update.message.reply_text("🔄 Fetching and translating lyrics, please wait...")
 
         lyrics = get_song_lyrics(artist.strip(), song.strip())
         if not lyrics:

@@ -12,9 +12,11 @@ def get_translator():
         try:
             translator = Translator()
             # Test the translator
-            translator.translate('test', dest='ar')
-            logger.info("Translator initialized successfully")
-            return translator
+            test_result = translator.translate('test', dest='ar')
+            if test_result and test_result.text:
+                logger.info("Translator initialized successfully")
+                return translator
+            logger.warning("Translator returned empty result during test")
         except Exception as e:
             logger.error(f"Attempt {i+1}/{retries} failed to initialize translator: {e}")
             if i < retries - 1:
@@ -54,6 +56,8 @@ def translate_to_arabic(text: str) -> Optional[str]:
                 translation = translator.translate(chunk, dest='ar')
                 if translation and translation.text:
                     translated_chunks.append(translation.text)
+                else:
+                    logger.warning("Received empty translation for chunk")
             except Exception as chunk_error:
                 logger.error(f"Error translating chunk: {chunk_error}")
                 continue
