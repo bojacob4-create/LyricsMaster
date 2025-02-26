@@ -2,7 +2,7 @@ import logging
 from telegram import Update
 from telegram.ext import CallbackContext
 from services.lyrics_service import get_song_lyrics
-from services.spotify_service import get_top_tracks
+from services.lastfm_service import get_top_tracks # Assumed this service now exists
 from services.translator_service import translate_to_arabic
 from utils import format_lyrics, format_top_tracks
 
@@ -15,7 +15,7 @@ def start_command(update: Update, context: CallbackContext):
         "👋 Welcome to MGLyricsBot!\n\n"
         "Available commands:\n"
         "/lyrics <artist> - <song> - Get song lyrics\n"
-        "/toptracks - Get Spotify top 10 tracks\n"
+        "/toptracks - Get Last.fm top tracks\n" # Updated to reflect Last.fm
         "/translate <artist> - <song> - Get Arabic translation of lyrics\n"
         "/help - Show this help message"
     )
@@ -30,7 +30,7 @@ def help_command(update: Update, context: CallbackContext):
         "1. Get lyrics: /lyrics artist - song\n"
         "   Example: /lyrics Ed Sheeran - Shape of You\n\n"
         "2. Top tracks: /toptracks\n"
-        "   Shows current Spotify top 10 tracks\n\n"
+        "   Shows current Last.fm top tracks\n\n" # Updated to reflect Last.fm
         "3. Translate lyrics: /translate artist - song\n"
         "   Example: /translate Adele - Hello\n\n"
         "If you encounter any issues, make sure to use the correct format!"
@@ -81,17 +81,17 @@ def top_tracks_command(update: Update, context: CallbackContext):
 
         # Send initial message
         message = update.message.reply_text(
-            "🎵 Searching for some popular tracks...\n"
-            "This should just take a moment."
+            "🎵 Fetching global top tracks...\n"
+            "This will just take a moment."
         )
 
-        # Get tracks
+        # Get tracks from Last.fm
         tracks = get_top_tracks()
 
         if not tracks:
             logger.warning(f"No tracks returned for user {user_id}")
             message.edit_text(
-                "❌ Sorry, I couldn't retrieve any tracks at the moment.\n"
+                "❌ Sorry, we couldn't fetch the tracks right now.\n"
                 "Please try again in a few minutes."
             )
             return
@@ -104,7 +104,7 @@ def top_tracks_command(update: Update, context: CallbackContext):
     except Exception as e:
         logger.error(f"Error in top_tracks_command for user {user_id}: {str(e)}")
         error_message = (
-            "❌ Sorry, we're having trouble connecting to our music service.\n"
+            "❌ Sorry, there was a problem fetching the top tracks.\n"
             "Please try again in a few minutes."
         )
         try:

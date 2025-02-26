@@ -4,6 +4,7 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 from telegram import BotCommand
 
 from handlers import start_command, help_command, lyrics_command, top_tracks_command, translate_lyrics_command
+from services.lastfm_service import get_top_tracks
 
 # Configure logging
 logging.basicConfig(
@@ -57,7 +58,7 @@ def main():
             BotCommand("start", "Start the bot"),
             BotCommand("help", "Show help message"),
             BotCommand("lyrics", "Get song lyrics (format: artist - song)"),
-            BotCommand("toptracks", "Get Spotify top 10 tracks"),
+            BotCommand("toptracks", "Get Last.fm top 10 tracks"), #Updated command description
             BotCommand("translate", "Translate lyrics to Arabic (format: artist - song)")
         ]
         updater.bot.set_my_commands(commands)

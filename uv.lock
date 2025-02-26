@@ -562,6 +562,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pylast"
+version = "5.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bf/f2/84e992deea30c5195f7166387295049bd6b29f23a6a1a03ff8c16f59436f/pylast-5.3.0.tar.gz", hash = "sha256:637943b1b0e6045dd85ed7389db6071a1fea45cc7ff90dc6126fd509ca6fae2f", size = 41552 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9b/57/e25206d012afe3fe5e3336a875babb5413b81c00706411a645a38185ad3b/pylast-5.3.0-py3-none-any.whl", hash = "sha256:4cc47cdcb05baf24a5cea10a012c17df0fe13e22911296a69835b127458a7308", size = 29054 },
+]
+
+[[package]]
 name = "python-telegram-bot"
 version = "12.8"
 source = { registry = "https://pypi.org/simple" }
@@ -601,6 +613,7 @@ dependencies = [
     { name = "gunicorn" },
     { name = "lyricsgenius" },
     { name = "psycopg2-binary" },
+    { name = "pylast" },
     { name = "python-telegram-bot" },
     { name = "requests" },
     { name = "spotipy" },
@@ -617,6 +630,7 @@ requires-dist = [
     { name = "gunicorn", specifier = ">=23.0.0" },
     { name = "lyricsgenius", specifier = ">=3.2.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.10" },
+    { name = "pylast", specifier = ">=5.3.0" },
     { name = "python-telegram-bot", specifier = "==12.8" },
     { name = "requests", specifier = ">=2.32.3" },
     { name = "spotipy", specifier = ">=2.25.0" },
