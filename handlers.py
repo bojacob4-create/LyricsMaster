@@ -3,7 +3,14 @@ from telegram import Update
 from telegram.ext import CallbackContext
 from services.lyrics_service import get_song_lyrics
 from services.translator_service import translate_to_arabic
-from utils import format_lyrics, detect_song_mood # Added detect_song_mood
+from services.recommendation_service import get_similar_songs, format_recommendations
+from services.quiz_service import start_quiz, check_answer, get_quiz_stats, end_quiz
+from utils import (
+    format_lyrics,
+    detect_song_mood,
+    get_song_statistics,
+    format_statistics
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +24,8 @@ def start_command(update: Update, context: CallbackContext):
         "I'm here to help you discover and understand your favorite songs! 🎸\n\n"
         "Here's what I can do for you:\n"
         "🎤 /lyrics artist - song → Get song lyrics with mood analysis\n"
+        "📊 /stats artist - song → Get detailed song statistics\n"
+        "🎵 /recommend artist - song → Get song recommendations\n"
         "🌍 /translate artist - song → Get Arabic translation of lyrics\n"
         "💡 /help → Show more tips and examples\n\n"
         "Try me out! For example, type:\n"
@@ -32,16 +41,67 @@ def help_command(update: Update, context: CallbackContext):
         "1️⃣ To get song lyrics:\n"
         "   /lyrics artist - song\n"
         "   Example: /lyrics Ed Sheeran - Shape of You\n\n"
-        "2️⃣ To get Arabic translation:\n"
+        "2️⃣ To get song statistics:\n"
+        "   /stats artist - song\n"
+        "   Example: /stats Adele - Hello\n\n"
+        "3️⃣ To get song recommendations:\n"
+        "   /recommend artist - song\n"
+        "   Example: /recommend Taylor Swift - Love Story\n\n"
+        "4️⃣ To get Arabic translation:\n"
         "   /translate artist - song\n"
         "   Example: /translate Adele - Hello\n\n"
         "🎯 Pro Tips:\n"
         "• Make sure to use the dash (-) between artist and song\n"
         "• Double-check the spelling of artist and song names\n"
-        "• I'll also tell you the mood of the song! 🎭\n\n"
+        "• I'll analyze the mood and suggest similar songs! 🎭\n\n"
         "Ready to explore some music? Try one of the commands above! 🚀"
     )
     update.message.reply_text(help_text)
+
+def recommend_command(update: Update, context: CallbackContext):
+    """Handle the /recommend command."""
+    user_id = update.effective_user.id
+    try:
+        query = " ".join(context.args)
+        if not query or "-" not in query:
+            logger.info(f"User {user_id} provided invalid recommendation query format")
+            update.message.reply_text(
+                "⚠️ Oops! I need both the artist and song name!\n\n"
+                "Use this format: /recommend artist - song\n"
+                "For example: /recommend Taylor Swift - Love Story\n\n"
+                "Give it another try! 🎵"
+            )
+            return
+
+        artist, song = query.split("-", 1)
+        logger.info(f"User {user_id} requested recommendations for '{artist.strip()} - {song.strip()}'")
+
+        # Send typing action
+        update.message.chat.send_action(action="typing")
+
+        lyrics = get_song_lyrics(artist.strip(), song.strip())
+        if not lyrics:
+            logger.info(f"No lyrics found for '{artist.strip()} - {song.strip()}'")
+            update.message.reply_text(
+                "😕 Sorry, I couldn't find that song.\n\n"
+                "Please check the spelling and try again! 🔍"
+            )
+            return
+
+        # Get song mood and recommendations
+        mood = detect_song_mood(lyrics)
+        recommendations = get_similar_songs(artist.strip(), song.strip(), mood)
+        formatted_recommendations = format_recommendations(recommendations, f"{artist.strip()} - {song.strip()}")
+
+        update.message.reply_text(formatted_recommendations)
+        logger.info(f"Successfully sent recommendations to user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error processing recommend command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Oops! Something went wrong while getting recommendations.\n"
+            "Please try again in a moment! 🔄"
+        )
 
 def lyrics_command(update: Update, context: CallbackContext):
     """Handle the /lyrics command."""
@@ -77,8 +137,10 @@ def lyrics_command(update: Update, context: CallbackContext):
             )
             return
 
-        # Detect song mood
+        # Get mood and statistics
         mood = detect_song_mood(lyrics)
+        stats = get_song_statistics(lyrics)
+
         mood_emoji = {
             'happy': '😊',
             'sad': '😢',
@@ -87,12 +149,15 @@ def lyrics_command(update: Update, context: CallbackContext):
             'relaxed': '😌'
         }.get(mood, '🎵')
 
-        # Format message with mood
+        # Format message with mood and brief stats
         formatted_lyrics = format_lyrics(lyrics)
         response = (
             f"🎵 {artist.strip()} - {song.strip()}\n\n"
-            f"Song mood: {mood_emoji} {mood.title()}\n\n"
-            f"{formatted_lyrics}"
+            f"Song mood: {mood_emoji} {mood.title()}\n"
+            f"Words: {stats['total_words']} | Lines: {stats['total_lines']} | "
+            f"Vocabulary: {stats['vocabulary_richness']}%\n\n"
+            f"{formatted_lyrics}\n\n"
+            "Want more details? Try /stats with this song! 📊"
         )
 
         update.message.reply_text(response)
@@ -102,6 +167,56 @@ def lyrics_command(update: Update, context: CallbackContext):
         logger.error(f"Error processing lyrics command for user {user_id}: {str(e)}")
         update.message.reply_text(
             "😓 Oops! Something went wrong while fetching the lyrics.\n"
+            "Please try again in a moment! 🔄"
+        )
+
+def stats_command(update: Update, context: CallbackContext):
+    """Handle the /stats command."""
+    user_id = update.effective_user.id
+    try:
+        query = " ".join(context.args)
+        if not query or "-" not in query:
+            logger.info(f"User {user_id} provided invalid stats query format")
+            update.message.reply_text(
+                "⚠️ Oops! I need both the artist and song name!\n\n"
+                "Use this format: /stats artist - song\n"
+                "For example: /stats Ed Sheeran - Perfect\n\n"
+                "Give it another try! 📊"
+            )
+            return
+
+        artist, song = query.split("-", 1)
+        logger.info(f"User {user_id} requested stats for '{artist.strip()} - {song.strip()}'")
+
+        # Send typing action
+        update.message.chat.send_action(action="typing")
+
+        lyrics = get_song_lyrics(artist.strip(), song.strip())
+        if not lyrics:
+            logger.info(f"No lyrics found for '{artist.strip()} - {song.strip()}'")
+            update.message.reply_text(
+                "😕 Sorry, I couldn't find that song.\n\n"
+                "Please check the spelling and try again! 🔍"
+            )
+            return
+
+        # Get statistics and format them
+        stats = get_song_statistics(lyrics)
+        formatted_stats = format_statistics(stats)
+
+        response = (
+            f"🎵 {artist.strip()} - {song.strip()}\n\n"
+            f"{formatted_stats}\n\n"
+            "Want to see the lyrics? Try /lyrics with this song! 🎤"
+        )
+
+        update.message.reply_text(response)
+        logger.info(f"Successfully sent stats to user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error processing stats command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Oops! Something went wrong while analyzing the song.\n"
             "Please try again in a moment! 🔄"
         )
 
@@ -199,3 +314,90 @@ def top_tracks_command(update: Update, context: CallbackContext):
         except Exception as msg_error:
             logger.error(f"Error sending error message: {str(msg_error)}")
             update.message.reply_text("❌ An error occurred. Please try again later.")
+
+
+def quiz_command(update: Update, context: CallbackContext):
+    """Handle the /quiz command to start a lyrics quiz."""
+    user_id = update.effective_user.id
+    try:
+        logger.info(f"User {user_id} started a lyrics quiz")
+
+        quiz_data = start_quiz(user_id)
+        if not quiz_data:
+            update.message.reply_text(
+                "😓 Oops! I couldn't start the quiz right now.\n"
+                "Please try again in a moment! 🔄"
+            )
+            return
+
+        snippet = quiz_data["current_question"]["snippet"]
+        response = (
+            "🎵 Welcome to the Lyrics Quiz! 🎮\n\n"
+            "I'll show you some lyrics, and you guess the song!\n"
+            "Format your answer as: artist - song\n\n"
+            "Here's your first lyrics snippet:\n\n"
+            f"```\n{snippet}\n```\n\n"
+            "What song is this? Reply with your guess! 🤔\n"
+            "Use /endquiz to finish the game early."
+        )
+
+        update.message.reply_text(response)
+        logger.info(f"Sent first quiz question to user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error in quiz command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Oops! Something went wrong starting the quiz.\n"
+            "Please try again in a moment! 🔄"
+        )
+
+def quiz_answer(update: Update, context: CallbackContext):
+    """Handle quiz answers in regular messages."""
+    user_id = update.effective_user.id
+    try:
+        answer = update.message.text
+        if not answer or "-" not in answer:
+            return  # Not a quiz answer
+
+        is_correct, feedback = check_answer(user_id, answer)
+        quiz_data = start_quiz(user_id)  # Get next question
+
+        if not quiz_data:
+            update.message.reply_text(f"{feedback}\n\nNo more questions available!")
+            return
+
+        snippet = quiz_data["current_question"]["snippet"]
+        stats = get_quiz_stats(user_id)
+
+        response = (
+            f"{feedback}\n\n"
+            f"{stats}\n\n"
+            "Here's your next lyrics snippet:\n\n"
+            f"```\n{snippet}\n```\n\n"
+            "What song is this? Reply with your guess! 🤔"
+        )
+
+        update.message.reply_text(response)
+        logger.info(f"Processed quiz answer from user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error processing quiz answer for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Oops! Something went wrong processing your answer.\n"
+            "Try /quiz to start a new game! 🔄"
+        )
+
+def end_quiz_command(update: Update, context: CallbackContext):
+    """Handle the /endquiz command."""
+    user_id = update.effective_user.id
+    try:
+        logger.info(f"User {user_id} ended their quiz")
+        result = end_quiz(user_id)
+        update.message.reply_text(result)
+
+    except Exception as e:
+        logger.error(f"Error ending quiz for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Oops! Something went wrong ending the quiz.\n"
+            "Try /quiz to start a new game! 🔄"
+        )

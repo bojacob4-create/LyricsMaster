@@ -3,8 +3,17 @@ import logging
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 from telegram import BotCommand
 
-from handlers import start_command, help_command, lyrics_command, translate_lyrics_command
-from services.lastfm_service import get_top_tracks
+from handlers import (
+    start_command,
+    help_command,
+    lyrics_command,
+    stats_command,
+    recommend_command,
+    translate_lyrics_command,
+    quiz_command,
+    quiz_answer,
+    end_quiz_command
+)
 
 # Configure logging
 logging.basicConfig(
@@ -45,7 +54,15 @@ def main():
         dp.add_handler(CommandHandler("start", start_command))
         dp.add_handler(CommandHandler("help", help_command))
         dp.add_handler(CommandHandler("lyrics", lyrics_command))
+        dp.add_handler(CommandHandler("stats", stats_command))
+        dp.add_handler(CommandHandler("recommend", recommend_command))
         dp.add_handler(CommandHandler("translate", translate_lyrics_command))
+        dp.add_handler(CommandHandler("quiz", quiz_command))
+        dp.add_handler(CommandHandler("endquiz", end_quiz_command))
+
+        # Add message handler for quiz answers
+        dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
+
         logger.info("Command handlers registered successfully")
 
         # Add error handler
@@ -57,7 +74,11 @@ def main():
             BotCommand("start", "Start your musical journey 🎵"),
             BotCommand("help", "Get help and tips 💡"),
             BotCommand("lyrics", "Find song lyrics 🎤 (format: artist - song)"),
-            BotCommand("translate", "Get Arabic lyrics translation 🌍 (format: artist - song)")
+            BotCommand("stats", "Get song statistics 📊 (format: artist - song)"),
+            BotCommand("recommend", "Get song recommendations 🎵 (format: artist - song)"),
+            BotCommand("translate", "Get Arabic lyrics translation 🌍 (format: artist - song)"),
+            BotCommand("quiz", "Start a fun lyrics quiz game 🎮"),
+            BotCommand("endquiz", "End the current quiz game 🎲")
         ]
         updater.bot.set_my_commands(commands)
         logger.info("Bot commands registered with Telegram")
@@ -68,7 +89,7 @@ def main():
 
         # Run the bot until you press Ctrl-C
         logger.info("Bot started successfully!")
-        logger.info("Available commands: /start, /help, /lyrics, /translate")
+        logger.info("Available commands: /start, /help, /lyrics, /stats, /recommend, /translate, /quiz, /endquiz")
         updater.idle()
 
     except Exception as e:
