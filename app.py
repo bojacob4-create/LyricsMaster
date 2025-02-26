@@ -19,10 +19,13 @@ if not database_url:
         database_url = f"postgresql://{pg_vars['PGUSER']}:{pg_vars['PGPASSWORD']}@{pg_vars['PGHOST']}:{pg_vars['PGPORT']}/{pg_vars['PGDATABASE']}"
         print("Using constructed PostgreSQL URL from environment variables")
     else:
-        error_msg = ("Database configuration is missing. Please ensure either DATABASE_URL "
-                    "is set in your deployment environment variables/secrets.")
+        missing_params = [k for k, v in pg_vars.items() if not v]
+        error_msg = ("Database configuration is missing. Ensure DATABASE_URL or PostgreSQL variables are set.\n"
+                    f"Missing variables: {', '.join(missing_params)}" if missing_params else "DATABASE_URL not set")
         print(error_msg)
         raise RuntimeError(error_msg)
+
+print(f"Database configuration status: {'Using DATABASE_URL' if os.environ.get('DATABASE_URL') else 'Using individual PostgreSQL variables'}")
 
 class Base(DeclarativeBase):
     pass
