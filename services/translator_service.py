@@ -1,8 +1,28 @@
 from googletrans import Translator
 from typing import Optional
+import logging
+import time
+
+logger = logging.getLogger(__name__)
+
+def get_translator():
+    """Initialize translator with retries."""
+    retries = 3
+    for i in range(retries):
+        try:
+            translator = Translator()
+            # Test the translator
+            translator.translate('test', dest='ar')
+            logger.info("Translator initialized successfully")
+            return translator
+        except Exception as e:
+            logger.error(f"Attempt {i+1}/{retries} failed to initialize translator: {e}")
+            if i < retries - 1:
+                time.sleep(1)  # Wait before retrying
+    return None
 
 # Initialize translator
-translator = Translator()
+translator = get_translator()
 
 def translate_to_arabic(text: str) -> Optional[str]:
     """
@@ -15,15 +35,37 @@ def translate_to_arabic(text: str) -> Optional[str]:
         Optional[str]: Translated text if successful, None otherwise
     """
     try:
+        if not translator:
+            logger.error("Translator not initialized")
+            return None
+
+        if not text:
+            logger.warning("Empty text provided for translation")
+            return None
+
+        logger.info("Starting translation...")
+
         # Split text into smaller chunks to avoid length limitations
-        chunks = [text[i:i+500] for i in range(0, len(text), 500)]
+        chunks = [text[i:i+1000] for i in range(0, len(text), 1000)]
         translated_chunks = []
 
         for chunk in chunks:
-            translation = translator.translate(chunk, dest='ar')
-            translated_chunks.append(translation.text)
+            try:
+                translation = translator.translate(chunk, dest='ar')
+                if translation and translation.text:
+                    translated_chunks.append(translation.text)
+            except Exception as chunk_error:
+                logger.error(f"Error translating chunk: {chunk_error}")
+                continue
 
-        return '\n'.join(translated_chunks)
+        if not translated_chunks:
+            logger.error("No chunks were successfully translated")
+            return None
+
+        result = '\n'.join(translated_chunks)
+        logger.info("Translation completed successfully")
+        return result
+
     except Exception as e:
-        print(f"Error translating text: {e}")
+        logger.error(f"Error translating text: {e}")
         return None

@@ -1,13 +1,14 @@
 import os
 import logging
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+from telegram import BotCommand
 
 from handlers import start_command, help_command, lyrics_command, top_tracks_command, translate_lyrics_command
 
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.DEBUG  # Changed to DEBUG for more detailed logs
 )
 logger = logging.getLogger(__name__)
 
@@ -28,29 +29,52 @@ def main():
         logger.error("No token provided!")
         return
 
-    # Create the Updater and pass it your bot's token
-    updater = Updater(token, use_context=True)
+    logger.info(f"Starting bot with token: {token[:5]}...")  # Only log first 5 chars for security
 
-    # Get the dispatcher to register handlers
-    dp = updater.dispatcher
+    try:
+        # Create the Updater and pass it your bot's token
+        updater = Updater(token, use_context=True)
+        logger.info("Successfully created Updater")
 
-    # Add command handlers
-    dp.add_handler(CommandHandler("start", start_command))
-    dp.add_handler(CommandHandler("help", help_command))
-    dp.add_handler(CommandHandler("lyrics", lyrics_command))
-    dp.add_handler(CommandHandler("toptracks", top_tracks_command))
-    dp.add_handler(CommandHandler("translate", translate_lyrics_command))
+        # Get the dispatcher to register handlers
+        dp = updater.dispatcher
+        logger.info("Registering command handlers...")
 
-    # Add error handler
-    dp.add_error_handler(error_handler)
+        # Add command handlers
+        dp.add_handler(CommandHandler("start", start_command))
+        dp.add_handler(CommandHandler("help", help_command))
+        dp.add_handler(CommandHandler("lyrics", lyrics_command))
+        dp.add_handler(CommandHandler("toptracks", top_tracks_command))
+        dp.add_handler(CommandHandler("translate", translate_lyrics_command))
+        logger.info("Command handlers registered successfully")
 
-    # Start the Bot
-    updater.start_polling()
+        # Add error handler
+        dp.add_error_handler(error_handler)
+        logger.info("Error handler registered")
 
-    # Run the bot until you press Ctrl-C
-    logger.info("Bot started successfully!")
-    logger.info("Available commands: /start, /help, /lyrics, /toptracks, /translate")
-    updater.idle()
+        # Set up the commands for the bot
+        commands = [
+            BotCommand("start", "Start the bot"),
+            BotCommand("help", "Show help message"),
+            BotCommand("lyrics", "Get song lyrics (format: artist - song)"),
+            BotCommand("toptracks", "Get Spotify top 10 tracks"),
+            BotCommand("translate", "Translate lyrics to Arabic (format: artist - song)")
+        ]
+        updater.bot.set_my_commands(commands)
+        logger.info("Bot commands registered with Telegram")
+
+        # Start the Bot
+        logger.info("Starting polling...")
+        updater.start_polling()
+
+        # Run the bot until you press Ctrl-C
+        logger.info("Bot started successfully!")
+        logger.info("Available commands: /start, /help, /lyrics, /toptracks, /translate")
+        updater.idle()
+
+    except Exception as e:
+        logger.error(f"Critical error starting bot: {str(e)}")
+        raise
 
 if __name__ == '__main__':
     main()
