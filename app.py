@@ -3,12 +3,26 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import DeclarativeBase
 
-# Debug print to verify DATABASE_URL
+# Database URL configuration with clear error handling
 database_url = os.environ.get("DATABASE_URL")
-if database_url:
-    print(f"Database URL is configured: postgresql://<credentials>@{database_url.split('@')[-1]}")
-else:
-    print("Warning: DATABASE_URL is not set")
+if not database_url:
+    # Try constructing from individual credentials if available
+    db_params = {
+        'user': os.environ.get('PGUSER'),
+        'password': os.environ.get('PGPASSWORD'),
+        'host': os.environ.get('PGHOST'),
+        'port': os.environ.get('PGPORT'),
+        'database': os.environ.get('PGDATABASE')
+    }
+
+    if all(db_params.values()):
+        database_url = f"postgresql://{db_params['user']}:{db_params['password']}@{db_params['host']}:{db_params['port']}/{db_params['database']}"
+        print("Database URL constructed from individual credentials")
+    else:
+        missing_params = [k for k, v in db_params.items() if not v]
+        raise RuntimeError(f"Database configuration missing. Either set DATABASE_URL or provide all of: {', '.join(missing_params)}")
+
+print(f"Database URL configured: postgresql://<credentials>@{database_url.split('@')[-1] if '@' in database_url else '<error>'}")
 
 class Base(DeclarativeBase):
     pass
@@ -18,15 +32,13 @@ db = SQLAlchemy(model_class=Base)
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET")
 
-# configure the database, relative to the app instance folder
-if not database_url:
-    raise RuntimeError("DATABASE_URL environment variable must be set")
+# configure the database
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
     "pool_recycle": 300,
     "pool_pre_ping": True,
 }
-# initialize the app with the extension, flask-sqlalchemy >= 3.0.x
+# initialize the app with the extension
 db.init_app(app)
 
 with app.app_context():
