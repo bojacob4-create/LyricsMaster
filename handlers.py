@@ -80,35 +80,41 @@ def top_tracks_command(update: Update, context: CallbackContext):
         logger.info(f"User {user_id} requested top tracks")
 
         # Send initial message
-        message = update.message.reply_text("🎵 Fetching Global Top Charts, please wait...")
+        message = update.message.reply_text(
+            "🎵 Searching for some popular tracks...\n"
+            "This should just take a moment."
+        )
 
         # Get tracks
         tracks = get_top_tracks()
 
         if not tracks:
-            logger.warning(f"Failed to fetch top tracks for user {user_id}")
+            logger.warning(f"No tracks returned for user {user_id}")
             message.edit_text(
-                "❌ Sorry, we're having trouble connecting to Spotify right now.\n"
-                "Please try again in a few moments."
+                "❌ Sorry, I couldn't retrieve any tracks at the moment.\n"
+                "Please try again in a few minutes."
             )
             return
 
         # Format and send tracks
         formatted_tracks = format_top_tracks(tracks)
         message.edit_text(formatted_tracks)
-        logger.info(f"Successfully sent top tracks to user {user_id}")
+        logger.info(f"Successfully sent {len(tracks)} tracks to user {user_id}")
 
     except Exception as e:
-        logger.error(f"Error processing top tracks command for user {user_id}: {str(e)}")
+        logger.error(f"Error in top_tracks_command for user {user_id}: {str(e)}")
+        error_message = (
+            "❌ Sorry, we're having trouble connecting to our music service.\n"
+            "Please try again in a few minutes."
+        )
         try:
-            message = update.message.reply_text(
-                "❌ Sorry, something went wrong while fetching the top tracks.\n"
-                "Please try again in a few moments."
-            )
-        except Exception:
-            update.message.reply_text(
-                "❌ An error occurred. Please try again later."
-            )
+            if 'message' in locals():
+                message.edit_text(error_message)
+            else:
+                update.message.reply_text(error_message)
+        except Exception as msg_error:
+            logger.error(f"Error sending error message: {str(msg_error)}")
+            update.message.reply_text("❌ An error occurred. Please try again later.")
 
 def translate_lyrics_command(update: Update, context: CallbackContext):
     """Handle the /translate command."""
