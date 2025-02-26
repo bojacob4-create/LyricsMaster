@@ -16,7 +16,8 @@ from handlers import (
     end_quiz_command,
     subscribe_daily_command,
     unsubscribe_daily_command,
-    send_daily_song
+    send_daily_song,
+    youtube_command
 )
 
 # Configure logging
@@ -41,7 +42,7 @@ def main():
         logger.error("No token provided!")
         return
 
-    logger.info(f"Starting bot with token: {token[:5]}...")
+    logger.info("Starting bot...")
 
     try:
         updater = Updater(token, use_context=True)
@@ -62,6 +63,7 @@ def main():
         dp.add_handler(CommandHandler("endquiz", end_quiz_command))
         dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
         dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
+        dp.add_handler(CommandHandler("youtube", youtube_command))
 
         # Add message handler for quiz answers
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
@@ -92,7 +94,8 @@ def main():
             BotCommand("quiz", "Start a fun lyrics quiz game 🎮"),
             BotCommand("endquiz", "End the current quiz game 🎲"),
             BotCommand("subscribe", "Get a daily song with analysis 📅"),
-            BotCommand("unsubscribe", "Stop receiving daily songs 🔕")
+            BotCommand("unsubscribe", "Stop receiving daily songs 🔕"),
+            BotCommand("youtube", "Get YouTube link for a song 🎬 (format: artist - song)")
         ]
         updater.bot.set_my_commands(commands)
         logger.info("Bot commands registered with Telegram")
@@ -103,7 +106,7 @@ def main():
 
         # Run the bot until you press Ctrl-C
         logger.info("Bot started successfully!")
-        logger.info("Available commands: /start, /help, /lyrics, /stats, /recommend, /translate, /quiz, /endquiz, /subscribe, /unsubscribe")
+        logger.info("Available commands: /start, /help, /lyrics, /stats, /recommend, /translate, /quiz, /endquiz, /subscribe, /unsubscribe, /youtube")
         updater.idle()
 
     except Exception as e:

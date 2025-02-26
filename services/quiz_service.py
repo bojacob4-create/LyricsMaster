@@ -1,13 +1,13 @@
 import os
 import random
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import List, Dict, Optional, Tuple
 from services.lyrics_service import get_song_lyrics
 
 logger = logging.getLogger(__name__)
 
 # Store active quiz sessions
-active_quizzes: Dict[int, Dict] = {}
+active_quizzes = {}
 
 # Sample quiz questions (we'll expand this later)
 QUIZ_SONGS = [
@@ -23,39 +23,75 @@ QUIZ_SONGS = [
     {"artist": "Elvis Presley", "song": "Can't Help Falling in Love"}
 ]
 
-def start_quiz(user_id: int) -> Optional[Dict]:
-    """Start a new quiz session for a user."""
+def get_quiz_question(exclude_songs: List[Dict] = None, last_artist: str = None) -> Optional[Dict]:
+    """Get a random quiz question, excluding used songs and avoiding same artist."""
     try:
-        if user_id in active_quizzes and active_quizzes[user_id]["state"] == "active":
-            return active_quizzes[user_id]
+        # Filter out used songs
+        available_songs = [song for song in QUIZ_SONGS if song not in (exclude_songs or [])]
+        if not available_songs:
+            return None
 
-        # Pick a random song
-        song_choice = random.choice(QUIZ_SONGS)
+        # If we have a last artist, try to avoid it
+        different_artist_songs = [song for song in available_songs if song["artist"] != last_artist]
+
+        # If we have songs from different artists, use those
+        # Otherwise fall back to all available songs
+        song_pool = different_artist_songs if different_artist_songs else available_songs
+
+        song_choice = random.choice(song_pool)
         lyrics = get_song_lyrics(song_choice["artist"], song_choice["song"])
 
         if not lyrics:
-            logger.error(f"Could not fetch lyrics for {song_choice['artist']} - {song_choice['song']}")
+            # Try again with the same constraints
+            remaining_songs = [s for s in song_pool if s != song_choice]
+            if remaining_songs:
+                return get_quiz_question(exclude_songs, last_artist)
             return None
 
-        # Split lyrics into lines and get a random 4-line snippet
-        lines = [line for line in lyrics.split('\n') if line.strip()]
+        lines = [line.strip() for line in lyrics.split('\n') if line.strip()]
         if len(lines) < 4:
-            logger.error("Not enough lines in lyrics")
+            # Try again with the same constraints
+            remaining_songs = [s for s in song_pool if s != song_choice]
+            if remaining_songs:
+                return get_quiz_question(exclude_songs, last_artist)
             return None
 
         start_idx = random.randint(0, len(lines) - 4)
         snippet = '\n'.join(lines[start_idx:start_idx + 4])
 
+        return {
+            "artist": song_choice["artist"],
+            "song": song_choice["song"],
+            "snippet": snippet
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting quiz question: {str(e)}")
+        return None
+
+def start_quiz(user_id: int) -> Optional[Dict]:
+    """Start a new quiz session for a user."""
+    try:
+        # If user already has an active quiz, return it
+        if user_id in active_quizzes and active_quizzes[user_id]["state"] == "active":
+            return active_quizzes[user_id]
+
+        # Get first question
+        question = get_quiz_question()
+        if not question:
+            logger.error("Could not get initial quiz question")
+            return None
+
         quiz_data = {
-            "current_question": {
-                "artist": song_choice["artist"],
-                "song": song_choice["song"],
-                "snippet": snippet
-            },
+            "current_question": question,
             "score": 0,
             "total_questions": 0,
             "state": "active",
-            "used_songs": [song_choice]  # Track used songs to avoid repetition
+            "used_songs": [{
+                "artist": question["artist"],
+                "song": question["song"]
+            }],
+            "last_artist": question["artist"]  # Track the last artist used
         }
 
         active_quizzes[user_id] = quiz_data
@@ -64,59 +100,6 @@ def start_quiz(user_id: int) -> Optional[Dict]:
 
     except Exception as e:
         logger.error(f"Error starting quiz: {str(e)}")
-        return None
-
-def get_next_question(user_id: int) -> Optional[Dict]:
-    """Get the next question for a user's quiz."""
-    try:
-        if user_id not in active_quizzes:
-            return None
-
-        quiz = active_quizzes[user_id]
-        if quiz["state"] != "active":
-            return None
-
-        used_songs = quiz.get("used_songs", [])
-
-        # Filter out already used songs
-        available_songs = [song for song in QUIZ_SONGS if song not in used_songs]
-
-        if not available_songs:
-            # If all songs have been used, end the quiz
-            logger.info(f"No more available songs for user {user_id}")
-            quiz["state"] = "completed"
-            return None
-
-        # Pick a random song from remaining songs
-        song_choice = random.choice(available_songs)
-        lyrics = get_song_lyrics(song_choice["artist"], song_choice["song"])
-
-        if not lyrics:
-            logger.error(f"Could not fetch lyrics for {song_choice['artist']} - {song_choice['song']}")
-            return None
-
-        # Split lyrics into lines and get a random 4-line snippet
-        lines = [line for line in lyrics.split('\n') if line.strip()]
-        if len(lines) < 4:
-            logger.error("Not enough lines in lyrics")
-            return None
-
-        start_idx = random.randint(0, len(lines) - 4)
-        snippet = '\n'.join(lines[start_idx:start_idx + 4])
-
-        # Update the quiz with new question
-        quiz["current_question"] = {
-            "artist": song_choice["artist"],
-            "song": song_choice["song"],
-            "snippet": snippet
-        }
-        quiz["used_songs"].append(song_choice)
-        active_quizzes[user_id] = quiz
-
-        return quiz
-
-    except Exception as e:
-        logger.error(f"Error getting next question: {str(e)}")
         return None
 
 def check_answer(user_id: int, answer: str) -> Tuple[bool, str]:
@@ -131,7 +114,7 @@ def check_answer(user_id: int, answer: str) -> Tuple[bool, str]:
 
         correct_answer = f"{quiz['current_question']['artist']} - {quiz['current_question']['song']}"
 
-        # Calculate similarity score (basic for now)
+        # Calculate similarity (case-insensitive)
         answer_lower = answer.lower().replace(" ", "")
         correct_lower = correct_answer.lower().replace(" ", "")
         is_correct = answer_lower == correct_lower
@@ -144,11 +127,19 @@ def check_answer(user_id: int, answer: str) -> Tuple[bool, str]:
 
         quiz["total_questions"] += 1
 
-        # Get next question
-        next_quiz = get_next_question(user_id)
-        if not next_quiz:
+        # Get next question, avoiding the current artist
+        next_question = get_quiz_question(quiz["used_songs"], quiz["last_artist"])
+        if not next_question:
             quiz["state"] = "completed"
-            return is_correct, f"{feedback}\n\nℹ️ No more questions available"
+            return is_correct, f"{feedback}\n\nℹ️ Quiz completed! You've gone through all available songs."
+
+        # Update quiz with next question
+        quiz["current_question"] = next_question
+        quiz["used_songs"].append({
+            "artist": next_question["artist"],
+            "song": next_question["song"]
+        })
+        quiz["last_artist"] = next_question["artist"]  # Update the last artist
 
         return is_correct, feedback
 
