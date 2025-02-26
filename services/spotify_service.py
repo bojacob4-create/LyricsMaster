@@ -1,110 +1,96 @@
 import os
-import spotipy
+import logging
 from spotipy.oauth2 import SpotifyClientCredentials
 from typing import List, Dict
-import logging
-import time
 
 logger = logging.getLogger(__name__)
 
 def get_spotify_client():
-    """Initialize Spotify client with retries."""
-    client_id = os.getenv("SPOTIFY_CLIENT_ID")
-    client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
-
-    if not client_id or not client_secret:
-        logger.error("Missing Spotify credentials")
-        return None
-
-    logger.info("Initializing Spotify client...")
-    logger.debug(f"Using client ID: {client_id[:5]}...")  # Log first 5 chars for debugging
-
+    """Initialize Spotify client."""
     try:
-        auth_manager = SpotifyClientCredentials(
+        client_id = os.getenv("SPOTIFY_CLIENT_ID")
+        client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
+
+        if not client_id or not client_secret:
+            logger.error("Missing Spotify credentials")
+            return None
+
+        logger.info("Initializing Spotify client...")
+
+        # Create client credentials without cache
+        credentials = SpotifyClientCredentials(
             client_id=client_id,
-            client_secret=client_secret
-        )
-        spotify = spotipy.Spotify(
-            auth_manager=auth_manager,
-            requests_timeout=10,
-            retries=3
+            client_secret=client_secret,
+            cache_handler=None  # Disable caching
         )
 
-        # Test the client with a simple search
-        logger.info("Testing Spotify client connection...")
-        test_result = spotify.search(q='test', type='track', limit=1)
-        if test_result and test_result['tracks']['items']:
-            logger.info("Spotify client initialized and tested successfully")
-            return spotify
-        else:
-            logger.error("Spotify client test failed - no results returned")
-            return None
+        spotify = spotipy.Spotify(
+            auth_manager=credentials,
+            requests_timeout=10
+        )
+
+        return spotify
 
     except Exception as e:
         logger.error(f"Failed to initialize Spotify client: {str(e)}")
         return None
 
 def get_top_tracks(limit: int = 10) -> List[Dict]:
-    """
-    Get the current top tracks from Spotify.
-
-    Args:
-        limit (int): Number of tracks to fetch (default: 10)
-
-    Returns:
-        List[Dict]: List of track information
-    """
+    """Get current top tracks from Spotify Charts."""
     try:
-        logger.info("Starting get_top_tracks function")
-        spotify = get_spotify_client()  # Get a fresh client for each request
-
+        spotify = get_spotify_client()
         if not spotify:
             logger.error("Could not initialize Spotify client")
             return []
 
         logger.info("Fetching top tracks from Spotify...")
 
-        # Try both playlists in sequence
-        playlists = [
-            ("Today's Top Hits", "37i9dQZF1DXcBWIGoYBM5M"),
-            ("Global Top 50", "37i9dQZEVXbMDoHDwVN2tF")
-        ]
+        # Fetch Featured Playlists (more reliable endpoint)
+        playlists = spotify.featured_playlists(limit=1)
+        if not playlists or 'playlists' not in playlists:
+            logger.error("Could not fetch featured playlists")
+            return []
 
-        for playlist_name, playlist_id in playlists:
+        playlist_items = playlists['playlists']['items']
+        if not playlist_items:
+            logger.error("No featured playlists found")
+            return []
+
+        # Get tracks from the first featured playlist
+        playlist_id = playlist_items[0]['id']
+        results = spotify.playlist_tracks(
+            playlist_id,
+            limit=limit,
+            fields="items(track(name,artists(name)))"
+        )
+
+        if not results or 'items' not in results:
+            logger.error("Invalid response format from Spotify API")
+            return []
+
+        tracks = []
+        for item in results['items']:
             try:
-                logger.info(f"Attempting to fetch from {playlist_name} playlist...")
-                results = spotify.playlist_tracks(
-                    playlist_id,
-                    limit=limit,
-                    fields="items(track(name,artists(name)))"
-                )
+                track = item.get('track', {})
+                if not track:
+                    continue
 
-                tracks = []
-                for item in results['items']:
-                    if not item or 'track' not in item:
-                        continue
+                artists = track.get('artists', [])
+                artist_name = artists[0].get('name', 'Unknown Artist') if artists else 'Unknown Artist'
 
-                    track = item['track']
-                    if not track or 'name' not in track or 'artists' not in track:
-                        continue
-
-                    artist_name = track['artists'][0]['name'] if track['artists'] else "Unknown Artist"
-                    tracks.append({
-                        'name': track['name'],
-                        'artist': artist_name
-                    })
-
-                if tracks:
-                    logger.info(f"Successfully fetched {len(tracks)} tracks from {playlist_name}")
-                    return tracks
-
-                logger.warning(f"No valid tracks found in {playlist_name} playlist")
-
-            except Exception as e:
-                logger.error(f"Error fetching tracks from {playlist_name}: {str(e)}")
+                tracks.append({
+                    'name': track.get('name', 'Unknown Track'),
+                    'artist': artist_name
+                })
+            except Exception as track_error:
+                logger.warning(f"Error processing track: {str(track_error)}")
                 continue
 
-        logger.error("Failed to fetch tracks from all playlists")
+        if tracks:
+            logger.info(f"Successfully fetched {len(tracks)} tracks")
+            return tracks[:limit]
+
+        logger.warning("No tracks found in playlist")
         return []
 
     except Exception as e:

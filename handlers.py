@@ -80,13 +80,13 @@ def top_tracks_command(update: Update, context: CallbackContext):
         logger.info(f"User {user_id} requested top tracks")
 
         # Send initial message
-        message = update.message.reply_text("🎵 Fetching top tracks, please wait...")
+        message = update.message.reply_text("🎵 Fetching Global Top Charts, please wait...")
 
         # Get tracks
         tracks = get_top_tracks()
 
         if not tracks:
-            logger.warning("Failed to fetch top tracks")
+            logger.warning(f"Failed to fetch top tracks for user {user_id}")
             message.edit_text(
                 "❌ Sorry, we're having trouble connecting to Spotify right now.\n"
                 "Please try again in a few moments."
@@ -101,15 +101,13 @@ def top_tracks_command(update: Update, context: CallbackContext):
     except Exception as e:
         logger.error(f"Error processing top tracks command for user {user_id}: {str(e)}")
         try:
-            update.message.reply_text(
+            message = update.message.reply_text(
                 "❌ Sorry, something went wrong while fetching the top tracks.\n"
-                "We're working on fixing this. Please try again later."
+                "Please try again in a few moments."
             )
         except Exception:
-            # If editing the message fails, send a new one
             update.message.reply_text(
-                "❌ Sorry, something went wrong while fetching the top tracks.\n"
-                "Please try again later."
+                "❌ An error occurred. Please try again later."
             )
 
 def translate_lyrics_command(update: Update, context: CallbackContext):
