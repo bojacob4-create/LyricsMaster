@@ -26,8 +26,7 @@ QUIZ_SONGS = [
 def start_quiz(user_id: int) -> Optional[Dict]:
     """Start a new quiz session for a user."""
     try:
-        if user_id in active_quizzes:
-            logger.info(f"User {user_id} already has an active quiz")
+        if user_id in active_quizzes and active_quizzes[user_id]["state"] == "active":
             return active_quizzes[user_id]
 
         # Pick a random song
@@ -55,7 +54,8 @@ def start_quiz(user_id: int) -> Optional[Dict]:
             },
             "score": 0,
             "total_questions": 0,
-            "state": "active"
+            "state": "active",
+            "used_songs": [song_choice]  # Track used songs to avoid repetition
         }
 
         active_quizzes[user_id] = quiz_data
@@ -66,6 +66,59 @@ def start_quiz(user_id: int) -> Optional[Dict]:
         logger.error(f"Error starting quiz: {str(e)}")
         return None
 
+def get_next_question(user_id: int) -> Optional[Dict]:
+    """Get the next question for a user's quiz."""
+    try:
+        if user_id not in active_quizzes:
+            return None
+
+        quiz = active_quizzes[user_id]
+        if quiz["state"] != "active":
+            return None
+
+        used_songs = quiz.get("used_songs", [])
+
+        # Filter out already used songs
+        available_songs = [song for song in QUIZ_SONGS if song not in used_songs]
+
+        if not available_songs:
+            # If all songs have been used, end the quiz
+            logger.info(f"No more available songs for user {user_id}")
+            quiz["state"] = "completed"
+            return None
+
+        # Pick a random song from remaining songs
+        song_choice = random.choice(available_songs)
+        lyrics = get_song_lyrics(song_choice["artist"], song_choice["song"])
+
+        if not lyrics:
+            logger.error(f"Could not fetch lyrics for {song_choice['artist']} - {song_choice['song']}")
+            return None
+
+        # Split lyrics into lines and get a random 4-line snippet
+        lines = [line for line in lyrics.split('\n') if line.strip()]
+        if len(lines) < 4:
+            logger.error("Not enough lines in lyrics")
+            return None
+
+        start_idx = random.randint(0, len(lines) - 4)
+        snippet = '\n'.join(lines[start_idx:start_idx + 4])
+
+        # Update the quiz with new question
+        quiz["current_question"] = {
+            "artist": song_choice["artist"],
+            "song": song_choice["song"],
+            "snippet": snippet
+        }
+        quiz["used_songs"].append(song_choice)
+        active_quizzes[user_id] = quiz
+
+        return quiz
+
+    except Exception as e:
+        logger.error(f"Error getting next question: {str(e)}")
+        return None
+
 def check_answer(user_id: int, answer: str) -> Tuple[bool, str]:
     """Check the user's answer and return feedback."""
     try:
@@ -73,8 +126,11 @@ def check_answer(user_id: int, answer: str) -> Tuple[bool, str]:
             return False, "No active quiz found! Start a new quiz with /quiz"
 
         quiz = active_quizzes[user_id]
+        if quiz["state"] != "active":
+            return False, "No active quiz found! Start a new quiz with /quiz"
+
         correct_answer = f"{quiz['current_question']['artist']} - {quiz['current_question']['song']}"
-        
+
         # Calculate similarity score (basic for now)
         answer_lower = answer.lower().replace(" ", "")
         correct_lower = correct_answer.lower().replace(" ", "")
@@ -87,10 +143,11 @@ def check_answer(user_id: int, answer: str) -> Tuple[bool, str]:
             feedback = f"❌ Not quite! The answer was: {correct_answer}"
 
         quiz["total_questions"] += 1
-        
-        # Start new question
-        new_quiz = start_quiz(user_id)
-        if not new_quiz:
+
+        # Get next question
+        next_quiz = get_next_question(user_id)
+        if not next_quiz:
+            quiz["state"] = "completed"
             return is_correct, f"{feedback}\n\nℹ️ No more questions available"
 
         return is_correct, feedback
@@ -129,7 +186,7 @@ def end_quiz(user_id: int) -> str:
 
         stats = get_quiz_stats(user_id)
         del active_quizzes[user_id]
-        
+
         return f"Quiz ended!\n\n{stats}\n\nStart a new quiz anytime with /quiz 🎵"
 
     except Exception as e:
