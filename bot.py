@@ -3,7 +3,7 @@ import logging
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 from telegram import BotCommand
 
-from handlers import start_command, help_command, lyrics_command, top_tracks_command, translate_lyrics_command
+from handlers import start_command, help_command, lyrics_command, translate_lyrics_command
 from services.lastfm_service import get_top_tracks
 
 # Configure logging
@@ -19,7 +19,7 @@ def error_handler(update, context):
     # Send a friendly message to the user
     if update and update.message:
         update.message.reply_text(
-            "Sorry, something went wrong while processing your request. Please try again later."
+            "🤖 Oops! I hit a snag while processing your request. Let's try that again! 🔄"
         )
 
 def main():
@@ -30,7 +30,7 @@ def main():
         logger.error("No token provided!")
         return
 
-    logger.info(f"Starting bot with token: {token[:5]}...")  # Only log first 5 chars for security
+    logger.info(f"Starting bot with token: {token[:5]}...")
 
     try:
         # Create the Updater and pass it your bot's token
@@ -45,7 +45,6 @@ def main():
         dp.add_handler(CommandHandler("start", start_command))
         dp.add_handler(CommandHandler("help", help_command))
         dp.add_handler(CommandHandler("lyrics", lyrics_command))
-        dp.add_handler(CommandHandler("toptracks", top_tracks_command))
         dp.add_handler(CommandHandler("translate", translate_lyrics_command))
         logger.info("Command handlers registered successfully")
 
@@ -55,11 +54,10 @@ def main():
 
         # Set up the commands for the bot
         commands = [
-            BotCommand("start", "Start the bot"),
-            BotCommand("help", "Show help message"),
-            BotCommand("lyrics", "Get song lyrics (format: artist - song)"),
-            BotCommand("toptracks", "Get Last.fm top 10 tracks"), #Updated command description
-            BotCommand("translate", "Translate lyrics to Arabic (format: artist - song)")
+            BotCommand("start", "Start your musical journey 🎵"),
+            BotCommand("help", "Get help and tips 💡"),
+            BotCommand("lyrics", "Find song lyrics 🎤 (format: artist - song)"),
+            BotCommand("translate", "Get Arabic lyrics translation 🌍 (format: artist - song)")
         ]
         updater.bot.set_my_commands(commands)
         logger.info("Bot commands registered with Telegram")
@@ -70,7 +68,7 @@ def main():
 
         # Run the bot until you press Ctrl-C
         logger.info("Bot started successfully!")
-        logger.info("Available commands: /start, /help, /lyrics, /toptracks, /translate")
+        logger.info("Available commands: /start, /help, /lyrics, /translate")
         updater.idle()
 
     except Exception as e:

@@ -1,4 +1,5 @@
 from typing import List, Dict
+import re
 
 def format_lyrics(lyrics: str) -> str:
     """
@@ -21,6 +22,41 @@ def format_lyrics(lyrics: str) -> str:
         formatted = formatted[:3997] + "..."
 
     return formatted
+
+def detect_song_mood(lyrics: str) -> str:
+    """
+    Detect the mood of a song based on its lyrics.
+
+    Args:
+        lyrics (str): Song lyrics
+
+    Returns:
+        str: Detected mood (happy, sad, romantic, energetic, or relaxed)
+    """
+    # Convert to lowercase for analysis
+    lyrics_lower = lyrics.lower()
+
+    # Define mood indicators
+    mood_keywords = {
+        'happy': ['happy', 'joy', 'smile', 'laugh', 'fun', 'dance', 'party', 'sunshine'],
+        'sad': ['sad', 'cry', 'tears', 'pain', 'hurt', 'alone', 'lost', 'sorry', 'missing'],
+        'romantic': ['love', 'heart', 'kiss', 'beautiful', 'forever', 'darling', 'romance'],
+        'energetic': ['jump', 'run', 'fire', 'burn', 'alive', 'wild', 'free', 'tonight'],
+        'relaxed': ['peace', 'calm', 'quiet', 'dream', 'sleep', 'gentle', 'slow']
+    }
+
+    # Count occurrences of mood keywords
+    mood_counts = {mood: 0 for mood in mood_keywords}
+
+    for mood, keywords in mood_keywords.items():
+        for keyword in keywords:
+            mood_counts[mood] += len(re.findall(r'\b' + keyword + r'\b', lyrics_lower))
+
+    # Get the mood with highest count
+    dominant_mood = max(mood_counts.items(), key=lambda x: x[1])[0]
+
+    # Default to 'energetic' if no clear mood is detected
+    return dominant_mood if mood_counts[dominant_mood] > 0 else 'energetic'
 
 def format_top_tracks(tracks: List[Dict]) -> str:
     """
