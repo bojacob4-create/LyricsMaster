@@ -1,12 +1,16 @@
 from telegram import Update
 from telegram.ext import CallbackContext
+import logging
 from services.lyrics_service import get_song_lyrics
 from services.spotify_service import get_top_tracks
 from services.translator_service import translate_to_arabic
 from utils import format_lyrics, format_top_tracks
 
+logger = logging.getLogger(__name__)
+
 def start_command(update: Update, context: CallbackContext):
     """Send a message when the command /start is issued."""
+    logger.info(f"User {update.effective_user.id} started the bot")
     welcome_message = (
         "👋 Welcome to MGLyricsBot!\n\n"
         "Available commands:\n"
@@ -19,6 +23,7 @@ def start_command(update: Update, context: CallbackContext):
 
 def help_command(update: Update, context: CallbackContext):
     """Send a message when the command /help is issued."""
+    logger.info(f"User {update.effective_user.id} requested help")
     help_text = (
         "🎵 MGLyricsBot Help:\n\n"
         "Commands:\n"
@@ -34,55 +39,70 @@ def help_command(update: Update, context: CallbackContext):
 
 def lyrics_command(update: Update, context: CallbackContext):
     """Handle the /lyrics command."""
+    user_id = update.effective_user.id
     try:
         query = " ".join(context.args)
         if not query or "-" not in query:
+            logger.info(f"User {user_id} provided invalid lyrics query format")
             update.message.reply_text(
                 "⚠️ Please use the format: /lyrics artist - song"
             )
             return
 
         artist, song = query.split("-", 1)
-        lyrics = get_song_lyrics(artist.strip(), song.strip())
+        logger.info(f"User {user_id} requested lyrics for '{artist.strip()} - {song.strip()}'")
 
+        lyrics = get_song_lyrics(artist.strip(), song.strip())
         if not lyrics:
+            logger.info(f"No lyrics found for '{artist.strip()} - {song.strip()}'")
             update.message.reply_text("❌ Sorry, couldn't find lyrics for this song.")
             return
 
         formatted_lyrics = format_lyrics(lyrics)
         update.message.reply_text(formatted_lyrics)
+        logger.info(f"Successfully sent lyrics to user {user_id}")
 
     except Exception as e:
+        logger.error(f"Error processing lyrics command for user {user_id}: {str(e)}")
         update.message.reply_text(f"❌ Error: {str(e)}")
 
 def top_tracks_command(update: Update, context: CallbackContext):
     """Handle the /toptracks command."""
+    user_id = update.effective_user.id
     try:
+        logger.info(f"User {user_id} requested top tracks")
         tracks = get_top_tracks()
         if not tracks:
+            logger.warning("Failed to fetch top tracks")
             update.message.reply_text("❌ Sorry, couldn't fetch top tracks.")
             return
 
         formatted_tracks = format_top_tracks(tracks)
         update.message.reply_text(formatted_tracks)
+        logger.info(f"Successfully sent top tracks to user {user_id}")
 
     except Exception as e:
+        logger.error(f"Error processing top tracks command for user {user_id}: {str(e)}")
         update.message.reply_text(f"❌ Error: {str(e)}")
 
 def translate_lyrics_command(update: Update, context: CallbackContext):
     """Handle the /translate command."""
+    user_id = update.effective_user.id
     try:
         query = " ".join(context.args)
         if not query or "-" not in query:
+            logger.info(f"User {user_id} provided invalid translation query format")
             update.message.reply_text(
                 "⚠️ Please use the format: /translate artist - song"
             )
             return
 
         artist, song = query.split("-", 1)
-        lyrics = get_song_lyrics(artist.strip(), song.strip())
+        logger.info(f"User {user_id} requested translation for '{artist.strip()} - {song.strip()}'")
 
+        lyrics = get_song_lyrics(artist.strip(), song.strip())
         if not lyrics:
+            logger.info(f"No lyrics found for translation: '{artist.strip()} - {song.strip()}'")
             update.message.reply_text("❌ Sorry, couldn't find lyrics for this song.")
             return
 
@@ -90,8 +110,11 @@ def translate_lyrics_command(update: Update, context: CallbackContext):
         if translated_lyrics:
             formatted_lyrics = format_lyrics(translated_lyrics)
             update.message.reply_text(formatted_lyrics)
+            logger.info(f"Successfully sent translated lyrics to user {user_id}")
         else:
+            logger.warning(f"Translation failed for user {user_id}")
             update.message.reply_text("❌ Sorry, couldn't translate the lyrics.")
 
     except Exception as e:
+        logger.error(f"Error processing translate command for user {user_id}: {str(e)}")
         update.message.reply_text(f"❌ Error: {str(e)}")

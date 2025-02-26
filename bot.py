@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 def error_handler(update, context):
     """Log Errors caused by Updates."""
     logger.warning('Update "%s" caused error "%s"', update, context.error)
+    # Send a friendly message to the user
+    if update and update.message:
+        update.message.reply_text(
+            "Sorry, something went wrong while processing your request. Please try again later."
+        )
 
 def main():
     """Start the bot."""
@@ -44,6 +49,7 @@ def main():
 
     # Run the bot until you press Ctrl-C
     logger.info("Bot started successfully!")
+    logger.info("Available commands: /start, /help, /lyrics, /toptracks, /translate")
     updater.idle()
 
 if __name__ == '__main__':
