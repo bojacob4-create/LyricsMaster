@@ -1,6 +1,6 @@
 from typing import List, Dict, Tuple
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 
 def get_song_statistics(lyrics: str) -> Dict:
     """
@@ -73,12 +73,17 @@ def format_lyrics(lyrics: str) -> str:
     if not lyrics:
         return "No lyrics available."
 
-    formatted = '\n'.join(line for line in lyrics.split('\n') if line.strip())
+    # Remove empty lines and clean up formatting
+    formatted = []
+    for line in lyrics.split('\n'):
+        line = line.strip()
+        if line:
+            # Handle common formatting issues
+            line = line.replace('[', '「').replace(']', '」')  # Replace brackets with Japanese quotes
+            line = line.replace('  ', ' ')  # Remove double spaces
+            formatted.append(line)
 
-    if len(formatted) > 4000:
-        formatted = formatted[:3997] + "..."
-
-    return formatted
+    return '\n'.join(formatted)
 
 def detect_song_mood(lyrics: str) -> str:
     """Detect the mood of a song based on its lyrics."""
@@ -121,3 +126,126 @@ def format_top_tracks(tracks: List[Dict]) -> str:
     ]
 
     return header + '\n'.join(formatted_tracks)
+
+def analyze_rhyme_pattern(lyrics: str) -> Dict:
+    """Analyze rhyme patterns in lyrics."""
+    import re
+    from collections import defaultdict
+
+    # Split into lines and clean up
+    lines = [line.strip().lower() for line in lyrics.split('\n') if line.strip()]
+
+    # Extract last word of each line
+    last_words = []
+    for line in lines:
+        words = re.findall(r'\b\w+\b', line)
+        if words:
+            last_words.append(words[-1])
+
+    # Find rhyming patterns
+    rhyme_groups = defaultdict(list)
+    for i, word1 in enumerate(last_words):
+        if len(word1) < 2:  # Skip very short words
+            continue
+
+        # Check for perfect rhymes (same ending)
+        suffix = word1[-2:]  # Use last two characters for simple rhyme detection
+        rhyme_groups[suffix].append(i + 1)  # Store line numbers (1-based)
+
+    # Filter out non-rhyming words
+    rhyme_patterns = {suffix: lines for suffix, lines in rhyme_groups.items() if len(lines) > 1}
+
+    return {
+        'total_lines': len(lines),
+        'rhyming_lines': sum(len(lines) for lines in rhyme_patterns.values()),
+        'rhyme_density': round(sum(len(lines) for lines in rhyme_patterns.values()) / len(lines) * 100, 2),
+        'rhyme_groups': dict(rhyme_patterns)
+    }
+
+def get_detailed_song_analysis(lyrics: str) -> Dict:
+    """Get comprehensive song analysis including mood, structure, and rhymes."""
+    from typing import List, Dict
+    import re
+
+    basic_stats = get_song_statistics(lyrics)
+    rhyme_analysis = analyze_rhyme_pattern(lyrics)
+    mood = detect_song_mood(lyrics)
+
+    # Detect verse/chorus markers
+    structure_markers = {
+        'verse': len(re.findall(r'\[verse\]|\[v\d?\]', lyrics.lower())),
+        'chorus': len(re.findall(r'\[chorus\]|\[ch\d?\]', lyrics.lower())),
+        'bridge': len(re.findall(r'\[bridge\]', lyrics.lower())),
+        'intro': len(re.findall(r'\[intro\]', lyrics.lower())),
+        'outro': len(re.findall(r'\[outro\]', lyrics.lower()))
+    }
+
+    # Enhanced mood analysis
+    mood_intensity = {
+        'happy': sum(1 for word in re.findall(r'\b\w+\b', lyrics.lower()) 
+                    if word in ['happy', 'joy', 'smile', 'laugh', 'fun', 'love']),
+        'sad': sum(1 for word in re.findall(r'\b\w+\b', lyrics.lower())
+                  if word in ['sad', 'cry', 'tears', 'pain', 'hurt', 'alone']),
+        'energetic': sum(1 for word in re.findall(r'\b\w+\b', lyrics.lower())
+                        if word in ['jump', 'dance', 'run', 'fire', 'burn', 'alive'])
+    }
+
+    return {
+        'statistics': basic_stats,
+        'rhyme_analysis': rhyme_analysis,
+        'mood': {
+            'primary_mood': mood,
+            'mood_intensity': mood_intensity
+        },
+        'structure': structure_markers
+    }
+
+def format_detailed_analysis(analysis: Dict) -> str:
+    """Format detailed song analysis into a readable message."""
+
+    # Format rhyme analysis
+    rhyme_info = (
+        f"🎭 Rhyme Analysis:\n"
+        f"• Rhyming Lines: {analysis['rhyme_analysis']['rhyming_lines']}/{analysis['rhyme_analysis']['total_lines']}\n"
+        f"• Rhyme Density: {analysis['rhyme_analysis']['rhyme_density']}%\n"
+    )
+
+    # Format mood intensity
+    mood_intensities = analysis['mood']['mood_intensity']
+    dominant_intensity = max(mood_intensities.items(), key=lambda x: x[1])
+    mood_info = (
+        f"🎭 Mood Analysis:\n"
+        f"• Primary Mood: {analysis['mood']['primary_mood'].title()}\n"
+        f"• Emotional Keywords:\n"
+        f"  - Happy: {mood_intensities['happy']} mentions\n"
+        f"  - Sad: {mood_intensities['sad']} mentions\n"
+        f"  - Energetic: {mood_intensities['energetic']} mentions\n"
+    )
+
+    # Format structure information
+    structure = analysis['structure']
+    structure_info = "🎼 Song Structure:\n"
+    for part, count in structure.items():
+        if count > 0:
+            structure_info += f"• {part.title()}: {count} sections\n"
+
+    # Format statistics
+    stats = analysis['statistics']
+    stats_info = (
+        f"📊 Lyrical Statistics:\n"
+        f"• Lines: {stats['total_lines']}\n"
+        f"• Words: {stats['total_words']}\n"
+        f"• Unique Words: {stats['unique_words']}\n"
+        f"• Vocabulary Richness: {stats['vocabulary_richness']}%\n"
+    )
+
+    return (
+        f"{stats_info}\n"
+        f"{rhyme_info}\n"
+        f"{mood_info}\n"
+        f"{structure_info}\n"
+        "Want to explore more? Try these commands:\n"
+        "• /lyrics - Get full lyrics\n"
+        "• /recommend - Find similar songs\n"
+        "• /quiz - Test your knowledge"
+    )

@@ -1,7 +1,6 @@
-import os
+from typing import List, Dict, Optional, Tuple
 import random
 import logging
-from typing import List, Dict, Optional, Tuple
 from services.lyrics_service import get_song_lyrics
 from functools import lru_cache
 
@@ -27,6 +26,18 @@ def get_quiz_songs() -> List[Dict]:
         {"artist": "Elvis Presley", "song": "Can't Help Falling in Love"}
     ]
 
+def generate_multiple_choice_options(correct_song: Dict, all_songs: List[Dict]) -> List[Dict]:
+    """Generate multiple choice options including the correct answer."""
+    # Remove the correct song from the pool to avoid duplicates
+    other_songs = [song for song in all_songs if song != correct_song]
+    # Randomly select 3 other songs
+    wrong_options = random.sample(other_songs, min(3, len(other_songs)))
+    # Add the correct answer
+    options = wrong_options + [correct_song]
+    # Shuffle the options
+    random.shuffle(options)
+    return options
+
 def get_quiz_question(exclude_songs: List[Dict] = None, last_artist: str = None) -> Optional[Dict]:
     """Get a random quiz question, excluding used songs and avoiding same artist."""
     try:
@@ -39,7 +50,7 @@ def get_quiz_question(exclude_songs: List[Dict] = None, last_artist: str = None)
         different_artist_songs = [song for song in available_songs if song["artist"] != last_artist]
         song_pool = different_artist_songs if different_artist_songs else available_songs
 
-        # Shuffle the pool once and try songs in order to avoid repeated random.choice calls
+        # Shuffle the pool once and try songs in order
         random.shuffle(song_pool)
 
         for song_choice in song_pool:
@@ -54,10 +65,15 @@ def get_quiz_question(exclude_songs: List[Dict] = None, last_artist: str = None)
             start_idx = random.randint(0, len(lines) - 4)
             snippet = '\n'.join(lines[start_idx:start_idx + 4])
 
+            # Generate multiple choice options
+            options = generate_multiple_choice_options(song_choice, get_quiz_songs())
+
             return {
                 "artist": song_choice["artist"],
                 "song": song_choice["song"],
-                "snippet": snippet
+                "snippet": snippet,
+                "options": options,
+                "start_time": None  # Will be set when quiz starts
             }
 
         return None
@@ -66,7 +82,7 @@ def get_quiz_question(exclude_songs: List[Dict] = None, last_artist: str = None)
         logger.error(f"Error getting quiz question: {str(e)}")
         return None
 
-def start_quiz(user_id: int) -> Optional[Dict]:
+def start_quiz(user_id: int, mode: str = "multiple_choice") -> Optional[Dict]:
     """Start a new quiz session for a user."""
     try:
         # Return existing active quiz
@@ -84,11 +100,13 @@ def start_quiz(user_id: int) -> Optional[Dict]:
             "score": 0,
             "total_questions": 0,
             "state": "active",
+            "mode": mode,
             "used_songs": [{
                 "artist": question["artist"],
                 "song": question["song"]
             }],
-            "last_artist": question["artist"]
+            "last_artist": question["artist"],
+            "time_bonus": 0  # For time-based scoring
         }
 
         active_quizzes[user_id] = quiz_data
@@ -142,6 +160,13 @@ def check_answer(user_id: int, answer: str) -> Tuple[bool, str]:
     except Exception as e:
         logger.error(f"Error checking answer: {str(e)}")
         return False, "Sorry, something went wrong! Try /quiz to start a new game"
+
+def format_multiple_choice_options(options: List[Dict]) -> str:
+    """Format multiple choice options for display."""
+    formatted = []
+    for i, option in enumerate(['A', 'B', 'C', 'D'][:len(options)]):
+        formatted.append(f"{option}) {options[i]['artist']} - {options[i]['song']}") #Fixed this line
+    return '\n'.join(formatted)
 
 def get_quiz_stats(user_id: int) -> str:
     """Get the user's current quiz statistics."""

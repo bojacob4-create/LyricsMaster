@@ -8,6 +8,15 @@ from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
+# Configure session with retries and connection pooling
+session = requests.Session()
+retries = requests.packages.urllib3.util.retry.Retry(
+    total=3,
+    backoff_factor=0.3,
+    status_forcelist=[429, 500, 502, 503, 504],
+)
+session.mount('https://', requests.adapters.HTTPAdapter(max_retries=retries))
+
 @lru_cache(maxsize=100)
 def get_song_lyrics(artist: str, song: str) -> Optional[str]:
     """
@@ -22,68 +31,73 @@ def get_song_lyrics(artist: str, song: str) -> Optional[str]:
     """
     try:
         # Clean up search terms
-        artist = artist.strip().replace("'", "'")  # Handle special apostrophes
-        song = song.strip().replace("'", "'")
+        artist = artist.strip().replace("'", "'").replace('"', '')
+        song = song.strip().replace("'", "'").replace('"', '')
 
-        logger.info(f"Searching for lyrics: {artist} - {song}")
+        logger.debug(f"Attempting to fetch lyrics for: {artist} - {song}")
 
-        # URL encode the artist and song names properly
-        artist_encoded = quote(artist, safe='')
-        song_encoded = quote(song, safe='')
+        # Try multiple endpoint variations
+        endpoints = [
+            f"https://api.lyrics.ovh/v1/{quote(artist, safe='')}/{quote(song, safe='')}",
+            f"https://api.lyrics.ovh/v1/{quote(artist.lower(), safe='')}/{quote(song.lower(), safe='')}",
+            # Add alternative endpoint for special characters
+            f"https://api.lyrics.ovh/v1/{quote(''.join(c for c in artist if c.isalnum() or c.isspace()), safe='')}/{quote(''.join(c for c in song if c.isalnum() or c.isspace()), safe='')}"
+        ]
 
-        # Lyrics.ovh API endpoint
-        url = f"https://api.lyrics.ovh/v1/{artist_encoded}/{song_encoded}"
-
-        # Configure session with retries
-        session = requests.Session()
-        retries = requests.packages.urllib3.util.retry.Retry(
-            total=3,
-            backoff_factor=0.3,
-            status_forcelist=[429, 500, 502, 503, 504],
-        )
-        session.mount('https://', requests.adapters.HTTPAdapter(max_retries=retries))
-
-        # Try up to 3 times
-        for attempt in range(3):
+        for endpoint in endpoints:
             try:
-                response = session.get(url, timeout=10)
+                logger.debug(f"Trying endpoint: {endpoint}")
+                response = session.get(endpoint, timeout=10)
+
+                logger.debug(f"Response status code: {response.status_code}")
 
                 if response.status_code == 200:
                     data = response.json()
                     lyrics = data.get('lyrics')
+
                     if lyrics:
+                        logger.debug("Successfully retrieved lyrics")
                         # Clean up lyrics formatting
                         lyrics = lyrics.replace('\r', '')
                         lyrics = '\n'.join(line.strip() for line in lyrics.split('\n'))
                         return lyrics
-                    logger.warning("Empty lyrics returned from API")
+
+                    logger.debug("Empty lyrics in response")
+                    continue
 
                 elif response.status_code == 404:
-                    # Try with slightly modified search terms
-                    if attempt == 0:
-                        # Try without special characters
-                        artist_clean = ''.join(c for c in artist if c.isalnum() or c.isspace())
-                        song_clean = ''.join(c for c in song if c.isalnum() or c.isspace())
-                        if artist_clean != artist or song_clean != song:
-                            artist, song = artist_clean, song_clean
-                            continue
-                    logger.info(f"No lyrics found for: {artist} - {song}")
-                    return None
-
-                else:
-                    logger.warning(f"API request failed with status {response.status_code}")
-                    if attempt < 2:
-                        time.sleep(1)  # Wait before retry
-                        continue
-                    return None
-
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Request error on attempt {attempt + 1}: {str(e)}")
-                if attempt < 2:
-                    time.sleep(1)  # Wait before retry
+                    logger.debug("Lyrics not found at this endpoint")
                     continue
-                return None
 
+                elif response.status_code == 429:
+                    logger.debug("Rate limit hit, waiting before retry")
+                    time.sleep(2)  # Longer wait for rate limits
+                    continue
+
+                elif response.status_code >= 500:
+                    logger.debug(f"Server error {response.status_code}, trying next endpoint")
+                    continue
+
+            except requests.exceptions.Timeout:
+                logger.debug(f"Timeout for endpoint: {endpoint}")
+                continue
+            except requests.exceptions.RequestException as e:
+                logger.debug(f"Request failed for endpoint: {endpoint}, error: {str(e)}")
+                continue
+            except Exception as e:
+                logger.debug(f"Unexpected error for endpoint: {endpoint}, error: {str(e)}")
+                continue
+
+        # Final attempt with basic alphanumeric characters
+        logger.debug("All endpoints failed, trying one last time with simplified terms")
+        artist_simple = ''.join(c for c in artist if c.isalnum() or c.isspace()).strip()
+        song_simple = ''.join(c for c in song if c.isalnum() or c.isspace()).strip()
+
+        if artist_simple != artist or song_simple != song:
+            logger.debug(f"Attempting with simplified terms: {artist_simple} - {song_simple}")
+            return get_song_lyrics(artist_simple, song_simple)
+
+        logger.info(f"No lyrics found after trying all variations for: {artist} - {song}")
         return None
 
     except Exception as e:

@@ -17,7 +17,11 @@ from handlers import (
     subscribe_daily_command,
     unsubscribe_daily_command,
     send_daily_song,
-    youtube_command
+    youtube_command,
+    analyze_command,
+    favorite_command,
+    unfavorite_command,
+    favorites_command
 )
 
 # Configure logging
@@ -64,6 +68,10 @@ def main():
         dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
         dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
         dp.add_handler(CommandHandler("youtube", youtube_command))
+        dp.add_handler(CommandHandler("analyze", analyze_command))
+        dp.add_handler(CommandHandler("favorite", favorite_command))
+        dp.add_handler(CommandHandler("unfavorite", unfavorite_command))
+        dp.add_handler(CommandHandler("favorites", favorites_command))
 
         # Add message handler for quiz answers
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
@@ -90,12 +98,16 @@ def main():
             BotCommand("lyrics", "Find song lyrics 🎤 (format: artist - song)"),
             BotCommand("stats", "Get song statistics 📊 (format: artist - song)"),
             BotCommand("recommend", "Get song recommendations 🎵 (format: artist - song)"),
-            BotCommand("translate", "Get Arabic lyrics translation 🌍 (format: artist - song)"),
             BotCommand("quiz", "Start a fun lyrics quiz game 🎮"),
             BotCommand("endquiz", "End the current quiz game 🎲"),
+            BotCommand("translate", "Get Arabic lyrics translation 🌍 (format: artist - song)"),
             BotCommand("subscribe", "Get a daily song with analysis 📅"),
             BotCommand("unsubscribe", "Stop receiving daily songs 🔕"),
-            BotCommand("youtube", "Get YouTube link for a song 🎬 (format: artist - song)")
+            BotCommand("youtube", "Get YouTube link for a song 🎬 (format: artist - song)"),
+            BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
+            BotCommand("favorite", "Add song to favorites ⭐ (format: artist - song)"),
+            BotCommand("unfavorite", "Remove from favorites 💫 (format: artist - song)"),
+            BotCommand("favorites", "View your favorite songs list 📝")
         ]
         updater.bot.set_my_commands(commands)
         logger.info("Bot commands registered with Telegram")
@@ -106,7 +118,7 @@ def main():
 
         # Run the bot until you press Ctrl-C
         logger.info("Bot started successfully!")
-        logger.info("Available commands: /start, /help, /lyrics, /stats, /recommend, /translate, /quiz, /endquiz, /subscribe, /unsubscribe, /youtube")
+        logger.info("Available commands: /start, /help, /lyrics, /stats, /recommend, /translate, /quiz, /endquiz, /subscribe, /unsubscribe, /youtube, /analyze, /favorite, /unfavorite, /favorites")
         updater.idle()
 
     except Exception as e:

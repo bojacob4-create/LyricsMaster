@@ -1,6 +1,7 @@
 import logging
-from telegram import Update
-from telegram.ext import CallbackContext
+import os
+from telegram import Update, BotCommand
+from telegram.ext import CallbackContext, CommandHandler, Updater, MessageHandler, Filters
 from services.lyrics_service import get_song_lyrics
 from services.translator_service import translate_to_arabic
 from services.recommendation_service import get_similar_songs, format_recommendations
@@ -16,9 +17,13 @@ from utils import (
     format_lyrics,
     detect_song_mood,
     get_song_statistics,
-    format_statistics
+    format_statistics,
+    get_detailed_song_analysis,
+    format_detailed_analysis
 )
 from services.youtube_service import get_youtube_link, format_youtube_response
+from services.favorites_service import add_favorite, remove_favorite, get_favorites, format_favorites_list # Added import for favorites
+
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +44,11 @@ def start_command(update: Update, context: CallbackContext):
         "🎵 /recommend artist - song → Get song recommendations\n"
         "🎮 /quiz → Play a fun lyrics guessing game!\n"
         "🌍 /translate artist - song → Get Arabic translation of lyrics\n"
-        "💡 /help → Show more tips and examples\n\n"
+        "💡 /help → Show more tips and examples\n"
+        "📊 /analyze artist - song → Get detailed song analysis\n\n" #Added new command
+        "⭐ /favorite artist - song → Add a song to your favorites\n" #Added new command
+        "💫 /unfavorite artist - song → Remove a song from your favorites\n" #Added new command
+        "📝 /favorites → View your favorite songs list\n\n" #Added new command
         "Try me out! For example, type:\n"
         "/lyrics Ed Sheeran - Perfect"
     )
@@ -65,6 +74,14 @@ def help_command(update: Update, context: CallbackContext):
         "5️⃣ To get Arabic translation:\n"
         "   /translate artist - song\n"
         "   Example: /translate Adele - Hello\n\n"
+        "6️⃣ To get detailed song analysis:\n" #Added new command
+        "   /analyze artist - song\n"
+        "   Example: /analyze Eminem - Lose Yourself\n\n" #Added new command
+        "7️⃣ To manage your favorite songs:\n" #Added new command
+        "   /favorite artist - song → Add a song to your favorites\n" #Added new command
+        "   /unfavorite artist - song → Remove a song from your favorites\n" #Added new command
+        "   /favorites → View your favorite songs list\n\n" #Added new command
+
         "🎯 Pro Tips:\n"
         "• Make sure to use the dash (-) between artist and song\n"
         "• Double-check the spelling of artist and song names\n"
@@ -77,7 +94,7 @@ def quiz_command(update: Update, context: CallbackContext):
     """Handle the /quiz command to start a lyrics quiz."""
     user_id = update.effective_user.id
     try:
-        quiz_data = start_quiz(user_id)
+        quiz_data = start_quiz(user_id, mode="multiple_choice")
         if not quiz_data:
             update.message.reply_text(
                 "😓 Oops! I couldn't start the quiz right now.\n"
@@ -85,14 +102,18 @@ def quiz_command(update: Update, context: CallbackContext):
             )
             return
 
-        snippet = quiz_data["current_question"]["snippet"]
+        current_question = quiz_data["current_question"]
+        snippet = current_question["snippet"]
+        options = current_question["options"]
+
         response = (
-            "🎵 Welcome to the Lyrics Quiz! 🎮\n\n"
-            "I'll show you some lyrics, and you guess the song!\n"
-            "Format your answer as: artist - song\n\n"
+            "🎵 Welcome to the Multiple Choice Lyrics Quiz! 🎮\n\n"
+            "I'll show you some lyrics, and you choose the correct song!\n"
+            "Reply with A, B, C, or D to make your choice.\n\n"
             "Here's your first lyrics snippet:\n\n"
             f"{snippet}\n\n"
-            "What song is this? Reply with your guess! 🤔\n"
+            "Which song is this? Choose from:\n\n"
+            f"{format_multiple_choice_options(options)}\n\n"
             "Use /endquiz to finish the game early."
         )
 
@@ -109,11 +130,35 @@ def quiz_answer(update: Update, context: CallbackContext):
     """Handle quiz answers in regular messages."""
     user_id = update.effective_user.id
     try:
-        answer = update.message.text
-        if not answer or "-" not in answer:
-            return  # Not a quiz answer
+        answer = update.message.text.strip().upper()
+        logger.debug(f"Quiz answer received from user {user_id}: {answer}")
 
-        is_correct, feedback = check_answer(user_id, answer)
+        if not answer or len(answer) != 1 or answer not in 'ABCD':
+            logger.debug(f"Invalid quiz answer format: {answer}")
+            return  # Not a valid quiz answer
+
+        # Get the current quiz
+        quiz_data = active_quizzes.get(user_id)
+        if not quiz_data or quiz_data["state"] != "active":
+            logger.debug(f"No active quiz found for user {user_id}")
+            return
+
+        # Send confirmation that we received the answer
+        update.message.reply_text(f"Processing your answer: {answer}...")
+
+        # Get the selected option
+        options = quiz_data["current_question"]["options"]
+        option_index = 'ABCD'.index(answer)
+        if option_index >= len(options):
+            logger.debug(f"Option index out of range: {option_index}")
+            return
+
+        selected_option = options[option_index]
+        formatted_answer = f"{selected_option['artist']} - {selected_option['song']}"
+        logger.debug(f"Selected answer: {formatted_answer}")
+
+        is_correct, feedback = check_answer(user_id, formatted_answer)
+        logger.debug(f"Answer check result - correct: {is_correct}, feedback: {feedback}")
 
         # Handle quiz completion
         if "Quiz completed!" in feedback:
@@ -121,22 +166,27 @@ def quiz_answer(update: Update, context: CallbackContext):
             return
 
         # Get current quiz data after answer check
-        quiz_data = start_quiz(user_id)  # This will return the current quiz since it exists
+        quiz_data = active_quizzes.get(user_id)
         if not quiz_data or quiz_data["state"] != "active":
             update.message.reply_text("Quiz session ended. Start a new quiz with /quiz!")
             return
 
         stats = get_quiz_stats(user_id)
-        snippet = quiz_data["current_question"]["snippet"]
+        current_question = quiz_data["current_question"]
+        snippet = current_question["snippet"]
+        options = current_question["options"]
+
         response = (
             f"{feedback}\n\n"
             f"{stats}\n\n"
             "Here's your next lyrics snippet:\n\n"
             f"{snippet}\n\n"
-            "What song is this? Reply with your guess! 🤔"
+            "Which song is this? Choose from:\n\n"
+            f"{format_multiple_choice_options(options)}"
         )
 
         update.message.reply_text(response)
+        logger.info(f"Successfully sent next question to user {user_id}")
 
     except Exception as e:
         logger.error(f"Error processing quiz answer for user {user_id}: {str(e)}")
@@ -206,18 +256,33 @@ def lyrics_command(update: Update, context: CallbackContext):
             'relaxed': '😌'
         }.get(mood, '🎵')
 
-        # Format message with mood and brief stats
-        formatted_lyrics = format_lyrics(lyrics)
-        response = (
+        # Format header with song info and stats
+        header = (
             f"🎵 {artist.strip()} - {song.strip()}\n\n"
             f"Song mood: {mood_emoji} {mood.title()}\n"
             f"Words: {stats['total_words']} | Lines: {stats['total_lines']} | "
             f"Vocabulary: {stats['vocabulary_richness']}%\n\n"
-            f"{formatted_lyrics}\n\n"
-            "Want more details? Try /stats with this song! 📊"
         )
 
-        update.message.reply_text(response)
+        # Format and split lyrics into chunks
+        formatted_lyrics = format_lyrics(lyrics)
+        max_chunk_size = 3000  # Leave room for headers and formatting
+        chunks = [formatted_lyrics[i:i + max_chunk_size] for i in range(0, len(formatted_lyrics), max_chunk_size)]
+
+        # Send first message with header
+        first_message = header + chunks[0]
+        update.message.reply_text(first_message)
+
+        # Send remaining chunks if any
+        for i, chunk in enumerate(chunks[1:], 1):
+            continuation_header = f"🎵 Continuation ({i+1}/{len(chunks)})...\n\n"
+            update.message.reply_text(continuation_header + chunk)
+
+        if len(chunks) > 1:
+            update.message.reply_text(
+                "Want more details? Try /stats with this song! 📊"
+            )
+
         logger.info(f"Successfully sent lyrics to user {user_id}")
 
     except Exception as e:
@@ -492,3 +557,209 @@ def youtube_command(update: Update, context: CallbackContext):
             "😓 Oops! Something went wrong while getting the YouTube link.\n"
             "Please try again in a moment! 🔄"
         )
+
+def analyze_command(update: Update, context: CallbackContext):
+    """Handle the /analyze command for detailed song analysis."""
+    user_id = update.effective_user.id
+    try:
+        query = " ".join(context.args)
+        if not query or "-" not in query:
+            logger.info(f"User {user_id} provided invalid analysis query format")
+            update.message.reply_text(
+                "⚠️ Please use this format: /analyze artist - song\n"
+                "For example: /analyze Eminem - Lose Yourself\n\n"
+                "I'll give you a detailed analysis of the song! 📊"
+            )
+            return
+
+        artist, song = query.split("-", 1)
+        logger.info(f"User {user_id} requested analysis for '{artist.strip()} - {song.strip()}'")
+
+        # Send typing action while processing
+        update.message.chat.send_action(action="typing")
+
+        lyrics = get_song_lyrics(artist.strip(), song.strip())
+        if not lyrics:
+            logger.info(f"No lyrics found for '{artist.strip()} - {song.strip()}'")
+            update.message.reply_text(
+                "😕 Sorry, I couldn't find that song.\n\n"
+                "Please check the spelling and try again! 🔍"
+            )
+            return
+
+        # Get detailed analysis
+        analysis = get_detailed_song_analysis(lyrics)
+        formatted_analysis = format_detailed_analysis(analysis)
+
+        # Format response with song info
+        response = (
+            f"🎵 Detailed Analysis: {artist.strip()} - {song.strip()}\n\n"
+            f"{formatted_analysis}"
+        )
+
+        update.message.reply_text(response)
+        logger.info(f"Successfully sent analysis to user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error processing analyze command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Oops! Something went wrong while analyzing the song.\n"
+            "Please try again in a moment! 🔄"
+        )
+
+
+def favorite_command(update: Update, context: CallbackContext):
+    """Handle the /favorite command."""
+    user_id = update.effective_user.id
+    try:
+        logger.debug(f"Favorite command received from user {user_id}")
+        query = " ".join(context.args)
+        logger.debug(f"Favorite command args: {query}")
+
+        if not query or "-" not in query:
+            logger.info(f"User {user_id} provided invalid favorite query format: {query}")
+            update.message.reply_text(
+                "⚠️ Please use this format: /favorite artist - song\n"
+                "For example: /favorite Ed Sheeran - Perfect\n\n"
+                "I'll add it to your favorites! ⭐"
+            )
+            return
+
+        artist, song = query.split("-", 1)
+        logger.info(f"User {user_id} adding favorite: '{artist.strip()} - {song.strip()}'")
+
+        # Send confirmation that we're processing
+        update.message.reply_text("Processing your request...")
+
+        # Add to favorites
+        if add_favorite(user_id, artist.strip(), song.strip()):
+            update.message.reply_text(
+                f"⭐ Added to favorites: {artist.strip()} - {song.strip()}\n\n"
+                "Use /favorites to see your list!"
+            )
+        else:
+            update.message.reply_text(
+                "This song is already in your favorites! 😊\n"
+                "Use /favorites to see your list."
+            )
+
+    except Exception as e:
+        logger.error(f"Error in favorite command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong while adding to favorites.\n"
+            "Please try again later! 🔄"
+        )
+
+def unfavorite_command(update: Update, context: CallbackContext):
+    """Handle the /unfavorite command."""
+    user_id = update.effective_user.id
+    try:
+        query = " ".join(context.args)
+        if not query or "-" not in query:
+            logger.info(f"User {user_id} provided invalid unfavorite query format")
+            update.message.reply_text(
+                "⚠️ Please use this format: /unfavorite artist - song\n"
+                "For example: /unfavorite Ed Sheeran - Perfect\n\n"
+                "Check /favorites to see your list! ⭐"
+            )
+            return
+
+        artist, song = query.split("-", 1)
+        logger.info(f"User {user_id} removing favorite: '{artist.strip()} - {song.strip()}'")
+
+        # Remove from favorites
+        if remove_favorite(user_id, artist.strip(), song.strip()):
+            update.message.reply_text(
+                f"✨ Removed from favorites: {artist.strip()} - {song.strip()}\n\n"
+                "Use /favorites to see your updated list!"
+            )
+        else:
+            update.message.reply_text(
+                "This song wasn't in your favorites! 🤔\n"
+                "Use /favorites to see your list."
+            )
+
+    except Exception as e:
+        logger.error(f"Error in unfavorite command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong while removing from favorites.\n"
+            "Please try again later! 🔄"
+        )
+
+def favorites_command(update: Update, context: CallbackContext):
+    """Handle the /favorites command."""
+    user_id = update.effective_user.id
+    try:
+        logger.info(f"User {user_id} requesting favorites list")
+        favorites = get_favorites(user_id)
+        response = format_favorites_list(favorites)
+        update.message.reply_text(response)
+
+    except Exception as e:
+        logger.error(f"Error in favorites command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong while getting your favorites.\n"
+            "Please try again later! 🔄"
+        )
+
+def format_multiple_choice_options(options):
+    """Helper function to format multiple choice options neatly."""
+    option_strings = []
+    for i, option in enumerate(options):
+        option_strings.append(f"{chr(65 + i)}. {option['artist']} - {option['song']}")
+    return "\n".join(option_strings)
+
+def main():
+    """Initialize bot handlers and start the bot."""
+    from telegram.ext import Updater, MessageHandler, Filters
+
+    # Initialize updater and dispatcher
+    updater = Updater(token=os.environ.get('TELEGRAM_TOKEN'), use_context=True)
+    dp = updater.dispatcher
+
+    # Add command handlers
+    dp.add_handler(CommandHandler("start", start_command))
+    dp.add_handler(CommandHandler("help", help_command))
+    dp.add_handler(CommandHandler("lyrics", lyrics_command))
+    dp.add_handler(CommandHandler("stats", stats_command))
+    dp.add_handler(CommandHandler("recommend", recommend_command))
+    dp.add_handler(CommandHandler("quiz", quiz_command))
+    dp.add_handler(CommandHandler("endquiz", end_quiz_command))
+    dp.add_handler(CommandHandler("translate", translate_lyrics_command))
+    dp.add_handler(CommandHandler("youtube", youtube_command))
+    dp.add_handler(CommandHandler("analyze", analyze_command))
+    dp.add_handler(CommandHandler("favorite", favorite_command))
+    dp.add_handler(CommandHandler("unfavorite", unfavorite_command))
+    dp.add_handler(CommandHandler("favorites", favorites_command))
+    dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
+    dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
+
+    # Add message handler for quiz answers
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
+
+    # Set command list
+    commands = [
+        BotCommand("start", "Start the bot"),
+        BotCommand("help", "Get help and instructions"),
+        BotCommand("lyrics", "Get song lyrics with mood analysis 🎤 (format: artist - song)"),
+        BotCommand("stats", "Get detailed song statistics 📊 (format: artist - song)"),
+        BotCommand("recommend", "Get song recommendations 🎵 (format: artist - song)"),
+        BotCommand("quiz", "Play a fun lyrics guessing game 🎮"),
+        BotCommand("endquiz", "End the current quiz game"),
+        BotCommand("translate", "Get Arabic translation of lyrics 🌍 (format: artist - song)"),
+        BotCommand("subscribe", "Subscribe to daily song discovery 🎶"),
+        BotCommand("unsubscribe", "Unsubscribe from daily song discovery 👋"),
+        BotCommand("youtube", "Get YouTube link for song 🎬 (format: artist - song)"),
+        BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
+        BotCommand("favorite", "Add a song to favorites ⭐ (format: artist - song)"),        BotCommand("unfavorite", "Remove a song from favorites 💫 (format: artist - song)"),
+        BotCommand("favorites", "View your favorite songs list 📝")
+    ]
+
+    updater.bot.set_my_commands(commands)
+
+    # Start the bot
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == "__main__":
+    main()
