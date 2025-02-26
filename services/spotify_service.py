@@ -52,7 +52,7 @@ def get_spotify_token() -> Optional[str]:
                 logger.error(f"Request failed (attempt {attempt + 1}): {str(e)}")
 
             if attempt < 2:
-                time.sleep(1 * (attempt + 1))  # Exponential backoff
+                time.sleep(1 * (attempt + 1))
 
         logger.error("Failed to get token after all retries")
         return None
@@ -62,7 +62,7 @@ def get_spotify_token() -> Optional[str]:
         return None
 
 def get_top_tracks(limit: int = 10) -> List[Dict]:
-    """Get popular tracks using Browse API."""
+    """Get currently popular tracks using Spotify's New Releases."""
     try:
         token = get_spotify_token()
         if not token:
@@ -74,77 +74,83 @@ def get_top_tracks(limit: int = 10) -> List[Dict]:
             'Content-Type': 'application/json'
         }
 
-        # Try to get featured playlists first
+        logger.info("Fetching top tracks from Spotify...")
+
+        # Try up to 3 times with backoff
         for attempt in range(3):
             try:
-                logger.info(f"Fetching featured playlists (attempt {attempt + 1}/3)")
+                logger.debug(f"Attempt {attempt + 1} to fetch new releases")
 
-                # Get a featured playlist first
-                featured_response = requests.get(
-                    'https://api.spotify.com/v1/browse/featured-playlists',
-                    headers=headers,
-                    params={'limit': 1, 'country': 'US'},
-                    timeout=10
-                )
-
-                if featured_response.status_code != 200:
-                    logger.error(f"Featured playlists request failed: {featured_response.status_code}")
-                    if attempt < 2:
-                        time.sleep(1 * (attempt + 1))
-                        continue
-                    return []
-
-                featured_data = featured_response.json()
-                if not featured_data.get('playlists', {}).get('items'):
-                    logger.error("No featured playlists found")
-                    return []
-
-                # Get first playlist's tracks
-                playlist_id = featured_data['playlists']['items'][0]['id']
-                tracks_response = requests.get(
-                    f'https://api.spotify.com/v1/playlists/{playlist_id}/tracks',
+                # Get new releases with more detailed parameters
+                new_releases_response = requests.get(
+                    'https://api.spotify.com/v1/browse/new-releases',
                     headers=headers,
                     params={
                         'limit': limit,
-                        'fields': 'items(track(name,artists(name)))'
+                        'country': 'US',
+                        'offset': 0  # Start from the most recent
                     },
                     timeout=10
                 )
 
-                if tracks_response.status_code != 200:
-                    logger.error(f"Tracks request failed: {tracks_response.status_code}")
+                if new_releases_response.status_code == 200:
+                    releases_data = new_releases_response.json()
+
+                    if not releases_data.get('albums', {}).get('items'):
+                        logger.error("No albums found in response")
+                        return []
+
+                    tracks = []
+                    for album in releases_data['albums']['items']:
+                        try:
+                            # Get artist names
+                            artist_names = [artist['name'] for artist in album['artists']]
+                            artist_name = artist_names[0] if artist_names else 'Unknown Artist'
+
+                            # Get track name (album name in this case)
+                            track_name = album['name']
+
+                            if not artist_name or not track_name:
+                                logger.warning(f"Missing artist or track name for album {album.get('id')}")
+                                continue
+
+                            tracks.append({
+                                'name': track_name,
+                                'artist': artist_name
+                            })
+                            logger.debug(f"Added track: {artist_name} - {track_name}")
+
+                        except Exception as e:
+                            logger.warning(f"Error processing album: {str(e)}")
+                            continue
+
+                    if tracks:
+                        logger.info(f"Successfully fetched {len(tracks)} tracks")
+                        return tracks[:limit]
+
+                    logger.warning("No valid tracks found in results")
+                    return []
+
+                elif new_releases_response.status_code == 429:  # Rate limit
+                    retry_after = int(new_releases_response.headers.get('Retry-After', 1))
+                    logger.warning(f"Rate limited, waiting {retry_after} seconds")
+                    time.sleep(retry_after)
+                    continue
+
+                elif new_releases_response.status_code == 401:  # Token expired
+                    logger.error("Token expired, will retry with new token")
+                    token = get_spotify_token()  # Get fresh token
+                    if not token:
+                        return []
+                    headers['Authorization'] = f'Bearer {token}'
+                    continue
+
+                else:
+                    logger.error(f"New releases request failed with status {new_releases_response.status_code}")
                     if attempt < 2:
                         time.sleep(1 * (attempt + 1))
                         continue
                     return []
-
-                tracks_data = tracks_response.json()
-
-                tracks = []
-                for item in tracks_data.get('items', []):
-                    try:
-                        track = item.get('track', {})
-                        if not track:
-                            continue
-
-                        artists = track.get('artists', [])
-                        name = track.get('name')
-
-                        if not name or not artists:
-                            continue
-
-                        artist_name = artists[0].get('name', 'Unknown Artist')
-                        tracks.append({
-                            'name': name,
-                            'artist': artist_name
-                        })
-                    except Exception as e:
-                        logger.warning(f"Error processing track: {str(e)}")
-                        continue
-
-                if tracks:
-                    logger.info(f"Successfully fetched {len(tracks)} tracks")
-                    return tracks[:limit]
 
             except requests.exceptions.RequestException as e:
                 logger.error(f"Request failed (attempt {attempt + 1}): {str(e)}")

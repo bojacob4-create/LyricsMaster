@@ -81,11 +81,11 @@ def top_tracks_command(update: Update, context: CallbackContext):
 
         # Send initial message
         message = update.message.reply_text(
-            "🎵 Fetching global top tracks...\n"
+            "🎵 Fetching latest releases...\n"
             "This will just take a moment."
         )
 
-        # Get tracks from Last.fm
+        # Get tracks from Spotify
         tracks = get_top_tracks()
 
         if not tracks:
@@ -104,7 +104,7 @@ def top_tracks_command(update: Update, context: CallbackContext):
     except Exception as e:
         logger.error(f"Error in top_tracks_command for user {user_id}: {str(e)}")
         error_message = (
-            "❌ Sorry, there was a problem fetching the top tracks.\n"
+            "❌ Sorry, there was a problem fetching the tracks.\n"
             "Please try again in a few minutes."
         )
         try:

@@ -22,15 +22,19 @@ def get_lastfm_network() -> Optional[pylast.LastFMNetwork]:
                 logger.debug(f"Attempt {attempt + 1} to initialize Last.fm network")
                 network = pylast.LastFMNetwork(api_key=api_key)
 
-                # Simple connection test
-                if network.get_user("rj"):  # Test with a known Last.fm user
+                # Test connection with a metro tracks call
+                test_tracks = network.get_metro_tracks("New York", "United States", limit=1)
+                if test_tracks:
                     logger.info("Successfully initialized Last.fm network")
                     return network
 
+            except pylast.WSError as ws_error:
+                logger.error(f"Last.fm Web Service error: {ws_error}")
+                return None
             except Exception as e:
                 logger.error(f"Network initialization failed (attempt {attempt + 1}): {str(e)}")
                 if attempt < 2:
-                    time.sleep(1 * (attempt + 1))  # Exponential backoff
+                    time.sleep(1 * (attempt + 1))
                 continue
 
         logger.error("Failed to initialize Last.fm network after all retries")
@@ -41,7 +45,7 @@ def get_lastfm_network() -> Optional[pylast.LastFMNetwork]:
         return None
 
 def get_top_tracks(limit: int = 10) -> List[Dict]:
-    """Get top tracks from Last.fm's weekly chart."""
+    """Get top tracks from Last.fm metro area."""
     try:
         network = get_lastfm_network()
         if not network:
@@ -50,27 +54,29 @@ def get_top_tracks(limit: int = 10) -> List[Dict]:
 
         logger.info("Fetching top tracks from Last.fm...")
 
-        # Get weekly chart tracks with retries
+        # Try up to 3 times with backoff
         for attempt in range(3):
             try:
-                logger.debug(f"Attempt {attempt + 1} to fetch top tracks")
+                logger.debug(f"Attempt {attempt + 1} to fetch metro tracks")
 
-                # Get global weekly chart
-                weekly_chart = network.get_weekly_chart_tracks(limit=limit)
-                if not weekly_chart:
-                    logger.error("Empty weekly chart returned")
-                    continue
+                # Get metro tracks for New York
+                metro_tracks = network.get_metro_tracks(
+                    metro="New York",
+                    country="United States",
+                    limit=limit
+                )
 
                 tracks = []
-                for track in weekly_chart:
+                for track in metro_tracks:
                     try:
-                        if not track or not track[0]:
+                        if not track or not isinstance(track, pylast.Track):
                             continue
 
-                        artist_name = str(track[0].artist)
-                        track_name = str(track[0].title)
+                        artist_name = str(track.artist)
+                        track_name = str(track.title)
 
                         if not artist_name or not track_name:
+                            logger.warning(f"Missing artist or track name: {artist_name} - {track_name}")
                             continue
 
                         tracks.append({
@@ -78,6 +84,7 @@ def get_top_tracks(limit: int = 10) -> List[Dict]:
                             'artist': artist_name
                         })
                         logger.debug(f"Added track: {artist_name} - {track_name}")
+
                     except Exception as track_error:
                         logger.warning(f"Error processing track: {str(track_error)}")
                         continue
@@ -89,6 +96,9 @@ def get_top_tracks(limit: int = 10) -> List[Dict]:
                 logger.warning("No tracks found in results")
                 return []
 
+            except pylast.WSError as ws_error:
+                logger.error(f"Last.fm Web Service error: {ws_error}")
+                return []
             except Exception as e:
                 logger.error(f"Failed to fetch tracks (attempt {attempt + 1}): {str(e)}")
                 if attempt < 2:
