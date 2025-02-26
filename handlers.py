@@ -94,6 +94,7 @@ def quiz_command(update: Update, context: CallbackContext):
     """Handle the /quiz command to start a lyrics quiz."""
     user_id = update.effective_user.id
     try:
+        logger.debug(f"Starting quiz for user {user_id}")
         quiz_data = start_quiz(user_id, mode="multiple_choice")
         if not quiz_data:
             update.message.reply_text(
@@ -118,6 +119,7 @@ def quiz_command(update: Update, context: CallbackContext):
         )
 
         update.message.reply_text(response)
+        logger.info(f"Successfully started quiz for user {user_id}")
 
     except Exception as e:
         logger.error(f"Error in quiz command for user {user_id}: {str(e)}")

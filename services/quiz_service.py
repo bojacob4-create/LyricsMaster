@@ -1,6 +1,6 @@
+import logging
 from typing import List, Dict, Optional, Tuple
 import random
-import logging
 from services.lyrics_service import get_song_lyrics
 from functools import lru_cache
 
@@ -165,7 +165,7 @@ def format_multiple_choice_options(options: List[Dict]) -> str:
     """Format multiple choice options for display."""
     formatted = []
     for i, option in enumerate(['A', 'B', 'C', 'D'][:len(options)]):
-        formatted.append(f"{option}) {options[i]['artist']} - {options[i]['song']}") #Fixed this line
+        formatted.append(f"{option}) {options[i]['artist']} - {options[i]['song']}")
     return '\n'.join(formatted)
 
 def get_quiz_stats(user_id: int) -> str:

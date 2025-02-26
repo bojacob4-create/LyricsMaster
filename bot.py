@@ -56,25 +56,26 @@ def main():
         dp = updater.dispatcher
         logger.info("Registering command handlers...")
 
-        # Add command handlers
+        # First register message handler for quiz answers to ensure it catches non-command messages
+        dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
+        logger.info("Quiz answer handler registered")
+
+        # Then add command handlers
         dp.add_handler(CommandHandler("start", start_command))
         dp.add_handler(CommandHandler("help", help_command))
         dp.add_handler(CommandHandler("lyrics", lyrics_command))
         dp.add_handler(CommandHandler("stats", stats_command))
         dp.add_handler(CommandHandler("recommend", recommend_command))
-        dp.add_handler(CommandHandler("translate", translate_lyrics_command))
         dp.add_handler(CommandHandler("quiz", quiz_command))
         dp.add_handler(CommandHandler("endquiz", end_quiz_command))
-        dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
-        dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
+        dp.add_handler(CommandHandler("translate", translate_lyrics_command))
         dp.add_handler(CommandHandler("youtube", youtube_command))
         dp.add_handler(CommandHandler("analyze", analyze_command))
         dp.add_handler(CommandHandler("favorite", favorite_command))
         dp.add_handler(CommandHandler("unfavorite", unfavorite_command))
         dp.add_handler(CommandHandler("favorites", favorites_command))
-
-        # Add message handler for quiz answers
-        dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
+        dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
+        dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
 
         logger.info("Command handlers registered successfully")
 
