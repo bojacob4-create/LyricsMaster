@@ -9,37 +9,40 @@ logger = logging.getLogger(__name__)
 
 def get_spotify_client():
     """Initialize Spotify client with retries."""
-    retries = 3
-    for i in range(retries):
-        try:
-            client_id = os.getenv("SPOTIFY_CLIENT_ID")
-            client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
+    client_id = os.getenv("SPOTIFY_CLIENT_ID")
+    client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
 
-            if not client_id or not client_secret:
-                logger.error("Missing Spotify credentials")
-                return None
+    if not client_id or not client_secret:
+        logger.error("Missing Spotify credentials")
+        return None
 
-            logger.info(f"Attempt {i+1}/{retries} to initialize Spotify client...")
-            auth_manager = SpotifyClientCredentials(
-                client_id=client_id,
-                client_secret=client_secret
-            )
+    logger.info("Initializing Spotify client...")
+    logger.debug(f"Using client ID: {client_id[:5]}...")  # Log first 5 chars for debugging
 
-            # Create and test the client
-            spotify = spotipy.Spotify(auth_manager=auth_manager)
-            # Test the connection with a simple search
-            spotify.search(q='test', limit=1)
-            logger.info("Spotify client initialized successfully")
+    try:
+        auth_manager = SpotifyClientCredentials(
+            client_id=client_id,
+            client_secret=client_secret
+        )
+        spotify = spotipy.Spotify(
+            auth_manager=auth_manager,
+            requests_timeout=10,
+            retries=3
+        )
+
+        # Test the client with a simple search
+        logger.info("Testing Spotify client connection...")
+        test_result = spotify.search(q='test', type='track', limit=1)
+        if test_result and test_result['tracks']['items']:
+            logger.info("Spotify client initialized and tested successfully")
             return spotify
+        else:
+            logger.error("Spotify client test failed - no results returned")
+            return None
 
-        except Exception as e:
-            logger.error(f"Attempt {i+1}/{retries} failed to initialize Spotify client: {str(e)}")
-            if i < retries - 1:
-                time.sleep(1)  # Wait before retrying
-    return None
-
-# Initialize Spotify client
-spotify = get_spotify_client()
+    except Exception as e:
+        logger.error(f"Failed to initialize Spotify client: {str(e)}")
+        return None
 
 def get_top_tracks(limit: int = 10) -> List[Dict]:
     """
@@ -52,53 +55,58 @@ def get_top_tracks(limit: int = 10) -> List[Dict]:
         List[Dict]: List of track information
     """
     try:
+        logger.info("Starting get_top_tracks function")
+        spotify = get_spotify_client()  # Get a fresh client for each request
+
         if not spotify:
-            logger.error("Spotify client not initialized")
+            logger.error("Could not initialize Spotify client")
             return []
 
         logger.info("Fetching top tracks from Spotify...")
 
-        try:
-            # Try Global Top 50 first
-            playlist_id = "37i9dQZEVXbMDoHDwVN2tF"
-            logger.info("Attempting to fetch Global Top 50 playlist...")
-            results = spotify.playlist_tracks(
-                playlist_id,
-                limit=limit,
-                fields="items(track(name,artists(name)))"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to fetch Global Top 50, trying Top Hits: {str(e)}")
+        # Try both playlists in sequence
+        playlists = [
+            ("Today's Top Hits", "37i9dQZF1DXcBWIGoYBM5M"),
+            ("Global Top 50", "37i9dQZEVXbMDoHDwVN2tF")
+        ]
+
+        for playlist_name, playlist_id in playlists:
             try:
-                # Fallback to Today's Top Hits
-                playlist_id = "37i9dQZF1DXcBWIGoYBM5M"
-                logger.info("Attempting to fetch Today's Top Hits playlist...")
+                logger.info(f"Attempting to fetch from {playlist_name} playlist...")
                 results = spotify.playlist_tracks(
                     playlist_id,
                     limit=limit,
                     fields="items(track(name,artists(name)))"
                 )
-            except Exception as fallback_error:
-                logger.error(f"Failed to fetch fallback playlist: {str(fallback_error)}")
-                return []
 
-        tracks = []
-        for item in results['items']:
-            if item and 'track' in item and item['track']:
-                track = item['track']
-                if track and 'name' in track and 'artists' in track and track['artists']:
+                tracks = []
+                for item in results['items']:
+                    if not item or 'track' not in item:
+                        continue
+
+                    track = item['track']
+                    if not track or 'name' not in track or 'artists' not in track:
+                        continue
+
+                    artist_name = track['artists'][0]['name'] if track['artists'] else "Unknown Artist"
                     tracks.append({
                         'name': track['name'],
-                        'artist': track['artists'][0]['name']
+                        'artist': artist_name
                     })
 
-        track_count = len(tracks)
-        if track_count > 0:
-            logger.info(f"Successfully fetched {track_count} tracks")
-        else:
-            logger.warning("No tracks were fetched from the playlist")
+                if tracks:
+                    logger.info(f"Successfully fetched {len(tracks)} tracks from {playlist_name}")
+                    return tracks
 
-        return tracks
+                logger.warning(f"No valid tracks found in {playlist_name} playlist")
+
+            except Exception as e:
+                logger.error(f"Error fetching tracks from {playlist_name}: {str(e)}")
+                continue
+
+        logger.error("Failed to fetch tracks from all playlists")
+        return []
+
     except Exception as e:
-        logger.error(f"Error fetching top tracks: {str(e)}")
+        logger.error(f"Error in get_top_tracks: {str(e)}")
         return []
