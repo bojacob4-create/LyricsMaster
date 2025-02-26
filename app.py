@@ -3,8 +3,11 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import DeclarativeBase
 
-# Database URL configuration with detailed error reporting
+# Debug logging for database configuration
+print("Starting database configuration...")
 database_url = os.environ.get("DATABASE_URL")
+print(f"Initial DATABASE_URL status: {'Present' if database_url else 'Missing'}")
+
 if not database_url:
     # Check for alternative PostgreSQL environment variables
     pg_vars = {
