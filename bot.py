@@ -120,10 +120,7 @@ def main():
             use_context=True,
             request_kwargs={
                 'read_timeout': 30,
-                'connect_timeout': 30,
-                'pool_recycle': 30,
-                'keepalive': True,
-                'keepalive_interval': 60
+                'connect_timeout': 30
             }
         )
         dp = updater.dispatcher
@@ -186,21 +183,25 @@ def main():
         flask_thread.daemon = True
         flask_thread.start()
 
-        # Add connection state monitoring
-        def check_connection(context: CallbackContext):
+        # Add periodic connection check
+        def monitor_connection(context: CallbackContext):
             """Monitor bot connection state."""
             try:
                 if not updater.running:
                     logger.warning("Bot connection lost, attempting to reconnect...")
-                    updater.start_polling()
+                    updater.start_polling(
+                        timeout=30,
+                        read_latency=5.0,
+                        drop_pending_updates=True,
+                        allowed_updates=['message', 'callback_query'],
+                        bootstrap_retries=3
+                    )
                     logger.info("Bot reconnected successfully")
             except Exception as e:
                 logger.error(f"Connection check failed: {str(e)}")
 
-        # Add periodic connection check
-        job_queue = updater.job_queue
-        job_queue.run_repeating(check_connection, interval=300, first=300)  # Check every 5 minutes
-
+        # Run connection monitoring every 5 minutes
+        job_queue.run_repeating(monitor_connection, interval=300, first=300)
 
         # Start the Bot with improved settings for stability
         logger.info("Starting bot polling...")
