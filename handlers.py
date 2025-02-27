@@ -790,8 +790,8 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
         response = (
             f"📚 *{wiki_info['title']}*\n\n"
             f"{wiki_info['extract']}\n\n"
-            f"🔗 [Read moreon Wikipedia]({wiki_info['link']})\n\n"
-            "Want to learn about someone else? Just use /wiki again! 🤓"
+            f"🔗 [Read more on Wikipedia]({wiki_info['link']})\n\n"
+"Want to learn about someone else? Just use /wiki again! 🤓"
         )
 
         try:

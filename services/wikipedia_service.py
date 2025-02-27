@@ -9,13 +9,12 @@ logger = logging.getLogger(__name__)
 
 # Configure retries for requests
 retry_strategy = Retry(
-    total=5,  # number of retries
-    backoff_factor=0.5,  # wait between retries
+    total=5,
+    backoff_factor=0.5,
     status_forcelist=[429, 500, 502, 503, 504],
     allowed_methods=["GET"]
 )
 
-# Configure the adapter with longer timeouts and more retries
 adapter = HTTPAdapter(
     max_retries=retry_strategy,
     pool_connections=10,
@@ -69,7 +68,28 @@ def get_wikipedia_info(person_name: str) -> Optional[Dict[str, str]]:
         search_results = search_data.get('query', {}).get('search', [])
         if not search_results:
             logger.info(f"No Wikipedia results found for {person_name}")
-            return None
+            # Try alternative search without additional terms
+            search_params['srsearch'] = quote(person_name, safe='')
+            logger.debug("Trying alternative search without additional terms")
+            search_response = session.get(search_url, params=search_params, timeout=15)
+            search_response.raise_for_status()
+            search_data = search_response.json()
+            search_results = search_data.get('query', {}).get('search', [])
+            if not search_results:
+                # Try one last time with basic alphanumeric characters
+                logger.debug("All endpoints failed, trying one last time with simplified terms")
+                person_simple = ''.join(c for c in person_name if c.isalnum() or c.isspace()).strip()
+                if person_simple != person_name:
+                    logger.debug(f"Attempting with simplified terms: {person_simple}")
+                    search_params['srsearch'] = quote(person_simple, safe='')
+                    search_response = session.get(search_url, params=search_params, timeout=15)
+                    search_response.raise_for_status()
+                    search_data = search_response.json()
+                    search_results = search_data.get('query', {}).get('search', [])
+                    if not search_results:
+                        return None
+                else:
+                    return None
 
         # Get the first result's page ID
         page_id = search_results[0]['pageid']
