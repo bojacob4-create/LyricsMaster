@@ -763,36 +763,51 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
 
         logger.info(f"User {user_id} requested Wikipedia info for '{query}'")
 
-        # Send "typing" action while processing
+        # Send typing action
         update.message.chat.send_action(action="typing")
+
+        # Send initial processing message
+        processing_msg = update.message.reply_text(
+            "🔍 Searching Wikipedia...\n"
+            "This will take just a moment! 📚"
+        )
 
         # Get Wikipedia information
         wiki_info = get_wikipedia_info(query)
 
         if not wiki_info:
-            update.message.reply_text(
+            processing_msg.edit_text(
                 "😕 Sorry, I couldn't find that person on Wikipedia.\n\n"
                 "Please try:\n"
                 "• Check the spelling of the name\n"
                 "• Use the full name\n"
-                "• Try a more specific search term\n\n"
-                "Example: /wiki Taylor Swift 🔍"
+                "• Try adding 'musician' or 'singer' to the name\n\n"
+                f"Example: /wiki {query} musician 🔍"
             )
             return
 
         # Format and send response
         response = (
-            f"📚 {wiki_info['title']}\n\n"
+            f"📚 *{wiki_info['title']}*\n\n"
             f"{wiki_info['extract']}\n\n"
-            f"🔗 Read more: {wiki_info['link']}\n\n"
+            f"🔗 [Read moreon Wikipedia]({wiki_info['link']})\n\n"
             "Want to learn about someone else? Just use /wiki again! 🤓"
         )
 
-        update.message.reply_text(
-            response,
-            disable_web_page_preview=True,
-            parse_mode=None  # Ensure no parsing issues with special characters
-        )
+        try:
+            # Try sending with markdown first
+            processing_msg.edit_text(
+                response,
+                parse_mode='Markdown',
+                disable_web_page_preview=True
+            )
+        except TelegramError:
+            # If markdown fails, send without formatting
+            processing_msg.edit_text(
+                response.replace('*', '').replace('[', '').replace(']', ''),
+                disable_web_page_preview=True
+            )
+
         logger.info(f"Successfully sent Wikipedia info to user {user_id}")
 
     except TelegramError as e:
@@ -803,10 +818,16 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
         )
     except Exception as e:
         logger.error(f"Error in wiki command for user {user_id}: {str(e)}", exc_info=True)
-        update.message.reply_text(
-            "😓 Oops! Something went wrong while searching Wikipedia.\n"
-            "Please try again in a moment! 🔄"
-        )
+        if 'processing_msg' in locals():
+            processing_msg.edit_text(
+                "😓 Oops! Something went wrong while searching Wikipedia.\n"
+                "Please try again in a moment! 🔄"
+            )
+        else:
+            update.message.reply_text(
+                "😓 Oops! Something went wrong while searching Wikipedia.\n"
+                "Please try again in a moment! 🔄"
+            )
 
 def main():
     """Initialize bot handlers and start the bot."""
