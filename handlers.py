@@ -792,8 +792,7 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
                 disable_web_page_preview=True
             )
             logger.info(f"Successfully sent artist info to user {user_id}")
-        except TelegramError as e:
-            logger.error(f"Telegram error for user {user_id}: {str(e)}")
+        except TelegramError:
             # Fallback to plain text if markdown fails
             update.message.reply_text(
                 response.replace('*', ''),
@@ -801,7 +800,7 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
             )
 
     except Exception as e:
-        logger.error(f"Error in wiki command for user {user_id}: {str(e)}", exc_info=True)
+        logger.error(f"Error in wiki command for user {user_id}: {str(e)}")
         update.message.reply_text(
             "😓 I couldn't process that request right now.\n"
             "Please try again in a few moments! 🔄"
