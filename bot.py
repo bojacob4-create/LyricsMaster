@@ -33,7 +33,8 @@ from handlers import (
     subscribe_daily_command,
     unsubscribe_daily_command,
     download_command,
-    wiki_command
+    wiki_command,
+    download_music_command
 )
 from services.daily_song_service import send_daily_song
 
@@ -114,6 +115,7 @@ class TelegramBotWrapper:
             dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
             dp.add_handler(CommandHandler("download", download_command))
             dp.add_handler(CommandHandler("wiki", wiki_command))
+            dp.add_handler(CommandHandler("download_music", download_music_command))
 
             # Add message handler for quiz answers with activity tracking
             def wrapped_quiz_answer(update: Update, context: CallbackContext):
@@ -152,7 +154,8 @@ class TelegramBotWrapper:
                 BotCommand("download", "Download YouTube videos 📥"),
                 BotCommand("subscribe", "Get daily song discoveries 📅"),
                 BotCommand("unsubscribe", "Stop daily song updates 🔕"),
-                BotCommand("wiki", "Get Wikipedia info about artists 📚")
+                BotCommand("wiki", "Get Wikipedia info about artists 📚"),
+                BotCommand("download_music", "Download songs as MP3 🎵")
             ]
             self.updater.bot.set_my_commands(commands)
             logger.info("Successfully set bot commands")

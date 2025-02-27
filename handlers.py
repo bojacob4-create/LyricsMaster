@@ -28,6 +28,7 @@ from utils import (
 from services.youtube_service import get_youtube_link, format_youtube_response
 from services.youtube_downloader_service import download_youtube_video, cleanup_video
 from services.ai_info_service import get_person_info # Changed import
+from services.music_download_service import download_music, cleanup_music_file
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,9 @@ def help_command(update: Update, context: CallbackContext):
         "▫️ */youtube artist - song*\n"
         "   Find song on YouTube\n"
         "▫️ */download video_url*\n"
-        "   Download YouTube videos\n\n"
+        "   Download YouTube videos\n"
+        "▫️ */download_music artist - song*\n"
+        "   Download music (max 10 mins)\n\n"
         "*Information:*\n"
         "▫️ */wiki person_name*\n"
         "   Get Wikipedia information\n"
@@ -823,6 +826,70 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
         else:
             update.message.reply_text(error_message)
 
+
+def download_music_command(update: Update, context: CallbackContext):
+    """Handle the /download_music command."""
+    user_id = update.effective_user.id
+    try:
+        query = " ".join(context.args)
+        if not query or "-" not in query:
+            logger.info(f"User {user_id} provided invalid music download query format")
+            update.message.reply_text(
+                "⚠️ Please use this format: /download_music artist - song\n"
+                "For example: /download_music Ed Sheeran - Perfect\n\n"
+                "Note: Maximum song length is 10 minutes! 🎵"
+            )
+            return
+
+        artist, song = query.split("-", 1)
+        logger.info(f"User {user_id} requested music download for '{artist.strip()} - {song.strip()}'")
+
+        # Send processing message
+        processing_message = update.message.reply_text(
+            "🎵 Searching for your song...\n"
+            "This might take a moment! ⏳"
+        )
+
+        # Download the music
+        result = download_music(artist.strip(), song.strip())
+
+        if not result:
+            processing_message.edit_text(
+                "😕 Sorry, I couldn't find or download that song.\n\n"
+                "Please check:\n"
+                "• The spelling of artist and song\n"
+                "• Try the official song title\n"
+                "• Make sure the song isn't too long (max 10 min)\n\n"
+                "Example: /download_music Ed Sheeran - Perfect 🎵"
+            )
+            return
+
+        file_path, info_message = result
+
+        # Update processing message with file info
+        processing_message.edit_text(info_message)
+
+        # Send audio file
+        with open(file_path, 'rb') as audio_file:
+            update.message.reply_audio(
+                audio_file,
+                title=f"{artist.strip()} - {song.strip()}",
+                caption="🎵 Enjoy your music! /help for more commands",
+                performer=artist.strip()
+            )
+
+        # Cleanup
+        cleanup_music_file(file_path)
+        logger.info(f"Successfully sent music to user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error in download_music command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong with the download.\n"
+            "Please try again later! 🔄"
+        )
+
+
 def main():
     """Initialize bot handlers and start the bot."""
     token = os.environ.get('TELEGRAM_TOKEN')
@@ -849,6 +916,7 @@ def main():
         dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
         dp.add_handler(CommandHandler("download", download_command))
         dp.add_handler(CommandHandler("wiki", wiki_command))
+        dp.add_handler(CommandHandler("download_music", download_music_command))
 
         # Add message handler for quiz answers
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
@@ -868,7 +936,8 @@ def main():
             BotCommand("youtube", "Get YouTube link for song 🎬 (format: artist - song)"),
             BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
             BotCommand("download", "Download YouTube video 🎬 (format: /download video_url)"),
-            BotCommand("wiki", "Get Wikipedia info about artists 📚 (format: /wiki name)")
+            BotCommand("wiki", "Get Wikipedia info about artists 📚 (format: /wiki name)"),
+            BotCommand("download_music", "Download music 🎵 (format: artist - song)")
         ]
 
         updater.bot.set_my_commands(commands)
