@@ -8,10 +8,10 @@ import psutil
 from datetime import datetime, timedelta
 from threading import Thread, Event
 
-# Configure logging
+# Configure logging with more detail
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
+    level=logging.DEBUG,
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler('bot_monitor.log')
@@ -19,11 +19,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Constants for monitoring
 HEALTH_CHECK_INTERVAL = 1  # Check every second
 MAX_CONSECUTIVE_FAILURES = 3
 INITIAL_RETRY_DELAY = 2  # seconds
-MAX_RETRY_DELAY = 30  # 30 seconds max delay
-WATCHDOG_TIMEOUT = 60  # 1 minute watchdog timeout
+MAX_RETRY_DELAY = 15  # 15 seconds max delay
+WATCHDOG_TIMEOUT = 15  # 15 seconds watchdog timeout
 
 class BotMonitor:
     def __init__(self):
@@ -33,6 +34,47 @@ class BotMonitor:
         self.consecutive_failures = 0
         self.retry_delay = INITIAL_RETRY_DELAY
         self.last_start_time = None
+        self.last_activity_time = datetime.now()
+
+        # Set up signal handlers
+        signal.signal(signal.SIGTERM, self.handle_signal)
+        signal.signal(signal.SIGINT, self.handle_signal)
+
+    def handle_signal(self, signum, frame):
+        """Handle termination signals."""
+        sig_name = signal.Signals(signum).name
+        logger.info(f"Received signal {sig_name}")
+        self.cleanup_and_exit()
+
+    def cleanup_and_exit(self):
+        """Clean up processes and exit."""
+        logger.info("Cleaning up before exit...")
+        self.should_stop = True
+        if self.process:
+            try:
+                logger.info("Terminating bot process...")
+                self.force_kill_process(psutil.Process(self.process.pid))
+            except Exception as e:
+                logger.error(f"Error during cleanup: {str(e)}")
+        sys.exit(0)
+
+    def force_kill_process(self, proc):
+        """Force kill a process and its children."""
+        try:
+            logger.info(f"Force killing process {proc.pid} and its children...")
+            parent = psutil.Process(proc.pid)
+            children = parent.children(recursive=True)
+            for child in children:
+                try:
+                    child.kill()
+                except psutil.NoSuchProcess:
+                    pass
+            parent.kill()
+            logger.info(f"Successfully killed process {proc.pid}")
+        except psutil.NoSuchProcess:
+            pass
+        except Exception as e:
+            logger.error(f"Error in force kill: {str(e)}")
 
     def get_bot_process(self):
         """Get the bot process if it's running."""
@@ -41,6 +83,7 @@ class BotMonitor:
                 try:
                     cmdline = proc.info['cmdline']
                     if cmdline and len(cmdline) >= 2 and 'python' in cmdline[0] and 'bot.py' in cmdline[1]:
+                        logger.debug(f"Found bot process: PID={proc.pid}")
                         return proc
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     continue
@@ -49,57 +92,129 @@ class BotMonitor:
         return None
 
     def kill_existing_bot(self):
-        """Kill any existing bot process."""
+        """Kill any existing bot process with force."""
         try:
             proc = self.get_bot_process()
             if proc:
                 logger.info(f"Found existing bot process (PID: {proc.pid}), terminating...")
                 try:
+                    # Try graceful shutdown first
                     proc.terminate()
                     try:
-                        proc.wait(timeout=5)
+                        proc.wait(timeout=3)
                     except psutil.TimeoutExpired:
                         logger.warning("Process didn't terminate, forcing kill...")
-                        proc.kill()
-                        proc.wait(timeout=5)
-                except psutil.NoSuchProcess:
-                    pass
+                        self.force_kill_process(proc)
                 except Exception as e:
-                    logger.error(f"Error killing process: {str(e)}")
-                    if proc.is_running():
-                        os.kill(proc.pid, signal.SIGKILL)
+                    logger.error(f"Error in process termination: {str(e)}")
+                    self.force_kill_process(proc)
                 logger.info("Existing bot process terminated")
-                time.sleep(1)  # Wait for cleanup
+                time.sleep(2)  # Wait for cleanup
         except Exception as e:
             logger.error(f"Error in kill_existing_bot: {str(e)}")
 
+    def check_process_health(self, proc):
+        """Check if process is healthy."""
+        try:
+            status = proc.status()
+            if status == psutil.STATUS_ZOMBIE:
+                logger.error("Process is in zombie state")
+                return False
+
+            memory_percent = proc.memory_percent()
+            cpu_percent = proc.cpu_percent()
+            logger.debug(f"Process Health - Memory: {memory_percent:.1f}%, CPU: {cpu_percent:.1f}%, Status: {status}")
+
+            if memory_percent > 90:  # High memory usage
+                logger.warning(f"High memory usage detected: {memory_percent:.1f}%")
+                return False
+
+            return True
+        except Exception as e:
+            logger.error(f"Health check error: {str(e)}")
+            return False
+
+    def check_process_output(self):
+        """Non-blocking check of process output."""
+        if not self.process:
+            return
+
+        try:
+            if self.process.stdout:
+                line = self.process.stdout.readline()
+                if line and line.strip():
+                    logger.info(f"Bot output: {line.strip()}")
+                    self.last_activity_time = datetime.now()
+
+            if self.process.stderr:
+                line = self.process.stderr.readline()
+                if line and line.strip():
+                    logger.error(f"Bot error: {line.strip()}")
+                    self.last_activity_time = datetime.now()
+        except Exception as e:
+            logger.error(f"Error checking process output: {str(e)}")
+
     def watchdog_timer(self):
-        """Watchdog timer thread to monitor bot responsiveness."""
+        """Enhanced watchdog timer with health checks."""
         while not self.should_stop:
-            if not self.watchdog_event.wait(WATCHDOG_TIMEOUT):
-                logger.error("Watchdog timeout - Bot appears to be unresponsive")
-                self.restart_bot()
-            self.watchdog_event.clear()
+            try:
+                if not self.watchdog_event.wait(WATCHDOG_TIMEOUT):
+                    logger.error("Watchdog timeout - Bot appears to be unresponsive")
+                    if self.process and self.process.poll() is None:
+                        try:
+                            proc = psutil.Process(self.process.pid)
+                            if not self.check_process_health(proc):
+                                logger.error("Process health check failed, forcing restart...")
+                                self.force_kill_process(proc)
+                        except Exception as e:
+                            logger.error(f"Error in watchdog health check: {str(e)}")
+                    self.restart_bot()
+                self.watchdog_event.clear()
+            except Exception as e:
+                logger.error(f"Error in watchdog: {str(e)}")
 
     def restart_bot(self):
-        """Restart the bot process."""
-        logger.info("Initiating bot restart...")
+        """Force restart the bot process."""
+        logger.info("Force restarting bot...")
         if self.process:
             try:
-                self.process.terminate()
-                self.process.wait(timeout=5)
-            except Exception:
-                if self.process.poll() is None:
-                    self.process.kill()
+                self.force_kill_process(psutil.Process(self.process.pid))
+            except Exception as e:
+                logger.error(f"Error during force restart: {str(e)}")
         self.start_bot()
 
-    def monitor_process(self):
-        """Monitor the bot process health."""
-        while self.process.poll() is None and not self.should_stop:
-            try:
-                time.sleep(HEALTH_CHECK_INTERVAL)
+    def start_bot(self):
+        """Start the bot process with enhanced monitoring."""
+        try:
+            # Enforce minimum delay between restarts
+            current_time = datetime.now()
+            if self.last_start_time:
+                elapsed = (current_time - self.last_start_time).total_seconds()
+                if elapsed < self.retry_delay:
+                    wait_time = self.retry_delay - elapsed
+                    logger.info(f"Waiting {wait_time:.1f} seconds before restart...")
+                    time.sleep(wait_time)
 
-                # Reset watchdog timer
+            # Kill any existing process before starting
+            self.kill_existing_bot()
+
+            logger.info("Starting bot process...")
+            self.process = subprocess.Popen(
+                [sys.executable, 'bot.py'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                bufsize=1,
+                preexec_fn=os.setsid  # Create new process group
+            )
+
+            self.last_start_time = datetime.now()
+            self.last_activity_time = datetime.now()
+            logger.info(f"Bot process started with PID: {self.process.pid}")
+
+            # Monitor the process
+            while self.process.poll() is None and not self.should_stop:
+                time.sleep(HEALTH_CHECK_INTERVAL)
                 self.watchdog_event.set()
 
                 if not psutil.pid_exists(self.process.pid):
@@ -107,84 +222,29 @@ class BotMonitor:
 
                 try:
                     proc = psutil.Process(self.process.pid)
-                    if proc.status() == psutil.STATUS_ZOMBIE:
-                        raise Exception("Bot process is in zombie state")
-
-                    # Monitor resource usage
-                    if int(time.time()) % 60 == 0:  # Log every minute
-                        memory_info = proc.memory_info()
-                        cpu_percent = proc.cpu_percent()
-                        logger.info(
-                            f"Process Status - "
-                            f"Memory: {memory_info.rss / 1024 / 1024:.2f}MB, "
-                            f"CPU: {cpu_percent}%, "
-                            f"Status: {proc.status()}"
-                        )
-
+                    if not self.check_process_health(proc):
+                        raise Exception("Process health check failed")
                 except psutil.NoSuchProcess:
                     raise Exception("Bot process not found")
 
-                # Check for process output
                 self.check_process_output()
 
-            except Exception as e:
-                logger.error(f"Process monitoring error: {str(e)}")
-                return False
+            return True
 
-        return True
-
-    def check_process_output(self):
-        """Check and log process output."""
-        if self.process.stdout:
-            while True:
-                line = self.process.stdout.readline()
-                if not line:
-                    break
-                if line.strip():
-                    logger.info(f"Bot output: {line.strip()}")
-
-        if self.process.stderr:
-            while True:
-                line = self.process.stderr.readline()
-                if not line:
-                    break
-                if line.strip():
-                    logger.error(f"Bot error: {line.strip()}")
-
-    def start_bot(self):
-        """Start the bot process."""
-        current_time = datetime.now()
-
-        if self.last_start_time and (current_time - self.last_start_time) < timedelta(seconds=self.retry_delay):
-            sleep_time = (self.last_start_time + timedelta(seconds=self.retry_delay) - current_time).total_seconds()
-            if sleep_time > 0:
-                logger.info(f"Waiting {sleep_time:.1f} seconds before next restart attempt...")
-                time.sleep(sleep_time)
-
-        logger.info("Starting bot process...")
-        self.last_start_time = datetime.now()
-
-        self.process = subprocess.Popen(
-            [sys.executable, 'bot.py'],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-            bufsize=1
-        )
-
-        logger.info(f"Bot process started with PID: {self.process.pid}")
-        return self.monitor_process()
+        except Exception as e:
+            logger.error(f"Error in bot process: {str(e)}")
+            return False
 
     def run(self):
-        """Main monitoring loop."""
+        """Main monitoring loop with enhanced error handling."""
+        logger.info("Starting enhanced bot monitor...")
+
         # Start watchdog timer
         watchdog_thread = Thread(target=self.watchdog_timer, daemon=True)
         watchdog_thread.start()
 
         while not self.should_stop:
             try:
-                self.kill_existing_bot()
-
                 if not self.start_bot():
                     self.consecutive_failures += 1
                     self.retry_delay = min(INITIAL_RETRY_DELAY * (2 ** self.consecutive_failures), MAX_RETRY_DELAY)
@@ -194,47 +254,28 @@ class BotMonitor:
                         logger.warning("Multiple failures detected, resetting retry counter...")
                         self.consecutive_failures = 0
                         self.retry_delay = INITIAL_RETRY_DELAY
-                        time.sleep(5)  # Brief pause before clean restart
+                        time.sleep(3)  # Brief pause before clean restart
                 else:
                     self.consecutive_failures = 0
                     self.retry_delay = INITIAL_RETRY_DELAY
 
             except KeyboardInterrupt:
-                logger.info("Received shutdown signal, stopping monitor...")
-                self.should_stop = True
-                if self.process:
-                    self.process.terminate()
-                    try:
-                        self.process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        self.process.kill()
-                self.kill_existing_bot()
-                break
-
+                logger.info("Received keyboard interrupt...")
+                self.cleanup_and_exit()
             except Exception as e:
-                logger.error(f"Error in bot monitor: {str(e)}")
-                if self.process:
-                    try:
-                        output, error = self.process.communicate(timeout=5)
-                        if output:
-                            logger.error(f"STDOUT: {output}")
-                        if error:
-                            logger.error(f"STDERR: {error}")
-                    except subprocess.TimeoutExpired:
-                        self.process.kill()
+                logger.error(f"Critical error in monitor: {str(e)}")
                 time.sleep(self.retry_delay)
-                continue
 
 def main():
     try:
-        logger.info("Bot monitor starting...")
         monitor = BotMonitor()
         monitor.run()
     except KeyboardInterrupt:
-        logger.info("Received shutdown signal, stopping monitor...")
-        monitor.should_stop = True
-        monitor.kill_existing_bot()
-        sys.exit(0)
+        logger.info("Shutting down monitor...")
+        monitor.cleanup_and_exit()
+    except Exception as e:
+        logger.critical(f"Fatal error: {str(e)}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
