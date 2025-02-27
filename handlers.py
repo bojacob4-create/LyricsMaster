@@ -28,7 +28,6 @@ from utils import (
 from services.youtube_service import get_youtube_link, format_youtube_response
 from services.youtube_downloader_service import download_youtube_video, cleanup_video
 from services.ai_info_service import get_person_info # Changed import
-from services.music_download_service import download_music, cleanup_music_file
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +49,7 @@ def start_command(update: Update, context: CallbackContext):
         "📥 */download* - Download YouTube videos\n"
         "📈 */analyze* - Get deep song analysis\n"
         "🔔 */subscribe* - Get daily song discoveries\n"
-        "📚 */wiki* - Get Wikipedia info about artists\n"
-        "🎵 */mp3* - Download songs as MP3\n\n"
+        "📚 */wiki* - Get Wikipedia info about artists\n\n"
         "*Quick Start:*\n"
         "Try */lyrics Ed Sheeran - Perfect* to see the magic! ✨\n\n"
         "Need help? Just type */help* for more details! 💫"
@@ -100,9 +98,7 @@ def help_command(update: Update, context: CallbackContext):
         "▫️ */youtube artist - song*\n"
         "   Find song on YouTube\n"
         "▫️ */download video_url*\n"
-        "   Download YouTube videos\n"
-        "▫️ */mp3 artist - song*\n"
-        "   Download music (max 10 mins)\n\n"
+        "   Download YouTube videos\n\n"
         "*Information:*\n"
         "▫️ */wiki person_name*\n"
         "   Get Wikipedia information\n"
@@ -130,6 +126,7 @@ def help_command(update: Update, context: CallbackContext):
             help_text.replace('*', '').replace('▫️', '•'),
             disable_web_page_preview=True
         )
+
 
 
 def quiz_command(update: Update, context: CallbackContext):
@@ -826,64 +823,6 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
         else:
             update.message.reply_text(error_message)
 
-
-def mp3_command(update: Update, context: CallbackContext):
-    """Handle the /mp3 command to download songs."""
-    try:
-        # Get command arguments
-        query = " ".join(context.args)
-        if not query or "-" not in query:
-            update.message.reply_text(
-                "⚠️ Use this format: /mp3 artist - song\n"
-                "Example: /mp3 Ed Sheeran - Perfect"
-            )
-            return
-
-        # Parse artist and song
-        artist, song = query.split("-", 1)
-        logger.info(f"MP3 download request: {artist.strip()} - {song.strip()}")
-
-        # Show processing message
-        message = update.message.reply_text(
-            "🔍 Searching for your song...\n"
-            "This might take a moment!"
-        )
-
-        # Try to download the song
-        result = download_music(artist.strip(), song.strip())
-        if not result:
-            message.edit_text(
-                "❌ Couldn't find or download this song.\n"
-                "• Check the spelling\n"
-                "• Make sure it's not too long (max 10 min)\n"
-                "• Try another song"
-            )
-            return
-
-        # Get the file and info
-        file_path, info = result
-        message.edit_text(info)
-
-        # Send the audio file
-        with open(file_path, 'rb') as audio:
-            update.message.reply_audio(
-                audio,
-                title=f"{artist.strip()} - {song.strip()}",
-                performer=artist.strip(),
-                caption="🎵 Enjoy your music!"
-            )
-
-        # Clean up
-        cleanup_music_file(file_path)
-        logger.info(f"Successfully sent MP3 to user {update.effective_user.id}")
-
-    except Exception as e:
-        logger.error(f"Error in mp3 command: {str(e)}")
-        update.message.reply_text(
-            "😔 Sorry, something went wrong.\n"
-            "Please try again!"
-        )
-
 def main():
     """Initialize bot handlers and start the bot."""
     token = os.environ.get('TELEGRAM_TOKEN')
@@ -910,7 +849,6 @@ def main():
         dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
         dp.add_handler(CommandHandler("download", download_command))
         dp.add_handler(CommandHandler("wiki", wiki_command))
-        dp.add_handler(CommandHandler("mp3", mp3_command))
 
         # Add message handler for quiz answers
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
@@ -930,8 +868,7 @@ def main():
             BotCommand("youtube", "Get YouTube link for song 🎬 (format: artist - song)"),
             BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
             BotCommand("download", "Download YouTube video 🎬 (format: /download video_url)"),
-            BotCommand("wiki", "Get Wikipedia info about artists 📚 (format: /wiki name)"),
-            BotCommand("mp3", "Download music 🎵 (format: artist - song)")
+            BotCommand("wiki", "Get Wikipedia info about artists 📚 (format: /wiki name)")
         ]
 
         updater.bot.set_my_commands(commands)
