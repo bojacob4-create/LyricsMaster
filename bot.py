@@ -1,17 +1,13 @@
 import logging
 import os
-import threading
-from flask import Flask
 from telegram import Update, BotCommand
 from telegram.ext import (
-    CallbackContext, CommandHandler, Updater, MessageHandler, 
-    Filters, TypeHandler
+    CallbackContext, 
+    Updater,
+    CommandHandler,
+    MessageHandler,
+    Filters
 )
-from telegram.error import (
-    TelegramError, Unauthorized, BadRequest, 
-    TimedOut, NetworkError
-)
-from datetime import time
 from handlers import (
     start_command,
     help_command,
@@ -27,8 +23,9 @@ from handlers import (
     download_command,
     subscribe_daily_command,
     unsubscribe_daily_command,
-    send_daily_song
+    wiki_command
 )
+from datetime import time
 
 # Configure logging
 logging.basicConfig(
@@ -36,113 +33,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-# Create Flask app
-flask_app = Flask(__name__)
-
-@flask_app.route('/')
-def index():
-    """Health check endpoint"""
-    return "Telegram Bot is running!", 200
-
-def run_flask():
-    """Run Flask app"""
-    try:
-        logger.info("Starting Flask server...")
-        flask_app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
-    except Exception as e:
-        logger.error(f"Flask server error: {str(e)}")
-
-def error_handler(update: Update, context: CallbackContext):
-    """Handle errors in the bot."""
-    try:
-        if isinstance(context.error, Unauthorized):
-            # User has blocked the bot
-            logger.warning(f"User {update.effective_user.id if update else 'Unknown'} has blocked the bot")
-            return
-
-        if isinstance(context.error, BadRequest):
-            # Handle malformed requests
-            logger.error(f"Bad Request: {context.error}")
-            if update and update.effective_message:
-                update.effective_message.reply_text(
-                    "😓 Oops! Something wasn't quite right with that request.\n"
-                    "Please try again or use /help for guidance! 🔄"
-                )
-            return
-
-        if isinstance(context.error, TimedOut):
-            # Handle timeouts
-            logger.warning(f"Request timed out: {context.error}")
-            if update and update.effective_message:
-                update.effective_message.reply_text(
-                    "⏳ Request timed out. Please try again! 🔄"
-                )
-            return
-
-        if isinstance(context.error, NetworkError):
-            # Handle network errors
-            logger.error(f"Network error occurred: {context.error}")
-            if update and update.effective_message:
-                update.effective_message.reply_text(
-                    "📶 Network issues detected. Please try again in a moment! 🔄"
-                )
-            return
-
-        # Log the error before handling
-        logger.error(f"Update {update} caused error {context.error}", exc_info=True)
-
-        # Send generic error message to user
-        if update and update.effective_message:
-            update.effective_message.reply_text(
-                "🤖 Oops! I hit a snag while processing your request.\n"
-                "Let's try that again! 🔄\n\n"
-                "If the problem persists, try using /help for guidance."
-            )
-
-    except Exception as e:
-        logger.error(f"Error in error handler: {str(e)}", exc_info=True)
-
-def monitor_connection(context: CallbackContext):
-    """Monitor bot connection state with advanced recovery."""
-    try:
-        logger.info("Running connection health check...")
-        if not context.bot.running:
-            logger.warning("Bot connection lost, attempting immediate reconnection...")
-            try:
-                # First attempt immediate reconnection
-                context.bot.start_polling(
-                    timeout=30,
-                    read_latency=5.0,
-                    drop_pending_updates=True,
-                    allowed_updates=['message', 'callback_query'],
-                    bootstrap_retries=5
-                )
-                logger.info("Bot reconnected successfully")
-            except Exception as e:
-                logger.error(f"Initial reconnection attempt failed: {str(e)}")
-                # Second attempt with different parameters
-                try:
-                    context.bot.start_polling(
-                        timeout=60,
-                        read_latency=10.0,
-                        drop_pending_updates=True,
-                        allowed_updates=['message'],
-                        bootstrap_retries=3
-                    )
-                    logger.info("Bot reconnected on second attempt")
-                except Exception as e2:
-                    logger.error(f"Second reconnection attempt failed: {str(e2)}")
-                    # Force updater restart
-                    try:
-                        context._dispatcher.updater.start_polling()
-                        logger.info("Forced updater restart successful")
-                    except Exception as e3:
-                        logger.error(f"Failed to force restart updater: {str(e3)}")
-    except Exception as e:
-        logger.error(f"Connection monitor error: {str(e)}")
-        # Schedule an immediate retry
-        context.job_queue.run_once(monitor_connection, 30)
 
 def main():
     """Start the bot."""
@@ -155,15 +45,8 @@ def main():
 
         logger.info("Starting bot initialization...")
 
-        # Initialize the bot with improved settings for stability
-        updater = Updater(
-            token=token,
-            use_context=True,
-            request_kwargs={
-                'read_timeout': 30,
-                'connect_timeout': 30
-            }
-        )
+        # Initialize the bot
+        updater = Updater(token=token, use_context=True)
         dp = updater.dispatcher
 
         # Register command handlers
@@ -181,6 +64,7 @@ def main():
             CommandHandler("subscribe", subscribe_daily_command),
             CommandHandler("unsubscribe", unsubscribe_daily_command),
             CommandHandler("download", download_command),
+            CommandHandler("wiki", wiki_command),
         ]
 
         for handler in command_handlers:
@@ -188,9 +72,6 @@ def main():
 
         # Add message handler for quiz answers
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
-
-        # Add error handler
-        dp.add_error_handler(error_handler)
 
         # Schedule daily song job
         job_queue = updater.job_queue
@@ -200,7 +81,7 @@ def main():
             days=(0, 1, 2, 3, 4, 5, 6)
         )
 
-        # Set commands list with detailed descriptions
+        # Set commands list with detailed descriptions (from original code)
         commands = [
             BotCommand("start", "Begin your musical journey 🎵"),
             BotCommand("help", "Get detailed help and tips 💡"),
@@ -215,28 +96,18 @@ def main():
             BotCommand("download", "Download YouTube videos 📥"),
             BotCommand("subscribe", "Get daily song discoveries 📅"),
             BotCommand("unsubscribe", "Stop daily song updates 🔕"),
+            BotCommand("wiki", "Search Wikipedia for music-related information 📚"),
+
         ]
         updater.bot.set_my_commands(commands)
 
-        # Start the Flask app in a separate thread
-        flask_thread = threading.Thread(target=run_flask)
-        flask_thread.daemon = True
-        flask_thread.start()
 
-        # Add aggressive connection monitoring
-        job_queue.run_repeating(monitor_connection, interval=30, first=10)  # Check every 30 seconds
-
-        # Start the Bot with improved settings for stability
+        # Start the Bot
         logger.info("Starting bot polling...")
-        updater.start_polling(
-            timeout=30,
-            read_latency=5.0,
-            drop_pending_updates=True,
-            allowed_updates=['message', 'callback_query'],
-            bootstrap_retries=5,
-        )
+        updater.start_polling(drop_pending_updates=True)
+        logger.info("Bot started successfully!")
 
-        logger.info("Bot is running successfully!")
+        # Run the bot until you press Ctrl-C
         updater.idle()
 
     except Exception as e:

@@ -1,7 +1,14 @@
 import logging
 import os
 from telegram import Update, BotCommand
-from telegram.ext import CallbackContext, CommandHandler, Updater, MessageHandler, Filters
+from telegram.ext import (
+    CallbackContext,
+    CommandHandler,
+    MessageHandler,
+    Filters,
+    Updater
+)
+from telegram.error import TelegramError
 from services.lyrics_service import get_song_lyrics
 from services.translator_service import translate_to_arabic
 from services.recommendation_service import get_similar_songs, format_recommendations
@@ -27,7 +34,7 @@ from utils import (
 from services.youtube_service import get_youtube_link, format_youtube_response
 from app import app
 from services.youtube_downloader_service import download_youtube_video, cleanup_video
-from services.wikipedia_service import get_wikipedia_info # Added import
+from services.wikipedia_service import get_wikipedia_info
 
 logger = logging.getLogger(__name__)
 
@@ -745,9 +752,10 @@ def format_multiple_choice_options(options):
     return "\n".join(option_strings)
 
 
-def wiki_command(update: Update, context: CallbackContext):
+def wiki_command(update: Update, context: CallbackContext) -> None:
     """Handle the /wiki command."""
     user_id = update.effective_user.id
+
     try:
         query = " ".join(context.args)
         if not query:
@@ -762,18 +770,14 @@ def wiki_command(update: Update, context: CallbackContext):
 
         logger.info(f"User {user_id} requested Wikipedia info for '{query}'")
 
-        # Send typing action
-        update.message.chat.send_action(action="typing")
+        # Send "typing" action while processing
+        update.message.chat.send_action(chat_action="typing")
 
-        # First send a processing message
-        processing_msg = update.message.reply_text(
-            "🔄 Searching Wikipedia...\n"
-            "This will take just a moment! 📚"
-        )
-
+        # Get Wikipedia information
         wiki_info = get_wikipedia_info(query)
+
         if not wiki_info:
-            processing_msg.edit_text(
+            update.message.reply_text(
                 "😕 Sorry, I couldn't find that person on Wikipedia.\n\n"
                 "Please try:\n"
                 "• Check the spelling of the name\n"
@@ -783,84 +787,85 @@ def wiki_command(update: Update, context: CallbackContext):
             )
             return
 
+        # Format and send response
         response = (
             f"📚 {wiki_info['title']}\n\n"
             f"{wiki_info['extract']}\n\n"
             f"🔗 Read more: {wiki_info['link']}\n\n"
-            "Want to learn about someone else?Just use /wiki again! 🤓"
+            "Want to learn about someone else? Just use /wiki again! 🤓"
         )
 
-        # Update the processing message with results
-        processing_msg.edit_text(response, disable_web_page_preview=True)
+        update.message.reply_text(
+            response,
+            disable_web_page_preview=True,
+            parse_mode=None  # Ensure no parsing issues with special characters
+        )
         logger.info(f"Successfully sent Wikipedia info to user {user_id}")
 
     except Exception as e:
-        logger.error(f"Error processing wiki command for user {user_id}: {str(e)}", exc_info=True)
-        error_message = (
+        logger.error(f"Error in wiki command for user {user_id}: {str(e)}", exc_info=True)
+        update.message.reply_text(
             "😓 Oops! Something went wrong while searching Wikipedia.\n"
             "Please try again in a moment! 🔄"
         )
-        try:
-            update.message.reply_text(error_message)
-        except Exception:
-            if 'processing_msg' in locals():
-                try:
-                    processing_msg.edit_text(error_message)
-                except Exception:
-                    pass
 
 
 def main():
     """Initialize bot handlers and start the bot."""
-    from telegram.ext import Updater, MessageHandler, Filters
+    token = os.environ.get('TELEGRAM_TOKEN')
+    if not token:
+        logger.error("TELEGRAM_TOKEN not found in environment variables")
+        return
 
-    # Initialize updater and dispatcher
-    updater = Updater(token=os.environ.get('TELEGRAM_TOKEN'), use_context=True)
-    dp = updater.dispatcher
+    try:
+        updater = Updater(token=token, use_context=True)
+        dp = updater.dispatcher
 
-    # Add command handlers
-    dp.add_handler(CommandHandler("start", start_command))
-    dp.add_handler(CommandHandler("help", help_command))
-    dp.add_handler(CommandHandler("lyrics", lyrics_command))
-    dp.add_handler(CommandHandler("stats", stats_command))
-    dp.add_handler(CommandHandler("recommend", recommend_command))
-    dp.add_handler(CommandHandler("quiz", quiz_command))
-    dp.add_handler(CommandHandler("endquiz", end_quiz_command))
-    dp.add_handler(CommandHandler("translate", translate_lyrics_command))
-    dp.add_handler(CommandHandler("youtube", youtube_command))
-    dp.add_handler(CommandHandler("analyze", analyze_command))
-    dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
-    dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
-    dp.add_handler(CommandHandler("download", download_command))
-    dp.add_handler(CommandHandler("wiki", wiki_command))
+        # Add command handlers
+        dp.add_handler(CommandHandler("start", start_command))
+        dp.add_handler(CommandHandler("help", help_command))
+        dp.add_handler(CommandHandler("lyrics", lyrics_command))
+        dp.add_handler(CommandHandler("stats", stats_command))
+        dp.add_handler(CommandHandler("recommend", recommend_command))
+        dp.add_handler(CommandHandler("quiz", quiz_command))
+        dp.add_handler(CommandHandler("endquiz", end_quiz_command))
+        dp.add_handler(CommandHandler("translate", translate_lyrics_command))
+        dp.add_handler(CommandHandler("youtube", youtube_command))
+        dp.add_handler(CommandHandler("analyze", analyze_command))
+        dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
+        dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
+        dp.add_handler(CommandHandler("download", download_command))
+        dp.add_handler(CommandHandler("wiki", wiki_command))
 
-    # Add message handler for quiz answers
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
+        # Add message handler for quiz answers
+        dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
 
-    # Register commands in the menu
-    commands = [
-        BotCommand("start", "Start the bot 👋"),
-        BotCommand("help", "Show all commands and how to use them ℹ️"),
-        BotCommand("lyrics", "Get song lyrics 🎵 (format: artist - song)"),
-        BotCommand("stats", "Get song statistics 📊 (format: artist - song)"),
-        BotCommand("recommend", "Get song recommendations 🎵 (format: artist - song)"),
-        BotCommand("quiz", "Start a lyrics quiz game 🎮"),
-        BotCommand("endquiz", "End the current quiz game"),
-        BotCommand("translate", "Get Arabic translation of lyrics 🌍 (format: artist - song)"),
-        BotCommand("subscribe", "Subscribe to daily song discovery 🎶"),
-        BotCommand("unsubscribe", "Unsubscribe from daily song discovery 👋"),
-        BotCommand("youtube", "Get YouTube link for song 🎬 (format: artist - song)"),
-        BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
-        BotCommand("download", "Download YouTube video 🎬 (format: /download video_url)"),
-        BotCommand("wiki", "Get Wikipedia info about artists 📚 (format: /wiki name)")
-    ]
+        # Register commands in the menu
+        commands = [
+            BotCommand("start", "Start the bot 👋"),
+            BotCommand("help", "Show all commands and how to use them ℹ️"),
+            BotCommand("lyrics", "Get song lyrics 🎵 (format: artist - song)"),
+            BotCommand("stats", "Get song statistics 📊 (format: artist - song)"),
+            BotCommand("recommend", "Get song recommendations 🎵 (format: artist - song)"),
+            BotCommand("quiz", "Start a lyrics quiz game 🎮"),
+            BotCommand("endquiz", "End the current quiz game"),
+            BotCommand("translate", "Get Arabic translation of lyrics 🌍 (format: artist - song)"),
+            BotCommand("subscribe", "Subscribe to daily song discovery 🎶"),
+            BotCommand("unsubscribe", "Unsubscribe from daily song discovery 👋"),
+            BotCommand("youtube", "Get YouTube link for song 🎬 (format: artist - song)"),
+            BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
+            BotCommand("download", "Download YouTube video 🎬 (format: /download video_url)"),
+            BotCommand("wiki", "Get Wikipedia info about artists 📚 (format: /wiki name)")
+        ]
 
-    updater.bot.set_my_commands(commands)
+        updater.bot.set_my_commands(commands)
 
-    # Start the bot
-    updater.start_polling()
-    updater.idle()
+        # Start the bot
+        updater.start_polling()
+        logger.info("Bot started successfully")
 
+    except Exception as e:
+        logger.error(f"Error starting bot: {str(e)}", exc_info=True)
 
 if __name__ == "__main__":
     main()
