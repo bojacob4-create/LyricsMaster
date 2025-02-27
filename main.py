@@ -5,6 +5,7 @@ import threading
 import requests
 import time
 import os
+from datetime import datetime
 
 # Configure root logger
 logging.basicConfig(level=logging.DEBUG)
@@ -18,18 +19,36 @@ def keep_alive():
     else:
         ping_url = "http://0.0.0.0:5000/"
 
+    backoff = 1  # Initial backoff in seconds
+    max_backoff = 30  # Maximum backoff in seconds
     while True:
         try:
             # Try both the Replit URL and local URL
             try:
-                requests.get(ping_url)
+                response = requests.get(ping_url, timeout=5)
+                if response.status_code == 200:
+                    logger.debug(f"Keep-alive ping successful at {datetime.now()}")
+                    backoff = 1  # Reset backoff on success
+                else:
+                    logger.warning(f"Keep-alive ping returned status {response.status_code}")
+                    raise requests.RequestException("Non-200 status code")
             except:
-                requests.get("http://0.0.0.0:5000/")
-            logger.debug("Keep-alive ping successful")
-            time.sleep(10)  # Reduced ping interval to 10 seconds for better reliability
+                response = requests.get("http://0.0.0.0:5000/", timeout=5)
+                if response.status_code == 200:
+                    logger.debug("Local keep-alive ping successful")
+                    backoff = 1  # Reset backoff on success
+                else:
+                    raise requests.RequestException("Local ping failed")
+
+            time.sleep(5)  # Ping every 5 seconds when successful
+
         except Exception as e:
             logger.error(f"Keep-alive ping failed: {str(e)}")
-            time.sleep(15)  # Shorter retry interval for faster recovery
+            # Exponential backoff with maximum limit
+            sleep_time = min(backoff, max_backoff)
+            logger.info(f"Retrying in {sleep_time} seconds...")
+            time.sleep(sleep_time)
+            backoff = min(backoff * 2, max_backoff)  # Double the backoff time, but don't exceed max
 
 def run_flask():
     """Run Flask app in production mode"""

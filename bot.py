@@ -104,20 +104,45 @@ def error_handler(update: Update, context: CallbackContext):
         logger.error(f"Error in error handler: {str(e)}", exc_info=True)
 
 def monitor_connection(context: CallbackContext):
-    """Monitor bot connection state."""
+    """Monitor bot connection state with advanced recovery."""
     try:
-        if not context.bot.running: # Use context.bot.running instead of updater.running
-            logger.warning("Bot connection lost, attempting to reconnect...")
-            context.bot.start_polling(
-                timeout=30,
-                read_latency=5.0,
-                drop_pending_updates=True,
-                allowed_updates=['message', 'callback_query'],
-                bootstrap_retries=3
-            )
-            logger.info("Bot reconnected successfully")
+        logger.info("Running connection health check...")
+        if not context.bot.running:
+            logger.warning("Bot connection lost, attempting immediate reconnection...")
+            try:
+                # First attempt immediate reconnection
+                context.bot.start_polling(
+                    timeout=30,
+                    read_latency=5.0,
+                    drop_pending_updates=True,
+                    allowed_updates=['message', 'callback_query'],
+                    bootstrap_retries=5
+                )
+                logger.info("Bot reconnected successfully")
+            except Exception as e:
+                logger.error(f"Initial reconnection attempt failed: {str(e)}")
+                # Second attempt with different parameters
+                try:
+                    context.bot.start_polling(
+                        timeout=60,
+                        read_latency=10.0,
+                        drop_pending_updates=True,
+                        allowed_updates=['message'],
+                        bootstrap_retries=3
+                    )
+                    logger.info("Bot reconnected on second attempt")
+                except Exception as e2:
+                    logger.error(f"Second reconnection attempt failed: {str(e2)}")
+                    # Force updater restart
+                    try:
+                        context._dispatcher.updater.start_polling()
+                        logger.info("Forced updater restart successful")
+                    except Exception as e3:
+                        logger.error(f"Failed to force restart updater: {str(e3)}")
     except Exception as e:
-        logger.error(f"Connection check failed: {str(e)}")
+        logger.error(f"Connection monitor error: {str(e)}")
+        # Schedule an immediate retry
+        context.job_queue.run_once(monitor_connection, 30)
 
 def main():
     """Start the bot."""
@@ -198,8 +223,8 @@ def main():
         flask_thread.daemon = True
         flask_thread.start()
 
-        # Add periodic connection check - more frequent checks
-        job_queue.run_repeating(monitor_connection, interval=60, first=60)  # Check every minute
+        # Add aggressive connection monitoring
+        job_queue.run_repeating(monitor_connection, interval=30, first=10)  # Check every 30 seconds
 
         # Start the Bot with improved settings for stability
         logger.info("Starting bot polling...")
@@ -208,7 +233,7 @@ def main():
             read_latency=5.0,
             drop_pending_updates=True,
             allowed_updates=['message', 'callback_query'],
-            bootstrap_retries=3,
+            bootstrap_retries=5,
         )
 
         logger.info("Bot is running successfully!")
