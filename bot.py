@@ -56,19 +56,18 @@ class TelegramBotWrapper:
         self.is_running = False
 
     def setup_bot(self):
-        """Set up the bot with error handling."""
+        """Set up the bot with handlers and commands."""
         try:
-            self.updater = Updater(
-                token=self.token,
-                use_context=True,
-                request_kwargs={
-                    'read_timeout': 30,
-                    'connect_timeout': 30
-                }
-            )
+            logger.info("Setting up bot with token...")
+            self.updater = Updater(token=self.token, use_context=True)
             dp = self.updater.dispatcher
 
-            # Register handlers
+            # Test connection
+            bot_info = self.updater.bot.get_me()
+            logger.info(f"Bot connected successfully. Username: @{bot_info.username}")
+
+            # Register command handlers
+            logger.info("Registering command handlers...")
             dp.add_handler(CommandHandler("start", start_command))
             dp.add_handler(CommandHandler("help", help_command))
             dp.add_handler(CommandHandler("lyrics", lyrics_command))
@@ -79,123 +78,111 @@ class TelegramBotWrapper:
             dp.add_handler(CommandHandler("translate", translate_lyrics_command))
             dp.add_handler(CommandHandler("youtube", youtube_command))
             dp.add_handler(CommandHandler("analyze", analyze_command))
+            dp.add_handler(CommandHandler("download", download_command))
             dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
             dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
-            dp.add_handler(CommandHandler("download", download_command))
             dp.add_handler(CommandHandler("wiki", wiki_command))
-            dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
-            dp.add_error_handler(self.error_handler)
 
-            # Set commands
+            # Add message handler for quiz answers
+            dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
+
+            # Add error handler
+            dp.add_error_handler(self.error_handler)
+            logger.info("Command handlers registered successfully")
+
+            # Set commands list
             commands = [
                 BotCommand("start", "Begin your musical journey 🎵"),
                 BotCommand("help", "Get detailed help and tips 💡"),
-                BotCommand("lyrics", "Get song lyrics with mood analysis 🎤"),
-                BotCommand("stats", "Get detailed song statistics 📊"),
-                BotCommand("recommend", "Discover similar songs 🎵"),
-                BotCommand("quiz", "Play an interactive lyrics quiz 🎮"),
-                BotCommand("endquiz", "End the current quiz game 🎲"),
-                BotCommand("translate", "Get Arabic lyrics translation 🌍"),
-                BotCommand("youtube", "Find songs on YouTube 🎬"),
-                BotCommand("analyze", "Get deep song analysis 📈"),
-                BotCommand("download", "Download YouTube videos 📥"),
-                BotCommand("subscribe", "Get daily song discoveries 📅"),
-                BotCommand("unsubscribe", "Stop daily song updates 🔕"),
+                BotCommand("lyrics", "Get song lyrics 🎵 (format: artist - song)"),
+                BotCommand("stats", "Get song statistics 📊 (format: artist - song)"),
+                BotCommand("recommend", "Get song recommendations 🎵 (format: artist - song)"),
+                BotCommand("quiz", "Start a lyrics quiz game 🎮"),
+                BotCommand("endquiz", "End the current quiz game"),
+                BotCommand("translate", "Get Arabic translation of lyrics 🌍 (format: artist - song)"),
+                BotCommand("youtube", "Get YouTube link for song 🎬 (format: artist - song)"),
+                BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
+                BotCommand("download", "Download YouTube video 🎬 (format: /download video_url)"),
+                BotCommand("subscribe", "Subscribe to daily song discovery 🎶"),
+                BotCommand("unsubscribe", "Unsubscribe from daily song discovery 👋"),
                 BotCommand("wiki", "Get Wikipedia info about artists 📚")
             ]
             self.updater.bot.set_my_commands(commands)
+            logger.info("Bot commands set successfully")
 
-            logger.info("Bot initialization completed successfully")
-            print("Bot initialization completed successfully")  # Explicit stdout message
             return True
 
         except Exception as e:
-            logger.error(f"Error in bot setup: {str(e)}")
+            logger.error(f"Error in bot setup: {str(e)}", exc_info=True)
             return False
 
     def error_handler(self, update: Update, context: CallbackContext):
-        """Handle errors with retry logic."""
+        """Handle errors."""
+        logger.error(f"Error occurred: {context.error}")
         try:
-            if isinstance(context.error, NetworkError):
-                logger.warning(f"Network error: {str(context.error)}")
-                raise context.error
-            elif isinstance(context.error, TimedOut):
-                logger.warning(f"Timeout error: {str(context.error)}")
-                raise context.error
-            elif isinstance(context.error, RetryAfter):
-                retry_after = context.error.retry_after
-                logger.warning(f"Rate limit hit, waiting {retry_after} seconds")
-                time.sleep(retry_after)
-                return
-            else:
-                logger.error(f"Error: {context.error}")
-
-            if update and update.effective_message:
-                update.effective_message.reply_text(
-                    "😓 Oops! Something went wrong.\n"
-                    "Don't worry, I'll reconnect automatically! 🔄"
-                )
+            raise context.error
+        except NetworkError:
+            logger.error("Network error occurred")
+        except TelegramError:
+            logger.error("Telegram API error occurred")
         except Exception as e:
-            logger.error(f"Error in error handler: {str(e)}")
+            logger.error(f"Other error occurred: {str(e)}")
+
+        if update and update.effective_message:
+            update.effective_message.reply_text(
+                "😓 Oops! Something went wrong.\n"
+                "Please try again in a moment! 🔄"
+            )
 
     def start(self):
-        """Start the bot with recovery."""
-        while True:
-            try:
-                if not self.setup_bot():
-                    raise Exception("Bot setup failed")
+        """Start the bot."""
+        try:
+            if not self.setup_bot():
+                raise Exception("Bot setup failed")
 
-                logger.info("Starting bot...")
-                self.updater.start_polling(drop_pending_updates=True)
-                self.is_running = True
-                self.retry_count = 0
-                self.last_restart = datetime.now()
+            logger.info("Starting bot polling...")
+            self.updater.start_polling()
+            logger.info("Bot started successfully!")
 
-                # Signal that the bot is ready
-                logger.info("Bot started successfully")
-                print("Bot started successfully")  # Explicit stdout message
+            self.updater.idle()
 
-                self.updater.idle()
+        except Exception as e:
+            logger.error(f"Error starting bot: {str(e)}", exc_info=True)
+            raise
 
-            except KeyboardInterrupt:
-                logger.info("Received shutdown signal, stopping...")
-                if self.updater:
-                    self.updater.stop()
-                break
 
-            except Exception as e:
-                self.is_running = False
-                self.retry_count += 1
-                delay = min(self.base_delay * (2 ** self.retry_count), self.max_delay)
+def signal_handler(sig, frame):
+    logger.info(f"Received signal {sig}, exiting gracefully...")
+    sys.exit(0)
 
-                logger.error(f"Bot error: {str(e)}")
-                logger.info(f"Retrying in {delay} seconds... (Attempt {self.retry_count}/{self.max_retries})")
-
-                if self.retry_count > self.max_retries:
-                    logger.error("Maximum retry attempts reached")
-                    break
-
-                time.sleep(delay)
 
 def main():
+    """Start the bot."""
     try:
-        # Check for required token
+        # Get token from environment variable
         token = os.environ.get("TELEGRAM_TOKEN")
         if not token:
-            logger.error("TELEGRAM_TOKEN not found!")
-            raise ValueError("TELEGRAM_TOKEN environment variable not set")
+            logger.error("No token provided!")
+            raise ValueError("TELEGRAM_TOKEN environment variable is not set")
+
+        logger.info("Bot initialization starting...")
+        logger.info("Token validation successful")
 
         # Set up signal handlers
-        signal.signal(signal.SIGTERM, lambda signo, frame: sys.exit(0))
-        signal.signal(signal.SIGINT, lambda signo, frame: sys.exit(0))
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
 
-        logger.info("Starting bot process...")
+        logger.info("Starting bot...")
         bot = TelegramBotWrapper(token)
+
+        # Add more detailed logging
+        logger.info("Starting bot wrapper...")
         bot.start()
 
     except Exception as e:
-        logger.critical(f"Fatal error: {str(e)}")
+        logger.critical(f"Fatal error: {str(e)}", exc_info=True)
         sys.exit(1)
 
 if __name__ == '__main__':
+    logger.info("Bot script starting...")
     main()
