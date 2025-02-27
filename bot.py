@@ -103,6 +103,22 @@ def error_handler(update: Update, context: CallbackContext):
     except Exception as e:
         logger.error(f"Error in error handler: {str(e)}", exc_info=True)
 
+def monitor_connection(context: CallbackContext):
+    """Monitor bot connection state."""
+    try:
+        if not context.bot.running: # Use context.bot.running instead of updater.running
+            logger.warning("Bot connection lost, attempting to reconnect...")
+            context.bot.start_polling(
+                timeout=30,
+                read_latency=5.0,
+                drop_pending_updates=True,
+                allowed_updates=['message', 'callback_query'],
+                bootstrap_retries=3
+            )
+            logger.info("Bot reconnected successfully")
+    except Exception as e:
+        logger.error(f"Connection check failed: {str(e)}")
+
 def main():
     """Start the bot."""
     try:
@@ -144,7 +160,6 @@ def main():
 
         for handler in command_handlers:
             dp.add_handler(handler)
-            logger.debug(f"Registered handler for command: {handler.command}")
 
         # Add message handler for quiz answers
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
@@ -183,25 +198,8 @@ def main():
         flask_thread.daemon = True
         flask_thread.start()
 
-        # Add periodic connection check
-        def monitor_connection(context: CallbackContext):
-            """Monitor bot connection state."""
-            try:
-                if not updater.running:
-                    logger.warning("Bot connection lost, attempting to reconnect...")
-                    updater.start_polling(
-                        timeout=30,
-                        read_latency=5.0,
-                        drop_pending_updates=True,
-                        allowed_updates=['message', 'callback_query'],
-                        bootstrap_retries=3
-                    )
-                    logger.info("Bot reconnected successfully")
-            except Exception as e:
-                logger.error(f"Connection check failed: {str(e)}")
-
-        # Run connection monitoring every 5 minutes
-        job_queue.run_repeating(monitor_connection, interval=300, first=300)
+        # Add periodic connection check - more frequent checks
+        job_queue.run_repeating(monitor_connection, interval=60, first=60)  # Check every minute
 
         # Start the Bot with improved settings for stability
         logger.info("Starting bot polling...")
@@ -209,8 +207,8 @@ def main():
             timeout=30,
             read_latency=5.0,
             drop_pending_updates=True,
-            allowed_updates=['message', 'callback_query'],  # Only process these update types
-            bootstrap_retries=3,  # Number of retries for initial connection
+            allowed_updates=['message', 'callback_query'],
+            bootstrap_retries=3,
         )
 
         logger.info("Bot is running successfully!")
