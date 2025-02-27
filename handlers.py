@@ -1,7 +1,7 @@
 import logging
 import os
 from telegram import Update, BotCommand
-from telegram.ext import CallbackContext, MessageHandler, Filters
+from telegram.ext import CallbackContext, MessageHandler, Filters, CommandHandler
 from telegram.error import TelegramError
 from services.lyrics_service import get_song_lyrics
 from services.translator_service import translate_to_arabic
@@ -70,6 +70,7 @@ def start_command(update: Update, context: CallbackContext):
         )
 
 
+
 def help_command(update: Update, context: CallbackContext):
     """Send a message when the command /help is issued."""
     logger.info(f"User {update.effective_user.id} requested help")
@@ -125,6 +126,7 @@ def help_command(update: Update, context: CallbackContext):
             help_text.replace('*', '').replace('▫️', '•'),
             disable_web_page_preview=True
         )
+
 
 
 def quiz_command(update: Update, context: CallbackContext):
@@ -750,11 +752,11 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
     try:
         query = " ".join(context.args)
         if not query:
-            logger.info(f"User {user_id} provided no name for wiki search")
+            logger.info(f"User {user_id} provided invalid wiki query format")
             update.message.reply_text(
                 "⚠️ Please provide a name to search!\n\n"
                 "Use this format: /wiki person name\n"
-                "For example: /wiki Adele\n\n"
+                "For example: /wiki Taylor Swift\n\n"
                 "Give it a try! 🔍"
             )
             return
@@ -784,7 +786,7 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
             f"{wiki_info['extract']}\n\n"
             f"🔗 Read more: {wiki_info['link']}\n\n"
             "Want to learn about someone else? Just use /wiki again! 🤓"
-        )
+        )        )
 
         update.message.reply_text(
             response,
@@ -793,6 +795,12 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
         )
         logger.info(f"Successfully sent Wikipedia info to user {user_id}")
 
+    except TelegramError as e:
+        logger.error(f"Telegram error in wiki command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong with sending the message.\n"
+            "Please try again in a moment! 🔄"
+        )
     except Exception as e:
         logger.error(f"Error in wiki command for user {user_id}: {str(e)}", exc_info=True)
         update.message.reply_text(
