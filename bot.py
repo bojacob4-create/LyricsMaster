@@ -48,12 +48,13 @@ class TelegramBotWrapper:
         self.token = token
         self.updater = None
         self.retry_count = 0
-        self.max_retries = 5
+        self.max_retries = 3
         self.base_delay = 1
-        self.max_delay = 60
-        self.last_restart = datetime.now()
-        self.RESTART_AFTER = timedelta(hours=12)
-        self.is_running = False
+        self.max_delay = 15  # Maximum 15 seconds delay between retries
+        self.last_activity = datetime.now()
+        self.ACTIVITY_TIMEOUT = 60  # Force restart if no activity for 60 seconds
+        self.connection_check_thread = None
+        self.should_stop = False
 
     def setup_bot(self):
         """Set up the bot with error handling."""
@@ -62,28 +63,28 @@ class TelegramBotWrapper:
                 token=self.token,
                 use_context=True,
                 request_kwargs={
-                    'read_timeout': 30,
-                    'connect_timeout': 30
+                    'read_timeout': 10,  # More aggressive timeouts
+                    'connect_timeout': 10
                 }
             )
             dp = self.updater.dispatcher
 
             # Register handlers
-            dp.add_handler(CommandHandler("start", start_command))
-            dp.add_handler(CommandHandler("help", help_command))
-            dp.add_handler(CommandHandler("lyrics", lyrics_command))
-            dp.add_handler(CommandHandler("stats", stats_command))
-            dp.add_handler(CommandHandler("recommend", recommend_command))
-            dp.add_handler(CommandHandler("quiz", quiz_command))
-            dp.add_handler(CommandHandler("endquiz", end_quiz_command))
-            dp.add_handler(CommandHandler("translate", translate_lyrics_command))
-            dp.add_handler(CommandHandler("youtube", youtube_command))
-            dp.add_handler(CommandHandler("analyze", analyze_command))
-            dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
-            dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
-            dp.add_handler(CommandHandler("download", download_command))
-            dp.add_handler(CommandHandler("wiki", wiki_command))
-            dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
+            dp.add_handler(CommandHandler("start", self.wrapped_handler(start_command)))
+            dp.add_handler(CommandHandler("help", self.wrapped_handler(help_command)))
+            dp.add_handler(CommandHandler("lyrics", self.wrapped_handler(lyrics_command)))
+            dp.add_handler(CommandHandler("stats", self.wrapped_handler(stats_command)))
+            dp.add_handler(CommandHandler("recommend", self.wrapped_handler(recommend_command)))
+            dp.add_handler(CommandHandler("quiz", self.wrapped_handler(quiz_command)))
+            dp.add_handler(CommandHandler("endquiz", self.wrapped_handler(end_quiz_command)))
+            dp.add_handler(CommandHandler("translate", self.wrapped_handler(translate_lyrics_command)))
+            dp.add_handler(CommandHandler("youtube", self.wrapped_handler(youtube_command)))
+            dp.add_handler(CommandHandler("analyze", self.wrapped_handler(analyze_command)))
+            dp.add_handler(CommandHandler("subscribe", self.wrapped_handler(subscribe_daily_command)))
+            dp.add_handler(CommandHandler("unsubscribe", self.wrapped_handler(unsubscribe_daily_command)))
+            dp.add_handler(CommandHandler("download", self.wrapped_handler(download_command)))
+            dp.add_handler(CommandHandler("wiki", self.wrapped_handler(wiki_command)))
+            dp.add_handler(MessageHandler(Filters.text & ~Filters.command, self.wrapped_handler(quiz_answer)))
             dp.add_error_handler(self.error_handler)
 
             # Set commands
@@ -113,20 +114,27 @@ class TelegramBotWrapper:
             logger.error(f"Error in bot setup: {str(e)}")
             return False
 
+    def wrapped_handler(self, handler):
+        """Wrapper for command handlers to track activity."""
+        def wrapper(update, context):
+            try:
+                self.last_activity = datetime.now()
+                return handler(update, context)
+            except Exception as e:
+                logger.error(f"Handler error: {str(e)}")
+                raise
+        return wrapper
+
     def error_handler(self, update: Update, context: CallbackContext):
         """Handle errors with retry logic."""
         try:
-            if isinstance(context.error, NetworkError):
-                logger.warning(f"Network error: {str(context.error)}")
-                raise context.error
-            elif isinstance(context.error, TimedOut):
-                logger.warning(f"Timeout error: {str(context.error)}")
-                raise context.error
+            if isinstance(context.error, (NetworkError, TimedOut)):
+                logger.warning(f"Network/Timeout error: {str(context.error)}")
+                self.force_restart()
             elif isinstance(context.error, RetryAfter):
                 retry_after = context.error.retry_after
                 logger.warning(f"Rate limit hit, waiting {retry_after} seconds")
                 time.sleep(retry_after)
-                return
             else:
                 logger.error(f"Error: {context.error}")
 
@@ -137,19 +145,58 @@ class TelegramBotWrapper:
                 )
         except Exception as e:
             logger.error(f"Error in error handler: {str(e)}")
+            self.force_restart()
+
+    def check_connection(self):
+        """Monitor bot connection and activity."""
+        while not self.should_stop:
+            try:
+                time.sleep(5)  # Check every 5 seconds
+
+                # Check for inactivity
+                if (datetime.now() - self.last_activity).total_seconds() > self.ACTIVITY_TIMEOUT:
+                    logger.warning("Bot inactive for too long, forcing restart")
+                    self.force_restart()
+                    continue
+
+                # Verify connection with a simple API call
+                self.updater.bot.get_me()
+
+            except Exception as e:
+                logger.error(f"Connection check failed: {str(e)}")
+                self.force_restart()
+
+    def force_restart(self):
+        """Force a bot restart."""
+        logger.info("Forcing bot restart...")
+        try:
+            if self.updater:
+                self.updater.stop()
+            self.setup_bot()
+            self.updater.start_polling(drop_pending_updates=True)
+            logger.info("Bot restarted successfully")
+        except Exception as e:
+            logger.error(f"Error during force restart: {str(e)}")
+            raise
 
     def start(self):
-        """Start the bot with recovery."""
-        while True:
+        """Start the bot with enhanced recovery."""
+        import threading
+
+        while not self.should_stop:
             try:
                 if not self.setup_bot():
                     raise Exception("Bot setup failed")
 
                 logger.info("Starting bot...")
                 self.updater.start_polling(drop_pending_updates=True)
-                self.is_running = True
                 self.retry_count = 0
-                self.last_restart = datetime.now()
+                self.last_activity = datetime.now()
+
+                # Start connection monitoring in a separate thread
+                self.connection_check_thread = threading.Thread(target=self.check_connection)
+                self.connection_check_thread.daemon = True
+                self.connection_check_thread.start()
 
                 # Signal that the bot is ready
                 logger.info("Bot started successfully")
@@ -159,12 +206,12 @@ class TelegramBotWrapper:
 
             except KeyboardInterrupt:
                 logger.info("Received shutdown signal, stopping...")
+                self.should_stop = True
                 if self.updater:
                     self.updater.stop()
                 break
 
             except Exception as e:
-                self.is_running = False
                 self.retry_count += 1
                 delay = min(self.base_delay * (2 ** self.retry_count), self.max_delay)
 
