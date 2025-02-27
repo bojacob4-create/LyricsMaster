@@ -16,9 +16,16 @@ name = "Project"
 mode = "parallel"
 author = "agent"
 
+[workflows.workflow.metadata]
+agentRequireRestartOnSave = false
+
 [[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Telegram Bot"
+task = "packager.installForAll"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "gunicorn -w 1 --timeout 120 'main:app'"
+waitForPort = 5000
 
 [[workflows.workflow]]
 name = "Telegram Bot"
@@ -32,7 +39,7 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python bot.py"
+args = "python main.py"
 
 [[ports]]
 localPort = 5000

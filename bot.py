@@ -302,11 +302,22 @@ def main():
             logger.error("No token provided!")
             raise ValueError("TELEGRAM_TOKEN environment variable is not set")
 
-        # Set up signal handlers
+        # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
 
-        logger.info("Starting bot with automatic recovery...")
+        # Configure deployment-specific logging
+        logging.basicConfig(
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            level=logging.INFO,
+            handlers=[
+                logging.StreamHandler(),
+                logging.FileHandler('bot_deployment.log')
+            ]
+        )
+        logger.info("Starting bot in deployment mode with automatic recovery...")
+
+        # Initialize and start bot with improved error handling
         bot = TelegramBotWrapper(token)
         bot.start()
 
