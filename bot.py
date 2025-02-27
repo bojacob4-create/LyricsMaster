@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 def error_handler(update: Update, context: CallbackContext):
     """Log Errors caused by Updates."""
-    logger.error(f'Update "{update}" caused error "{context.error}"', exc_info=True)
+    logger.error(f'Update "{update}" caused error "{context.error}"')
     try:
         if update and update.effective_message:
             update.effective_message.reply_text(
@@ -63,13 +63,13 @@ def main():
             request_kwargs={
                 'read_timeout': 30,
                 'connect_timeout': 30,
-                'pool_timeout': 30,
+                'read_latency': 1.0,
                 'connect_retries': 3
             }
         )
         dp = updater.dispatcher
 
-        # Register command handlers
+        # Register command handlers efficiently
         handlers = [
             ("start", start_command),
             ("help", help_command),
@@ -126,8 +126,10 @@ def main():
         updater.start_polling(
             drop_pending_updates=True,
             timeout=30,
-            read_latency=2.0,
-            clean=True
+            read_latency=1.0,
+            clean=True,
+            bootstrap_retries=3,
+            allowed_updates=['message', 'callback_query']  # Only listen for needed updates
         )
         logger.info("Bot is running!")
 
