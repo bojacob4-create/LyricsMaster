@@ -4,13 +4,13 @@ import signal
 import sys
 import time
 from datetime import datetime
-from telegram import Update, BotCommand
+from telegram import Update
 from telegram.ext import (
     CallbackContext, 
     Updater,
     CommandHandler,
     MessageHandler,
-    Filters
+    filters  # Changed from Filters to filters
 )
 from telegram.error import (
     TelegramError,
@@ -119,7 +119,7 @@ class TelegramBotWrapper:
             def wrapped_quiz_answer(update: Update, context: CallbackContext):
                 update_activity()
                 return quiz_answer(update, context)
-            dp.add_handler(MessageHandler(Filters.text & ~Filters.command, wrapped_quiz_answer))
+            dp.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, wrapped_quiz_answer))
 
             # Add error handler
             dp.add_error_handler(self.error_handler)
