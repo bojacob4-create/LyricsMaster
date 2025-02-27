@@ -2,10 +2,10 @@ import logging
 import os
 from bot import main as bot_main
 
-# Configure root logger
+# Configure root logger with optimized settings
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG
+    level=logging.INFO  # Changed to INFO to reduce log verbosity
 )
 logger = logging.getLogger(__name__)
 

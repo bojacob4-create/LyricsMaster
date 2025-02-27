@@ -29,10 +29,10 @@ from handlers import (
 from services.daily_song_service import send_daily_song
 from datetime import time
 
-# Configure logging with more detail
+# Configure logging with optimized settings
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG  # Set to DEBUG for more detailed logs
+    level=logging.INFO  # Set to INFO for better performance
 )
 logger = logging.getLogger(__name__)
 
@@ -42,8 +42,7 @@ def error_handler(update: Update, context: CallbackContext):
     try:
         if update and update.effective_message:
             update.effective_message.reply_text(
-                "😓 Oops! Something went wrong.\n"
-                "Please try again in a moment! 🔄"
+                "😓 Something went wrong. Please try again! 🔄"
             )
     except Exception as e:
         logger.error(f"Error in error handler: {str(e)}")
@@ -57,36 +56,40 @@ def main():
             logger.error("No token provided!")
             raise ValueError("TELEGRAM_TOKEN environment variable is not set")
 
-        logger.info("Starting bot initialization...")
-
-        # Initialize the bot
+        # Initialize the bot with optimized settings
         updater = Updater(
             token=token,
             use_context=True,
             request_kwargs={
                 'read_timeout': 30,
-                'connect_timeout': 30
+                'connect_timeout': 30,
+                'pool_timeout': 30,
+                'connect_retries': 3
             }
         )
         dp = updater.dispatcher
-        logger.debug("Created updater and dispatcher")
 
         # Register command handlers
-        dp.add_handler(CommandHandler("start", start_command))
-        dp.add_handler(CommandHandler("help", help_command))
-        dp.add_handler(CommandHandler("lyrics", lyrics_command))
-        dp.add_handler(CommandHandler("stats", stats_command))
-        dp.add_handler(CommandHandler("recommend", recommend_command))
-        dp.add_handler(CommandHandler("quiz", quiz_command))
-        dp.add_handler(CommandHandler("endquiz", end_quiz_command))
-        dp.add_handler(CommandHandler("translate", translate_lyrics_command))
-        dp.add_handler(CommandHandler("youtube", youtube_command))
-        dp.add_handler(CommandHandler("analyze", analyze_command))
-        dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
-        dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
-        dp.add_handler(CommandHandler("download", download_command))
-        dp.add_handler(CommandHandler("wiki", wiki_command))
-        logger.debug("Registered all command handlers")
+        handlers = [
+            ("start", start_command),
+            ("help", help_command),
+            ("lyrics", lyrics_command),
+            ("stats", stats_command),
+            ("recommend", recommend_command),
+            ("quiz", quiz_command),
+            ("endquiz", end_quiz_command),
+            ("translate", translate_lyrics_command),
+            ("youtube", youtube_command),
+            ("analyze", analyze_command),
+            ("subscribe", subscribe_daily_command),
+            ("unsubscribe", unsubscribe_daily_command),
+            ("download", download_command),
+            ("wiki", wiki_command)
+        ]
+
+        # Add handlers efficiently
+        for command, handler in handlers:
+            dp.add_handler(CommandHandler(command, handler))
 
         # Add message handler for quiz answers
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
@@ -94,7 +97,7 @@ def main():
         # Add error handler
         dp.add_error_handler(error_handler)
 
-        # Set commands list with detailed descriptions
+        # Set commands list
         commands = [
             BotCommand("start", "Begin your musical journey 🎵"),
             BotCommand("help", "Get detailed help and tips 💡"),
@@ -114,20 +117,25 @@ def main():
 
         try:
             updater.bot.set_my_commands(commands)
-            logger.info("Successfully set bot commands")
         except Exception as e:
-            logger.error(f"Failed to set bot commands: {str(e)}")
+            logger.warning(f"Failed to set bot commands: {str(e)}")
+            # Continue anyway as this is not critical
 
-        # Start the Bot
-        logger.info("Starting bot polling...")
-        updater.start_polling(drop_pending_updates=True)
-        logger.info("Bot started successfully!")
+        # Start the Bot with optimized settings
+        logger.info("Starting bot...")
+        updater.start_polling(
+            drop_pending_updates=True,
+            timeout=30,
+            read_latency=2.0,
+            clean=True
+        )
+        logger.info("Bot is running!")
 
         # Run the bot until you press Ctrl-C
         updater.idle()
 
     except Exception as e:
-        logger.error(f"Critical error during bot initialization: {str(e)}", exc_info=True)
+        logger.error(f"Critical error: {str(e)}", exc_info=True)
         raise
 
 if __name__ == '__main__':
