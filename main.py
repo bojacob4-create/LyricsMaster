@@ -4,6 +4,6 @@ from bot import main
 if __name__ == "__main__":
     with app.app_context():
         # Import models here to ensure they're registered
-        from models import Favorite
+        import models
         db.create_all()
     main()

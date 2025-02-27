@@ -17,9 +17,6 @@ from handlers import (
     translate_lyrics_command,
     youtube_command,
     analyze_command,
-    favorite_command,
-    unfavorite_command,
-    favorites_command,
     subscribe_daily_command,
     unsubscribe_daily_command,
     send_daily_song
@@ -75,9 +72,6 @@ def main():
         dp.add_handler(CommandHandler("translate", translate_lyrics_command))
         dp.add_handler(CommandHandler("youtube", youtube_command))
         dp.add_handler(CommandHandler("analyze", analyze_command))
-        dp.add_handler(CommandHandler("favorite", favorite_command))
-        dp.add_handler(CommandHandler("unfavorite", unfavorite_command))
-        dp.add_handler(CommandHandler("favorites", favorites_command))
         dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
         dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
 
@@ -108,10 +102,7 @@ def main():
             BotCommand("subscribe", "Get a daily song with analysis 📅"),
             BotCommand("unsubscribe", "Stop receiving daily songs 🔕"),
             BotCommand("youtube", "Get YouTube link for song 🎬 (format: artist - song)"),
-            BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
-            BotCommand("favorite", "Add song to favorites ⭐ (format: artist - song)"),
-            BotCommand("unfavorite", "Remove from favorites 💫 (format: artist - song)"),
-            BotCommand("favorites", "View your favorite songs list 📝")
+            BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)")
         ]
         updater.bot.set_my_commands(commands)
 

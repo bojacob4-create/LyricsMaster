@@ -7,7 +7,7 @@ from services.translator_service import translate_to_arabic
 from services.recommendation_service import get_similar_songs, format_recommendations
 from services.quiz_service import (
     start_quiz, check_answer, get_quiz_stats, end_quiz,
-    format_multiple_choice_options, active_quizzes  # Import active_quizzes from quiz_service
+    format_multiple_choice_options, active_quizzes
 )
 from services.daily_song_service import (
     subscribe_user,
@@ -25,8 +25,7 @@ from utils import (
     format_detailed_analysis
 )
 from services.youtube_service import get_youtube_link, format_youtube_response
-from app import app #Import added here
-from services.favorites_service import add_favorite, remove_favorite, get_favorites, format_favorites_list
+from app import app
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +45,7 @@ def start_command(update: Update, context: CallbackContext):
         "🎮 /quiz → Play a fun lyrics guessing game!\n"
         "🌍 /translate artist - song → Get Arabic translation of lyrics\n"
         "💡 /help → Show more tips and examples\n"
-        "📊 /analyze artist - song → Get detailed song analysis\n\n" #Added new command
-        "⭐ /favorite artist - song → Add a song to your favorites\n" #Added new command
-        "💫 /unfavorite artist - song → Remove a song from your favorites\n" #Added new command
-        "📝 /favorites → View your favorite songs list\n\n" #Added new command
+        "📊 /analyze artist - song → Get detailed song analysis\n\n"
         "Try me out! For example, type:\n"
         "/lyrics Ed Sheeran - Perfect"
     )
@@ -76,14 +72,9 @@ def help_command(update: Update, context: CallbackContext):
         "5️⃣ To get Arabic translation:\n"
         "   /translate artist - song\n"
         "   Example: /translate Adele - Hello\n\n"
-        "6️⃣ To get detailed song analysis:\n" #Added new command
+        "6️⃣ To get detailed song analysis:\n"
         "   /analyze artist - song\n"
-        "   Example: /analyze Eminem - Lose Yourself\n\n" #Added new command
-        "7️⃣ To manage your favorite songs:\n" #Added new command
-        "   /favorite artist - song → Add a song to your favorites\n" #Added new command
-        "   /unfavorite artist - song → Remove a song from your favorites\n" #Added new command
-        "   /favorites → View your favorite songs list\n\n" #Added new command
-
+        "   Example: /analyze Eminem - Lose Yourself\n\n"
         "🎯 Pro Tips:\n"
         "• Make sure to use the dash (-) between artist and song\n"
         "• Double-check the spelling of artist and song names\n"
@@ -625,107 +616,6 @@ def analyze_command(update: Update, context: CallbackContext):
         )
 
 
-def favorite_command(update: Update, context: CallbackContext):
-    """Handle the /favorite command."""
-    user_id = update.effective_user.id
-    try:
-        logger.debug(f"Favorite command received from user {user_id}")
-
-        # Send immediate confirmation that command was received
-        update.message.reply_text("⭐ Processing your favorite request...")
-
-        query = " ".join(context.args)
-        logger.debug(f"Favorite command args: {query}")
-
-        if not query or "-" not in query:
-            logger.info(f"User {user_id} provided invalid favorite query format: {query}")
-            update.message.reply_text(
-                "⚠️ Please use this format: /favorite artist - song\n"
-                "For example: /favorite Ed Sheeran - Perfect\n\n"
-                "I'll add it to your favorites! ⭐"
-            )
-            return
-
-        artist, song = query.split("-", 1)
-        logger.info(f"User {user_id} adding favorite: '{artist.strip()} - {song.strip()}'")
-
-        # Add to favorites with proper app context
-        with app.app_context():
-            if add_favorite(user_id, artist.strip(), song.strip()):
-                update.message.reply_text(
-                    f"⭐ Added to favorites: {artist.strip()} - {song.strip()}\n\n"
-                    "Use /favorites to see your list!"
-                )
-            else:
-                update.message.reply_text(
-                    "This song is already in your favorites! 😊\n"
-                    "Use /favorites to see your list."
-                )
-
-    except Exception as e:
-        logger.error(f"Error in favorite command for user {user_id}: {str(e)}")
-        update.message.reply_text(
-            "😓 Something went wrong while adding to favorites.\n"
-            "Please try again later! 🔄"
-        )
-
-
-def unfavorite_command(update: Update, context: CallbackContext):
-    """Handle the /unfavorite command."""
-    user_id = update.effective_user.id
-    try:
-        query = " ".join(context.args)
-        if not query or "-" not in query:
-            logger.info(f"User {user_id} provided invalid unfavorite query format")
-            update.message.reply_text(
-                "⚠️ Please use this format: /unfavorite artist - song\n"
-                "For example: /unfavorite Ed Sheeran - Perfect\n\n"
-                "Check /favorites to see your list! ⭐"
-            )
-            return
-
-        artist, song = query.split("-", 1)
-        logger.info(f"User {user_id} removing favorite: '{artist.strip()} - {song.strip()}'")
-
-        # Remove from favorites with proper app context
-        with app.app_context():
-            if remove_favorite(user_id, artist.strip(), song.strip()):
-                update.message.reply_text(
-                    f"✨ Removed from favorites: {artist.strip()} - {song.strip()}\n\n"
-                    "Use /favorites to see your updated list!"
-                )
-            else:
-                update.message.reply_text(
-                    "This song wasn't in your favorites! 🤔\n"
-                    "Use /favorites to see your list."
-                )
-
-    except Exception as e:
-        logger.error(f"Error in unfavorite command for user {user_id}: {str(e)}")
-        update.message.reply_text(
-            "😓 Something went wrong while removing from favorites.\n"
-            "Please try again later! 🔄"
-        )
-
-
-def favorites_command(update: Update, context: CallbackContext):
-    """Handle the /favorites command."""
-    user_id = update.effective_user.id
-    try:
-        logger.info(f"User {user_id} requesting favorites list")
-        with app.app_context():
-            favorites = get_favorites(user_id)
-            response = format_favorites_list(favorites)
-            update.message.reply_text(response)
-
-    except Exception as e:
-        logger.error(f"Error in favorites command for user {user_id}: {str(e)}")
-        update.message.reply_text(
-            "😓 Something went wrong while getting your favorites.\n"
-            "Please try again later! 🔄"
-        )
-
-
 def format_multiple_choice_options(options):
     """Helper function to format multiple choice options neatly."""
     option_strings = []
@@ -753,9 +643,6 @@ def main():
     dp.add_handler(CommandHandler("translate", translate_lyrics_command))
     dp.add_handler(CommandHandler("youtube", youtube_command))
     dp.add_handler(CommandHandler("analyze", analyze_command))
-    dp.add_handler(CommandHandler("favorite", favorite_command))
-    dp.add_handler(CommandHandler("unfavorite", unfavorite_command))
-    dp.add_handler(CommandHandler("favorites", favorites_command))
     dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
     dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
 
@@ -776,8 +663,6 @@ def main():
         BotCommand("unsubscribe", "Unsubscribe from daily song discovery 👋"),
         BotCommand("youtube", "Get YouTube link for song 🎬 (format: artist - song)"),
         BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
-        BotCommand("favorite", "Add a song to favorites ⭐ (format: artist - song)"),        BotCommand("unfavorite", "Remove a song from favorites 💫 (format: artist - song)"),
-        BotCommand("favorites", "View your favorite songs list 📝")
     ]
 
     updater.bot.set_my_commands(commands)
