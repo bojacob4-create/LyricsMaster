@@ -828,67 +828,61 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
 
 
 def mp3_command(update: Update, context: CallbackContext):
-    """Handle the /mp3 command."""
-    user_id = update.effective_user.id
+    """Handle the /mp3 command to download songs."""
     try:
+        # Get command arguments
         query = " ".join(context.args)
         if not query or "-" not in query:
-            logger.info(f"User {user_id} provided invalid music download query format")
             update.message.reply_text(
-                "⚠️ Please use: /mp3 artist - song\n"
-                "Example: /mp3 Ed Sheeran - Perfect\n\n"
-                "Note: Maximum song length is 10 minutes! 🎵"
+                "⚠️ Use this format: /mp3 artist - song\n"
+                "Example: /mp3 Ed Sheeran - Perfect"
             )
             return
 
+        # Parse artist and song
         artist, song = query.split("-", 1)
-        logger.info(f"User {user_id} requested music download for '{artist.strip()} - {song.strip()}'")
+        logger.info(f"MP3 download request: {artist.strip()} - {song.strip()}")
 
-        # Send processing message
-        processing_message = update.message.reply_text(
-            "🎵 Searching for your song...\n"
-            "This might take a moment! ⏳"
+        # Show processing message
+        message = update.message.reply_text(
+            "🔍 Searching for your song...\n"
+            "This might take a moment!"
         )
 
-        # Download the music
+        # Try to download the song
         result = download_music(artist.strip(), song.strip())
-
         if not result:
-            processing_message.edit_text(
-                "😕 Sorry, I couldn't find or download that song.\n\n"
-                "Please check:\n"
-                "• The spelling of artist and song\n"
-                "• Try the official song title\n"
-                "• Make sure the song isn't too long (max 10 min)\n\n"
-                "Example: /mp3 Ed Sheeran - Perfect 🎵"
+            message.edit_text(
+                "❌ Couldn't find or download this song.\n"
+                "• Check the spelling\n"
+                "• Make sure it's not too long (max 10 min)\n"
+                "• Try another song"
             )
             return
 
-        file_path, info_message = result
+        # Get the file and info
+        file_path, info = result
+        message.edit_text(info)
 
-        # Update processing message with file info
-        processing_message.edit_text(info_message)
-
-        # Send audio file
-        with open(file_path, 'rb') as audio_file:
+        # Send the audio file
+        with open(file_path, 'rb') as audio:
             update.message.reply_audio(
-                audio_file,
+                audio,
                 title=f"{artist.strip()} - {song.strip()}",
-                caption="🎵 Enjoy your music! /help for more commands",
-                performer=artist.strip()
+                performer=artist.strip(),
+                caption="🎵 Enjoy your music!"
             )
 
-        # Cleanup
+        # Clean up
         cleanup_music_file(file_path)
-        logger.info(f"Successfully sent music to user {user_id}")
+        logger.info(f"Successfully sent MP3 to user {update.effective_user.id}")
 
     except Exception as e:
-        logger.error(f"Error in mp3 command for user {user_id}: {str(e)}")
+        logger.error(f"Error in mp3 command: {str(e)}")
         update.message.reply_text(
-            "😓 Something went wrong with the download.\n"
-            "Please try again later! 🔄"
+            "😔 Sorry, something went wrong.\n"
+            "Please try again!"
         )
-
 
 def main():
     """Initialize bot handlers and start the bot."""
