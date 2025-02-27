@@ -2,8 +2,21 @@ import logging
 import requests
 from urllib.parse import quote
 from typing import Optional, Dict
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
+
+# Configure retries for requests
+retry_strategy = Retry(
+    total=3,  # number of retries
+    backoff_factor=0.5,  # wait 0.5s * (2 ** retry) between retries
+    status_forcelist=[429, 500, 502, 503, 504],  # retry on these status codes
+)
+adapter = HTTPAdapter(max_retries=retry_strategy)
+session = requests.Session()
+session.mount("https://", adapter)
+session.mount("http://", adapter)
 
 def get_wikipedia_info(person_name: str) -> Optional[Dict[str, str]]:
     """
@@ -25,18 +38,15 @@ def get_wikipedia_info(person_name: str) -> Optional[Dict[str, str]]:
         search_params = {
             'action': 'query',
             'list': 'search',
-            'srsearch': search_term + ' music',  # Add 'music' to improve relevance
+            'srsearch': f"{search_term} musician singer artist",  # Improve relevance for music-related results
             'format': 'json',
             'srprop': 'snippet',
             'srlimit': 1  # Limit to 1 result
         }
 
         logger.debug(f"Making search request with params: {search_params}")
-        search_response = requests.get(search_url, params=search_params, timeout=10)
-
-        if search_response.status_code != 200:
-            logger.error(f"Wikipedia search failed with status code: {search_response.status_code}")
-            return None
+        search_response = session.get(search_url, params=search_params, timeout=10)
+        search_response.raise_for_status()  # Raise exception for non-200 status codes
 
         search_data = search_response.json()
         if not search_data.get('query', {}).get('search'):
@@ -60,11 +70,8 @@ def get_wikipedia_info(person_name: str) -> Optional[Dict[str, str]]:
         }
 
         logger.debug(f"Making page details request with params: {page_params}")
-        page_response = requests.get(search_url, params=page_params, timeout=10)
-
-        if page_response.status_code != 200:
-            logger.error(f"Failed to get page details with status code: {page_response.status_code}")
-            return None
+        page_response = session.get(search_url, params=page_params, timeout=10)
+        page_response.raise_for_status()
 
         page_data = page_response.json()
         page = page_data['query']['pages'][str(page_id)]
@@ -75,10 +82,15 @@ def get_wikipedia_info(person_name: str) -> Optional[Dict[str, str]]:
             logger.warning(f"No extract found for page ID: {page_id}")
             return None
 
+        # Clean up and format the extract
+        extract = extract.replace('\n', ' ').strip()
+
         # Limit extract length and add ellipsis if needed
         max_length = 300
         if len(extract) > max_length:
-            extract = extract[:max_length].rsplit('.', 1)[0] + '...'
+            # Try to break at a sentence boundary
+            truncated = extract[:max_length].rsplit('.', 1)[0]
+            extract = truncated + '...'
 
         result = {
             'title': page.get('title', ''),
@@ -89,7 +101,7 @@ def get_wikipedia_info(person_name: str) -> Optional[Dict[str, str]]:
         logger.info(f"Successfully retrieved Wikipedia info for {person_name}")
         return result
 
-    except requests.RequestException as e:
+    except requests.exceptions.RequestException as e:
         logger.error(f"Request error getting Wikipedia info: {str(e)}")
         return None
     except KeyError as e:

@@ -764,7 +764,7 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
         logger.info(f"User {user_id} requested Wikipedia info for '{query}'")
 
         # Send "typing" action while processing
-        update.message.chat.send_action(chat_action="typing")
+        update.message.chat.send_action(action="typing")
 
         # Get Wikipedia information
         wiki_info = get_wikipedia_info(query)
@@ -786,7 +786,7 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
             f"{wiki_info['extract']}\n\n"
             f"🔗 Read more: {wiki_info['link']}\n\n"
             "Want to learn about someone else? Just use /wiki again! 🤓"
-        )        )
+        )
 
         update.message.reply_text(
             response,
