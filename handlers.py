@@ -48,7 +48,6 @@ def start_command(update: Update, context: CallbackContext):
         "🎬 */youtube* - Find song on YouTube\n"
         "📥 */download* - Download YouTube videos\n"
         "📈 */analyze* - Get deep song analysis\n"
-        "⭐ */favorite* - Save your favorite songs\n"
         "🔔 */subscribe* - Get daily song discoveries\n\n"
         "*Quick Start:*\n"
         "Try */lyrics Ed Sheeran - Perfect* to see the magic! ✨\n\n"
