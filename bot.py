@@ -36,23 +36,17 @@ from handlers import (
     wiki_command
 )
 from services.daily_song_service import send_daily_song
-import gc
-import psutil
-import threading
 
-# Configure logging with more detail
+# Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.DEBUG
 )
 logger = logging.getLogger(__name__)
 
-# Global flags for bot status
+# Global flags
 should_stop = False
 last_activity = datetime.now()
-MAX_MEMORY_PERCENT = 90
-HEALTH_CHECK_INTERVAL = 60  # Check every minute
-RESTART_AFTER = timedelta(hours=12)  # Force restart every 12 hours
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully."""
@@ -60,118 +54,21 @@ def signal_handler(signum, frame):
     logger.info("Received shutdown signal, initiating graceful shutdown...")
     should_stop = True
 
-def update_activity():
-    """Update the last activity timestamp."""
-    global last_activity
-    last_activity = datetime.now()
-
 class TelegramBotWrapper:
     def __init__(self, token):
-        """Initialize the bot with retry mechanism."""
         self.token = token
         self.updater = None
         self.retry_count = 0
         self.max_retries = 10
-        self.base_delay = 1  # Base delay in seconds
-        self.max_delay = 300  # Maximum delay of 5 minutes
-        self.start_time = None
+        self.base_delay = 1
+        self.max_delay = 300
         self.last_restart = datetime.now()
-        self.memory_check_threshold = MAX_MEMORY_PERCENT
-
-    def check_memory_usage(self):
-        """Check current memory usage."""
-        process = psutil.Process()
-        memory_percent = process.memory_percent()
-        logger.debug(f"Current memory usage: {memory_percent:.2f}%")
-        return memory_percent > self.memory_check_threshold
-
-    def cleanup_resources(self):
-        """Cleanup memory and resources."""
-        gc.collect()
-        logger.info("Performed memory cleanup")
-
-    def needs_periodic_restart(self):
-        """Check if bot needs periodic restart."""
-        return datetime.now() - self.last_restart > RESTART_AFTER
-
-    def force_restart(self):
-        """Force a clean restart of the bot."""
-        logger.info("Initiating forced restart...")
-        if self.updater:
-            self.updater.stop()
-        self.cleanup_resources()
-        self.last_restart = datetime.now()
-        return self.setup_bot()
-
-    def log_health_status(self):
-        """Log comprehensive health status."""
-        if self.start_time:
-            uptime = datetime.now() - self.start_time
-            last_seen = datetime.now() - last_activity
-            process = psutil.Process()
-            memory_usage = process.memory_percent()
-
-            logger.info(
-                f"Bot Health Status:\n"
-                f"Uptime: {uptime}\n"
-                f"Last Activity: {last_seen.seconds} seconds ago\n"
-                f"Memory Usage: {memory_usage:.2f}%\n"
-                f"Retry Count: {self.retry_count}\n"
-                f"Last Restart: {datetime.now() - self.last_restart}\n"
-                f"Connection Status: {'Active' if self.updater else 'Inactive'}"
-            )
-
-    def health_check(self):
-        """Enhanced periodic health checks."""
-        while not should_stop:
-            try:
-                time.sleep(HEALTH_CHECK_INTERVAL)
-                self.log_health_status()
-
-                # Check memory usage
-                if self.check_memory_usage():
-                    logger.warning("High memory usage detected, cleaning up resources...")
-                    self.cleanup_resources()
-
-                # Check for periodic restart
-                if self.needs_periodic_restart():
-                    logger.info("Scheduled restart due...")
-                    if not self.force_restart():
-                        logger.error("Scheduled restart failed")
-                        continue
-
-                # Check for long periods of inactivity
-                if (datetime.now() - last_activity).seconds > 1800:  # 30 minutes
-                    logger.warning("No activity detected for over 30 minutes, checking connection...")
-                    try:
-                        # Test the connection by getting bot info
-                        bot_info = self.updater.bot.get_me()
-                        logger.info(f"Connection test successful - Bot ID: {bot_info.id}")
-                        logger.info("All systems operational")
-                    except NetworkError as ne:
-                        logger.error(f"Network connectivity issue: {str(ne)}")
-                        if not self.force_restart():
-                            return False
-                    except Exception as e:
-                        logger.error(f"Connection test failed: {str(e)}")
-                        if not self.force_restart():
-                            return False
-
-                if should_stop:
-                    logger.info("Health check stopping due to shutdown signal")
-                    break
-
-            except Exception as e:
-                logger.error(f"Error in health check: {str(e)}")
-                logger.info("Will continue monitoring in next interval")
-                continue
-
-        return True
+        self.RESTART_AFTER = timedelta(hours=12)
+        self.CHECK_INTERVAL = 1800  # 30 minutes
 
     def setup_bot(self):
-        """Set up the bot with enhanced error handling."""
+        """Set up the bot with error handling."""
         try:
-            # Initialize with higher timeouts for better stability
             self.updater = Updater(
                 token=self.token,
                 use_context=True,
@@ -182,7 +79,7 @@ class TelegramBotWrapper:
             )
             dp = self.updater.dispatcher
 
-            # Register command handlers
+            # Register handlers
             dp.add_handler(CommandHandler("start", start_command))
             dp.add_handler(CommandHandler("help", help_command))
             dp.add_handler(CommandHandler("lyrics", lyrics_command))
@@ -197,30 +94,10 @@ class TelegramBotWrapper:
             dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
             dp.add_handler(CommandHandler("download", download_command))
             dp.add_handler(CommandHandler("wiki", wiki_command))
-
-            # Add message handler for quiz answers with activity tracking
-            def wrapped_quiz_answer(update: Update, context: CallbackContext):
-                update_activity()
-                return quiz_answer(update, context)
-            dp.add_handler(MessageHandler(Filters.text & ~Filters.command, wrapped_quiz_answer))
-
-            # Add error handler
+            dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
             dp.add_error_handler(self.error_handler)
 
-            # Set commands list
-            self.set_commands()
-
-            logger.info("Bot setup completed successfully")
-            self.start_time = datetime.now()
-            return True
-
-        except Exception as e:
-            logger.error(f"Error in bot setup: {str(e)}", exc_info=True)
-            return False
-
-    def set_commands(self):
-        """Set up bot commands with descriptions."""
-        try:
+            # Set commands
             commands = [
                 BotCommand("start", "Begin your musical journey 🎵"),
                 BotCommand("help", "Get detailed help and tips 💡"),
@@ -238,67 +115,95 @@ class TelegramBotWrapper:
                 BotCommand("wiki", "Get Wikipedia info about artists 📚")
             ]
             self.updater.bot.set_my_commands(commands)
-            logger.info("Successfully set bot commands")
+            return True
+
         except Exception as e:
-            logger.error(f"Failed to set bot commands: {str(e)}")
+            logger.error(f"Error in bot setup: {str(e)}")
+            return False
 
     def error_handler(self, update: Update, context: CallbackContext):
         """Handle errors with retry logic."""
         try:
             if isinstance(context.error, NetworkError):
-                logger.warning(f"Network error occurred: {str(context.error)}")
-                logger.info("Connection recovery will be attempted automatically")
+                logger.warning(f"Network error: {str(context.error)}")
                 raise context.error
             elif isinstance(context.error, TimedOut):
-                logger.warning(f"Request timed out: {str(context.error)}")
-                logger.info("Timeout recovery will be attempted automatically")
+                logger.warning(f"Timeout error: {str(context.error)}")
                 raise context.error
             elif isinstance(context.error, RetryAfter):
                 retry_after = context.error.retry_after
-                logger.warning(f"Rate limit hit - Need to retry after {retry_after} seconds")
+                logger.warning(f"Rate limit hit, waiting {retry_after} seconds")
                 time.sleep(retry_after)
                 return
             else:
-                logger.error(f"Update {update} caused error: {context.error}", exc_info=True)
+                logger.error(f"Error: {context.error}")
 
             if update and update.effective_message:
                 update.effective_message.reply_text(
                     "😓 Oops! Something went wrong.\n"
-                    "Don't worry, I'll try to reconnect automatically! 🔄"
+                    "Don't worry, I'll reconnect automatically! 🔄"
                 )
         except Exception as e:
             logger.error(f"Error in error handler: {str(e)}")
-            logger.info("Will attempt automatic recovery")
+
+    def check_connection(self):
+        """Check bot connection status."""
+        try:
+            self.updater.bot.get_me()
+            logger.info("Connection check: OK")
+            return True
+        except Exception as e:
+            logger.error(f"Connection check failed: {str(e)}")
+            return False
+
+    def health_check(self):
+        """Simple periodic health check."""
+        while not should_stop:
+            try:
+                time.sleep(self.CHECK_INTERVAL)
+
+                # Check if we need to restart
+                if datetime.now() - self.last_restart > self.RESTART_AFTER:
+                    logger.info("Performing scheduled restart...")
+                    self.updater.stop()
+                    self.setup_bot()
+                    self.updater.start_polling()
+                    self.last_restart = datetime.now()
+                    continue
+
+                # Check connection
+                if not self.check_connection():
+                    logger.warning("Connection lost, attempting to reconnect...")
+                    return False
+
+            except Exception as e:
+                logger.error(f"Health check error: {str(e)}")
+                return False
+
+        return True
 
     def start(self):
-        """Start the bot with enhanced recovery mechanism."""
-        global should_stop
+        """Start the bot with recovery."""
         while not should_stop:
             try:
                 if not self.setup_bot():
-                    logger.error("Bot setup failed, will retry...")
                     raise Exception("Bot setup failed")
 
-                logger.info("Starting bot polling with improved recovery...")
+                logger.info("Starting bot...")
                 self.updater.start_polling(drop_pending_updates=True)
-                logger.info("Bot started successfully! Monitoring for issues...")
-
-                # Reset retry count on successful connection
                 self.retry_count = 0
-                update_activity()
+                self.last_restart = datetime.now()
 
-                # Start health check in the background
+                # Start health check
+                import threading
                 health_thread = threading.Thread(target=self.health_check)
                 health_thread.daemon = True
                 health_thread.start()
-                logger.info("Health monitoring thread started")
 
-                # Keep the bot running
                 self.updater.idle()
 
-                # If we get here, idle() was interrupted
                 if should_stop:
-                    logger.info("Received stop signal, shutting down gracefully...")
+                    logger.info("Shutting down...")
                     self.updater.stop()
                     break
 
@@ -309,28 +214,23 @@ class TelegramBotWrapper:
                 self.retry_count += 1
                 delay = min(self.base_delay * (2 ** self.retry_count), self.max_delay)
 
-                logger.error(f"Bot crashed with error: {str(e)}", exc_info=True)
-                logger.info(f"Attempting to restart in {delay} seconds... (Attempt {self.retry_count}/{self.max_retries})")
+                logger.error(f"Bot crashed: {str(e)}")
+                logger.info(f"Retrying in {delay} seconds... (Attempt {self.retry_count}/{self.max_retries})")
 
                 if self.retry_count > self.max_retries:
-                    # Instead of shutting down, force a clean restart
-                    logger.warning("Maximum retry attempts reached, forcing clean restart...")
                     self.retry_count = 0
-                    self.cleanup_resources()
-                    time.sleep(delay)
+                    time.sleep(60)  # Wait a minute before starting fresh
                     continue
 
                 time.sleep(delay)
 
 def main():
-    """Start the bot with improved error handling and recovery."""
     try:
         token = os.environ.get("TELEGRAM_TOKEN")
         if not token:
-            logger.error("No token provided!")
-            raise ValueError("TELEGRAM_TOKEN environment variable is not set")
+            logger.error("TELEGRAM_TOKEN not found!")
+            raise ValueError("TELEGRAM_TOKEN environment variable not set")
 
-        # Set up signal handlers
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
 
@@ -339,7 +239,7 @@ def main():
         bot.start()
 
     except Exception as e:
-        logger.critical(f"Critical error during bot initialization: {str(e)}", exc_info=True)
+        logger.critical(f"Critical error: {str(e)}")
         sys.exit(1)
 
 if __name__ == '__main__':
