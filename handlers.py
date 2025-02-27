@@ -37,53 +37,89 @@ def start_command(update: Update, context: CallbackContext):
 
     user_first_name = update.effective_user.first_name
     welcome_message = (
-        f"👋 Hey {user_first_name}! Welcome to your Musical Companion! 🎵\n\n"
-        "I'm here to help you discover and understand your favorite songs! 🎸\n\n"
-        "Here's what I can do for you:\n"
-        "🎤 /lyrics artist - song → Get song lyrics with mood analysis\n"
-        "📊 /stats artist - song → Get detailed song statistics\n"
-        "🎵 /recommend artist - song → Get song recommendations\n"
-        "🎮 /quiz → Play a fun lyrics guessing game!\n"
-        "🌍 /translate artist - song → Get Arabic translation of lyrics\n"
-        "💡 /help → Show more tips and examples\n"
-        "📊 /analyze artist - song → Get detailed song analysis\n\n"
-        "Try me out! For example, type:\n"
-        "/lyrics Ed Sheeran - Perfect"
+        f"🎵 *Welcome to Your Musical Companion, {user_first_name}!* 🎸\n\n"
+        "I'm your personal music assistant, ready to help you discover and enjoy music in new ways! ✨\n\n"
+        "*Here's what I can do for you:*\n\n"
+        "🎤 */lyrics* - Get song lyrics with mood analysis\n"
+        "📊 */stats* - See detailed song statistics\n"
+        "🎵 */recommend* - Discover similar songs\n"
+        "🎮 */quiz* - Play a fun lyrics quiz\n"
+        "🌍 */translate* - Get Arabic lyrics translation\n"
+        "🎬 */youtube* - Find song on YouTube\n"
+        "📥 */download* - Download YouTube videos\n"
+        "📈 */analyze* - Get deep song analysis\n"
+        "⭐ */favorite* - Save your favorite songs\n"
+        "🔔 */subscribe* - Get daily song discoveries\n\n"
+        "*Quick Start:*\n"
+        "Try */lyrics Ed Sheeran - Perfect* to see the magic! ✨\n\n"
+        "Need help? Just type */help* for more details! 💫"
     )
-    update.message.reply_text(welcome_message)
 
+    try:
+        update.message.reply_text(
+            welcome_message,
+            parse_mode='Markdown',
+            disable_web_page_preview=True
+        )
+    except Exception as e:
+        logger.error(f"Error in start command: {str(e)}")
+        # Fallback to plain text if markdown fails
+        update.message.reply_text(
+            welcome_message.replace('*', ''),
+            disable_web_page_preview=True
+        )
 
 def help_command(update: Update, context: CallbackContext):
     """Send a message when the command /help is issued."""
     logger.info(f"User {update.effective_user.id} requested help")
     help_text = (
-        "🎵 Let me show you how to use my features!\n\n"
-        "1️⃣ To get song lyrics:\n"
-        "   /lyrics artist - song\n"
-        "   Example: /lyrics Ed Sheeran - Shape of You\n\n"
-        "2️⃣ To get song statistics:\n"
-        "   /stats artist - song\n"
-        "   Example: /stats Adele - Hello\n\n"
-        "3️⃣ To get song recommendations:\n"
-        "   /recommend artist - song\n"
-        "   Example: /recommend Taylor Swift - Love Story\n\n"
-        "4️⃣ To play the lyrics quiz:\n"
-        "   /quiz - Start a new quiz game\n"
-        "   /endquiz - End the current game\n\n"
-        "5️⃣ To get Arabic translation:\n"
-        "   /translate artist - song\n"
-        "   Example: /translate Adele - Hello\n\n"
-        "6️⃣ To get detailed song analysis:\n"
-        "   /analyze artist - song\n"
-        "   Example: /analyze Eminem - Lose Yourself\n\n"
-        "🎯 Pro Tips:\n"
-        "• Make sure to use the dash (-) between artist and song\n"
-        "• Double-check the spelling of artist and song names\n"
-        "• I'll analyze the mood and suggest similar songs! 🎭\n\n"
-        "Ready to explore some music? Try one of the commands above! 🚀"
+        "🎵 *Musical Companion Guide* 🎸\n\n"
+        "*Basic Commands:*\n"
+        "▫️ */lyrics artist - song*\n"
+        "   Get lyrics with mood analysis\n"
+        "   Example: */lyrics Taylor Swift - Love Story*\n\n"
+        "▫️ */stats artist - song*\n"
+        "   View detailed song statistics\n"
+        "   Example: */stats Adele - Hello*\n\n"
+        "▫️ */recommend artist - song*\n"
+        "   Find similar songs you might like\n"
+        "   Example: */recommend Ed Sheeran - Shape of You*\n\n"
+        "*Fun & Games:*\n"
+        "▫️ */quiz* - Start a music quiz\n"
+        "▫️ */endquiz* - End current quiz\n\n"
+        "*Language & Analysis:*\n"
+        "▫️ */translate artist - song*\n"
+        "   Get Arabic translation\n"
+        "▫️ */analyze artist - song*\n"
+        "   Deep dive into song meaning\n\n"
+        "*Media Features:*\n"
+        "▫️ */youtube artist - song*\n"
+        "   Find song on YouTube\n"
+        "▫️ */download video_url*\n"
+        "   Download YouTube videos\n\n"
+        "*Daily Updates:*\n"
+        "▫️ */subscribe* - Get daily song picks\n"
+        "▫️ */unsubscribe* - Stop daily updates\n\n"
+        "*Pro Tips:* 💡\n"
+        "• Always use a dash (-) between artist and song\n"
+        "• Check spelling of artist and song names\n"
+        "• For downloads, use short videos (under 50MB)\n\n"
+        "Ready to explore? Try any command! 🚀"
     )
-    update.message.reply_text(help_text)
 
+    try:
+        update.message.reply_text(
+            help_text,
+            parse_mode='Markdown',
+            disable_web_page_preview=True
+        )
+    except Exception as e:
+        logger.error(f"Error in help command: {str(e)}")
+        # Fallback to plain text if markdown fails
+        update.message.reply_text(
+            help_text.replace('*', '').replace('▫️', '•'),
+            disable_web_page_preview=True
+        )
 
 def quiz_command(update: Update, context: CallbackContext):
     """Handle the /quiz command to start a lyrics quiz."""
@@ -122,7 +158,6 @@ def quiz_command(update: Update, context: CallbackContext):
             "😓 Oops! Something went wrong starting the quiz.\n"
             "Please try again in a moment! 🔄"
         )
-
 
 def quiz_answer(update: Update, context: CallbackContext):
     """Handle quiz answers in regular messages."""
@@ -194,7 +229,6 @@ def quiz_answer(update: Update, context: CallbackContext):
             "Try /quiz to start a new game! 🔄"
         )
 
-
 def end_quiz_command(update: Update, context: CallbackContext):
     """Handle the /endquiz command."""
     user_id = update.effective_user.id
@@ -209,7 +243,6 @@ def end_quiz_command(update: Update, context: CallbackContext):
             "😓 Oops! Something went wrong ending the quiz.\n"
             "Try /quiz to start a new game! 🔄"
         )
-
 
 def lyrics_command(update: Update, context: CallbackContext):
     """Handle the /lyrics command."""
@@ -293,7 +326,6 @@ def lyrics_command(update: Update, context: CallbackContext):
             "Please try again in a moment! 🔄"
         )
 
-
 def stats_command(update: Update, context: CallbackContext):
     """Handle the /stats command."""
     user_id = update.effective_user.id
@@ -344,7 +376,6 @@ def stats_command(update: Update, context: CallbackContext):
             "Please try again in a moment! 🔄"
         )
 
-
 def recommend_command(update: Update, context: CallbackContext):
     """Handle the /recommend command."""
     user_id = update.effective_user.id
@@ -389,7 +420,6 @@ def recommend_command(update: Update, context: CallbackContext):
             "😓 Oops! Something went wrong while getting recommendations.\n"
             "Please try again in a moment! 🔄"
         )
-
 
 def translate_lyrics_command(update: Update, context: CallbackContext):
     """Handle the /translate command."""
@@ -443,7 +473,6 @@ def translate_lyrics_command(update: Update, context: CallbackContext):
             "Let's try that again in a moment! 🔄"
         )
 
-
 def send_daily_song(context: CallbackContext):
     """Send daily song to all subscribed users."""
     try:
@@ -471,7 +500,6 @@ def send_daily_song(context: CallbackContext):
 
     except Exception as e:
         logger.error(f"Error in daily song distribution: {str(e)}")
-
 
 def subscribe_daily_command(update: Update, context: CallbackContext):
     """Handle the /subscribe command."""
@@ -503,7 +531,6 @@ def subscribe_daily_command(update: Update, context: CallbackContext):
             "Please try again later! 🔄"
         )
 
-
 def unsubscribe_daily_command(update: Update, context: CallbackContext):
     """Handle the /unsubscribe command."""
     user_id = update.effective_user.id
@@ -528,7 +555,6 @@ def unsubscribe_daily_command(update: Update, context: CallbackContext):
             "😓 Something went wrong with the unsubscription.\n"
             "Please try again later! 🔄"
         )
-
 
 def youtube_command(update: Update, context: CallbackContext):
     """Handle the /youtube command."""
@@ -565,7 +591,6 @@ def youtube_command(update: Update, context: CallbackContext):
             "😓 Oops! Something went wrong while getting the YouTube link.\n"
             "Please try again in a moment! 🔄"
         )
-
 
 def analyze_command(update: Update, context: CallbackContext):
     """Handle the /analyze command for detailed song analysis."""
@@ -615,7 +640,6 @@ def analyze_command(update: Update, context: CallbackContext):
             "😓 Oops! Something went wrong while analyzing the song.\n"
             "Please try again in a moment! 🔄"
         )
-
 
 def download_command(update: Update, context: CallbackContext):
     """Handle the /download command."""
@@ -671,14 +695,12 @@ def download_command(update: Update, context: CallbackContext):
             "Please try again later! 🔄"
         )
 
-
 def format_multiple_choice_options(options):
     """Helper function to format multiple choice options neatly."""
     option_strings = []
     for i, option in enumerate(options):
         option_strings.append(f"{chr(65 + i)}. {option['artist']} - {option['song']}")
     return "\n".join(option_strings)
-
 
 def main():
     """Initialize bot handlers and start the bot."""

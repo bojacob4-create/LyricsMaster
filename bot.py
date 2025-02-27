@@ -3,7 +3,14 @@ import os
 import threading
 from flask import Flask
 from telegram import Update, BotCommand
-from telegram.ext import CallbackContext, CommandHandler, Updater, MessageHandler, Filters
+from telegram.ext import (
+    CallbackContext, CommandHandler, Updater, MessageHandler, 
+    Filters, TypeHandler
+)
+from telegram.error import (
+    TelegramError, Unauthorized, BadRequest, 
+    TimedOut, NetworkError
+)
 from datetime import time
 from handlers import (
     start_command,
@@ -23,10 +30,10 @@ from handlers import (
     send_daily_song
 )
 
-# Configure logging with more detailed format
+# Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG  # Temporarily set to DEBUG for more detailed logs
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
@@ -46,14 +53,55 @@ def run_flask():
     except Exception as e:
         logger.error(f"Flask server error: {str(e)}")
 
-def error_handler(update, context):
-    """Log Errors caused by Updates."""
-    logger.error(f'Update "{update}" caused error "{context.error}"')
-    logger.error(f"Full error details: {str(context.error)}")
-    if update and update.message:
-        update.message.reply_text(
-            "🤖 Oops! I hit a snag while processing your request. Let's try that again! 🔄"
-        )
+def error_handler(update: Update, context: CallbackContext):
+    """Handle errors in the bot."""
+    try:
+        if isinstance(context.error, Unauthorized):
+            # User has blocked the bot
+            logger.warning(f"User {update.effective_user.id if update else 'Unknown'} has blocked the bot")
+            return
+
+        if isinstance(context.error, BadRequest):
+            # Handle malformed requests
+            logger.error(f"Bad Request: {context.error}")
+            if update and update.effective_message:
+                update.effective_message.reply_text(
+                    "😓 Oops! Something wasn't quite right with that request.\n"
+                    "Please try again or use /help for guidance! 🔄"
+                )
+            return
+
+        if isinstance(context.error, TimedOut):
+            # Handle timeouts
+            logger.warning(f"Request timed out: {context.error}")
+            if update and update.effective_message:
+                update.effective_message.reply_text(
+                    "⏳ Request timed out. Please try again! 🔄"
+                )
+            return
+
+        if isinstance(context.error, NetworkError):
+            # Handle network errors
+            logger.error(f"Network error occurred: {context.error}")
+            if update and update.effective_message:
+                update.effective_message.reply_text(
+                    "📶 Network issues detected. Please try again in a moment! 🔄"
+                )
+            return
+
+        # Log the error before handling
+        logger.error(f"Update {update} caused error {context.error}", exc_info=True)
+
+        # Send generic error message to user
+        if update and update.effective_message:
+            update.effective_message.reply_text(
+                "🤖 Oops! I hit a snag while processing your request.\n"
+                "Let's try that again! 🔄\n\n"
+                "If the problem persists, try using /help for guidance."
+            )
+
+    except Exception as e:
+        logger.error(f"Error in error handler: {str(e)}", exc_info=True)
 
 def main():
     """Start the bot."""
@@ -66,28 +114,37 @@ def main():
 
         logger.info("Starting bot initialization...")
 
-        # Initialize the bot
-        logger.debug("Creating Updater instance...")
-        updater = Updater(token, use_context=True)
+        # Initialize the bot with improved settings
+        updater = Updater(
+            token,
+            use_context=True,
+            request_kwargs={
+                'read_timeout': 30,
+                'connect_timeout': 30
+            }
+        )
         dp = updater.dispatcher
-        logger.info("Bot updater and dispatcher initialized successfully")
 
         # Register command handlers
-        logger.debug("Registering command handlers...")
-        dp.add_handler(CommandHandler("start", start_command))
-        dp.add_handler(CommandHandler("help", help_command))
-        dp.add_handler(CommandHandler("lyrics", lyrics_command))
-        dp.add_handler(CommandHandler("stats", stats_command))
-        dp.add_handler(CommandHandler("recommend", recommend_command))
-        dp.add_handler(CommandHandler("quiz", quiz_command))
-        dp.add_handler(CommandHandler("endquiz", end_quiz_command))
-        dp.add_handler(CommandHandler("translate", translate_lyrics_command))
-        dp.add_handler(CommandHandler("youtube", youtube_command))
-        dp.add_handler(CommandHandler("analyze", analyze_command))
-        dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
-        dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
-        dp.add_handler(CommandHandler("download", download_command))
-        logger.info("Command handlers registered successfully")
+        command_handlers = [
+            CommandHandler("start", start_command),
+            CommandHandler("help", help_command),
+            CommandHandler("lyrics", lyrics_command),
+            CommandHandler("stats", stats_command),
+            CommandHandler("recommend", recommend_command),
+            CommandHandler("quiz", quiz_command),
+            CommandHandler("endquiz", end_quiz_command),
+            CommandHandler("translate", translate_lyrics_command),
+            CommandHandler("youtube", youtube_command),
+            CommandHandler("analyze", analyze_command),
+            CommandHandler("subscribe", subscribe_daily_command),
+            CommandHandler("unsubscribe", unsubscribe_daily_command),
+            CommandHandler("download", download_command),
+        ]
+
+        for handler in command_handlers:
+            dp.add_handler(handler)
+            logger.debug(f"Registered handler for command: {handler.command}")
 
         # Add message handler for quiz answers
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
@@ -96,44 +153,46 @@ def main():
         dp.add_error_handler(error_handler)
 
         # Schedule daily song job
-        logger.debug("Setting up daily song job...")
         job_queue = updater.job_queue
         job_queue.run_daily(
             send_daily_song,
             time=time(hour=12, minute=0),
             days=(0, 1, 2, 3, 4, 5, 6)
         )
-        logger.info("Daily song job scheduled successfully")
 
-        # Set commands list
-        logger.debug("Setting up bot commands...")
+        # Set commands list with detailed descriptions
         commands = [
-            BotCommand("start", "Start your musical journey 🎵"),
-            BotCommand("help", "Get help and tips 💡"),
-            BotCommand("lyrics", "Find song lyrics 🎤 (format: artist - song)"),
-            BotCommand("stats", "Get song statistics 📊 (format: artist - song)"),
-            BotCommand("recommend", "Get song recommendations 🎵 (format: artist - song)"),
-            BotCommand("quiz", "Start a fun lyrics quiz game 🎮"),
+            BotCommand("start", "Begin your musical journey 🎵"),
+            BotCommand("help", "Get detailed help and tips 💡"),
+            BotCommand("lyrics", "Find song lyrics with mood analysis 🎤"),
+            BotCommand("stats", "Get detailed song statistics 📊"),
+            BotCommand("recommend", "Discover similar songs 🎵"),
+            BotCommand("quiz", "Play an interactive lyrics quiz 🎮"),
             BotCommand("endquiz", "End the current quiz game 🎲"),
-            BotCommand("translate", "Get Arabic lyrics translation 🌍 (format: artist - song)"),
-            BotCommand("subscribe", "Get a daily song with analysis 📅"),
-            BotCommand("unsubscribe", "Stop receiving daily songs 🔕"),
-            BotCommand("youtube", "Get YouTube link for song 🎬 (format: artist - song)"),
-            BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
-            BotCommand("download", "Download YouTube video 🎬 (format: /download video_url)")
+            BotCommand("translate", "Get Arabic lyrics translation 🌍"),
+            BotCommand("youtube", "Find songs on YouTube 🎬"),
+            BotCommand("analyze", "Get deep song analysis 📈"),
+            BotCommand("download", "Download YouTube videos 📥"),
+            BotCommand("subscribe", "Get daily song discoveries 📅"),
+            BotCommand("unsubscribe", "Stop daily song updates 🔕"),
         ]
         updater.bot.set_my_commands(commands)
-        logger.info("Bot commands set successfully")
 
-        # Start the Flask app in a separate thread first
+        # Start the Flask app in a separate thread
         flask_thread = threading.Thread(target=run_flask)
         flask_thread.daemon = True
         flask_thread.start()
-        logger.info("Flask web server started on port 5000")
 
-        # Start the Bot
+        # Start the Bot with improved settings for stability
         logger.info("Starting bot polling...")
-        updater.start_polling()
+        updater.start_polling(
+            timeout=30,
+            read_latency=5.0,
+            drop_pending_updates=True,
+            allowed_updates=['message', 'callback_query'],  # Only process these update types
+            bootstrap_retries=3,  # Number of retries for initial connection
+        )
+
         logger.info("Bot is running successfully!")
         updater.idle()
 
