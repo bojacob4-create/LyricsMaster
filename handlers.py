@@ -790,11 +790,19 @@ def wiki_command(update: Update, context: CallbackContext):
         logger.info(f"Successfully sent Wikipedia info to user {user_id}")
 
     except Exception as e:
-        logger.error(f"Error processing wiki command for user {user_id}: {str(e)}")
-        update.message.reply_text(
+        logger.error(f"Error processing wiki command for user {user_id}: {str(e)}", exc_info=True)
+        error_message = (
             "😓 Oops! Something went wrong while searching Wikipedia.\n"
             "Please try again in a moment! 🔄"
         )
+        try:
+            update.message.reply_text(error_message)
+        except Exception:
+            if 'processing_msg' in locals():
+                try:
+                    processing_msg.edit_text(error_message)
+                except Exception:
+                    pass
 
 def main():
     """Initialize bot handlers and start the bot."""

@@ -18,12 +18,21 @@ def get_wikipedia_info(person_name: str) -> Optional[Dict[str, str]]:
     try:
         # Clean and encode the search term
         search_term = quote(person_name.strip())
-
-        # First, search for the page
-        search_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={search_term}&format=json&srprop=snippet"
         logger.info(f"Searching Wikipedia for: {person_name}")
 
-        search_response = requests.get(search_url)
+        # First, search for the page
+        search_url = "https://en.wikipedia.org/w/api.php"
+        search_params = {
+            'action': 'query',
+            'list': 'search',
+            'srsearch': search_term,
+            'format': 'json',
+            'srprop': 'snippet'
+        }
+
+        search_response = requests.get(search_url, params=search_params)
+        logger.debug(f"Search response status: {search_response.status_code}")
+
         if search_response.status_code != 200:
             logger.warning(f"Wikipedia search failed for {person_name}")
             return None
@@ -36,23 +45,38 @@ def get_wikipedia_info(person_name: str) -> Optional[Dict[str, str]]:
         # Get the first result's page ID
         first_result = search_data['query']['search'][0]
         page_id = first_result['pageid']
+        logger.debug(f"Found page ID: {page_id}")
 
         # Get page details
-        page_url = f"https://en.wikipedia.org/w/api.php?action=query&prop=info|extracts&exintro=1&explaintext=1&inprop=url&pageids={page_id}&format=json"
+        page_params = {
+            'action': 'query',
+            'prop': 'info|extracts',
+            'exintro': 1,
+            'explaintext': 1,
+            'inprop': 'url',
+            'pageids': page_id,
+            'format': 'json'
+        }
 
-        page_response = requests.get(page_url)
+        page_response = requests.get(search_url, params=page_params)
+        logger.debug(f"Page details response status: {page_response.status_code}")
+
         if page_response.status_code != 200:
+            logger.warning(f"Failed to get page details for {person_name}")
             return None
 
         page_data = page_response.json()
         page = page_data['query']['pages'][str(page_id)]
 
-        return {
+        result = {
             'title': page.get('title', ''),
-            'link': page.get('fullurl', ''),
-            'extract': page.get('extract', '')[:200] + '...' if page.get('extract') else ''  # First 200 chars of extract
+            'link': f"https://en.wikipedia.org/wiki/{quote(page.get('title', '').replace(' ', '_'))}",
+            'extract': page.get('extract', '')[:200] + '...' if page.get('extract') else ''
         }
 
+        logger.info(f"Successfully retrieved Wikipedia info for {person_name}")
+        return result
+
     except Exception as e:
-        logger.error(f"Error getting Wikipedia info: {str(e)}")
+        logger.error(f"Error getting Wikipedia info: {str(e)}", exc_info=True)
         return None
