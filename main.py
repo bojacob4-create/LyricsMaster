@@ -26,7 +26,7 @@ def keep_alive():
             except:
                 requests.get("http://0.0.0.0:5000/")
             logger.debug("Keep-alive ping successful")
-            time.sleep(30)  # Ping every 30 seconds for better reliability
+            time.sleep(10)  # Reduced ping interval to 10 seconds for better reliability
         except Exception as e:
             logger.error(f"Keep-alive ping failed: {str(e)}")
             time.sleep(15)  # Shorter retry interval for faster recovery
