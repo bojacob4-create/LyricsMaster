@@ -1,13 +1,7 @@
 import logging
 import os
 from telegram import Update, BotCommand
-from telegram.ext import (
-    CallbackContext,
-    CommandHandler,
-    MessageHandler,
-    Filters,
-    Updater
-)
+from telegram.ext import CallbackContext, MessageHandler, Filters
 from telegram.error import TelegramError
 from services.lyrics_service import get_song_lyrics
 from services.translator_service import translate_to_arabic
@@ -32,12 +26,10 @@ from utils import (
     format_detailed_analysis
 )
 from services.youtube_service import get_youtube_link, format_youtube_response
-from app import app
 from services.youtube_downloader_service import download_youtube_video, cleanup_video
 from services.wikipedia_service import get_wikipedia_info
 
 logger = logging.getLogger(__name__)
-
 
 def start_command(update: Update, context: CallbackContext):
     """Send a message when the command /start is issued."""
@@ -755,7 +747,6 @@ def format_multiple_choice_options(options):
 def wiki_command(update: Update, context: CallbackContext) -> None:
     """Handle the /wiki command."""
     user_id = update.effective_user.id
-
     try:
         query = " ".join(context.args)
         if not query:
@@ -808,7 +799,6 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
             "😓 Oops! Something went wrong while searching Wikipedia.\n"
             "Please try again in a moment! 🔄"
         )
-
 
 def main():
     """Initialize bot handlers and start the bot."""

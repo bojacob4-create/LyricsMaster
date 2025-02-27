@@ -8,6 +8,7 @@ from telegram.ext import (
     MessageHandler,
     Filters
 )
+from telegram.error import TelegramError
 from handlers import (
     start_command,
     help_command,
@@ -20,25 +21,38 @@ from handlers import (
     translate_lyrics_command,
     youtube_command,
     analyze_command,
-    download_command,
     subscribe_daily_command,
     unsubscribe_daily_command,
+    download_command,
     wiki_command
 )
+from services.daily_song_service import send_daily_song
 from datetime import time
 
-# Configure logging
+# Configure logging with more detail
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.DEBUG  # Set to DEBUG for more detailed logs
 )
 logger = logging.getLogger(__name__)
+
+def error_handler(update: Update, context: CallbackContext):
+    """Log Errors caused by Updates."""
+    logger.error(f'Update "{update}" caused error "{context.error}"', exc_info=True)
+    try:
+        if update and update.effective_message:
+            update.effective_message.reply_text(
+                "😓 Oops! Something went wrong.\n"
+                "Please try again in a moment! 🔄"
+            )
+    except Exception as e:
+        logger.error(f"Error in error handler: {str(e)}")
 
 def main():
     """Start the bot."""
     try:
         # Get token from environment variable
-        token = os.getenv("TELEGRAM_TOKEN")
+        token = os.environ.get("TELEGRAM_TOKEN")
         if not token:
             logger.error("No token provided!")
             raise ValueError("TELEGRAM_TOKEN environment variable is not set")
@@ -46,46 +60,45 @@ def main():
         logger.info("Starting bot initialization...")
 
         # Initialize the bot
-        updater = Updater(token=token, use_context=True)
+        updater = Updater(
+            token=token,
+            use_context=True,
+            request_kwargs={
+                'read_timeout': 30,
+                'connect_timeout': 30
+            }
+        )
         dp = updater.dispatcher
+        logger.debug("Created updater and dispatcher")
 
         # Register command handlers
-        command_handlers = [
-            CommandHandler("start", start_command),
-            CommandHandler("help", help_command),
-            CommandHandler("lyrics", lyrics_command),
-            CommandHandler("stats", stats_command),
-            CommandHandler("recommend", recommend_command),
-            CommandHandler("quiz", quiz_command),
-            CommandHandler("endquiz", end_quiz_command),
-            CommandHandler("translate", translate_lyrics_command),
-            CommandHandler("youtube", youtube_command),
-            CommandHandler("analyze", analyze_command),
-            CommandHandler("subscribe", subscribe_daily_command),
-            CommandHandler("unsubscribe", unsubscribe_daily_command),
-            CommandHandler("download", download_command),
-            CommandHandler("wiki", wiki_command),
-        ]
-
-        for handler in command_handlers:
-            dp.add_handler(handler)
+        dp.add_handler(CommandHandler("start", start_command))
+        dp.add_handler(CommandHandler("help", help_command))
+        dp.add_handler(CommandHandler("lyrics", lyrics_command))
+        dp.add_handler(CommandHandler("stats", stats_command))
+        dp.add_handler(CommandHandler("recommend", recommend_command))
+        dp.add_handler(CommandHandler("quiz", quiz_command))
+        dp.add_handler(CommandHandler("endquiz", end_quiz_command))
+        dp.add_handler(CommandHandler("translate", translate_lyrics_command))
+        dp.add_handler(CommandHandler("youtube", youtube_command))
+        dp.add_handler(CommandHandler("analyze", analyze_command))
+        dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
+        dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
+        dp.add_handler(CommandHandler("download", download_command))
+        dp.add_handler(CommandHandler("wiki", wiki_command))
+        logger.debug("Registered all command handlers")
 
         # Add message handler for quiz answers
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
 
-        # Schedule daily song job
-        job_queue = updater.job_queue
-        job_queue.run_daily(
-            send_daily_song,
-            time=time(hour=12, minute=0),
-            days=(0, 1, 2, 3, 4, 5, 6)
-        )
+        # Add error handler
+        dp.add_error_handler(error_handler)
 
-        # Set commands list with detailed descriptions (from original code)
+        # Set commands list with detailed descriptions
         commands = [
             BotCommand("start", "Begin your musical journey 🎵"),
             BotCommand("help", "Get detailed help and tips 💡"),
-            BotCommand("lyrics", "Find song lyrics with mood analysis 🎤"),
+            BotCommand("lyrics", "Get song lyrics with mood analysis 🎤"),
             BotCommand("stats", "Get detailed song statistics 📊"),
             BotCommand("recommend", "Discover similar songs 🎵"),
             BotCommand("quiz", "Play an interactive lyrics quiz 🎮"),
@@ -96,11 +109,14 @@ def main():
             BotCommand("download", "Download YouTube videos 📥"),
             BotCommand("subscribe", "Get daily song discoveries 📅"),
             BotCommand("unsubscribe", "Stop daily song updates 🔕"),
-            BotCommand("wiki", "Search Wikipedia for music-related information 📚"),
-
+            BotCommand("wiki", "Get Wikipedia info about artists 📚")
         ]
-        updater.bot.set_my_commands(commands)
 
+        try:
+            updater.bot.set_my_commands(commands)
+            logger.info("Successfully set bot commands")
+        except Exception as e:
+            logger.error(f"Failed to set bot commands: {str(e)}")
 
         # Start the Bot
         logger.info("Starting bot polling...")

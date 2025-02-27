@@ -30,7 +30,7 @@ def get_daily_song() -> Tuple[Dict, str, Dict]:
     try:
         # Pick a random song
         song_choice = random.choice(DAILY_SONGS)
-        
+
         # Get lyrics
         lyrics = get_song_lyrics(song_choice["artist"], song_choice["song"])
         if not lyrics:
@@ -91,7 +91,7 @@ def format_daily_song(song: Dict, lyrics: str, analysis: Dict) -> str:
     }.get(analysis["mood"], '🎵')
 
     stats = analysis["stats"]
-    
+
     return (
         "🎵 Your Daily Song Discovery 🎵\n\n"
         f"Today's Pick: {song['artist']} - {song['song']}\n\n"
@@ -104,3 +104,33 @@ def format_daily_song(song: Dict, lyrics: str, analysis: Dict) -> str:
         f"Try /lyrics {song['artist']} - {song['song']} for full lyrics\n"
         f"or /stats {song['artist']} - {song['song']} for detailed analysis!"
     )
+
+def send_daily_song(context) -> None:
+    """Send daily song to all subscribed users."""
+    try:
+        logger.info("Starting daily song distribution")
+
+        song, lyrics, analysis = get_daily_song()
+        if not all([song, lyrics, analysis]):
+            logger.error("Failed to get daily song")
+            return
+
+        message = format_daily_song(song, lyrics, analysis)
+
+        # Send to all subscribed users
+        subscribed_users = get_subscribed_users()
+        logger.info(f"Sending daily song to {len(subscribed_users)} users")
+
+        for user_id, data in subscribed_users.items():
+            try:
+                context.bot.send_message(
+                    chat_id=data["chat_id"],
+                    text=message,
+                    parse_mode=None  # Ensure no parsing issues
+                )
+                logger.info(f"Sent daily song to user {user_id}")
+            except Exception as e:
+                logger.error(f"Failed to send daily song to user {user_id}: {str(e)}")
+
+    except Exception as e:
+        logger.error(f"Error in daily song distribution: {str(e)}", exc_info=True)
