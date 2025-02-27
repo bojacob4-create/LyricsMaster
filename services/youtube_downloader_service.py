@@ -3,8 +3,21 @@ from typing import Optional, Dict, Tuple
 import os
 import re
 import yt_dlp
+import unicodedata
+import string
 
 logger = logging.getLogger(__name__)
+
+def sanitize_filename(filename: str) -> str:
+    """Sanitize filename to only use ASCII characters."""
+    # Convert to ASCII, removing non-ASCII characters
+    filename = unicodedata.normalize('NFKD', filename).encode('ASCII', 'ignore').decode()
+    # Keep only alphanumeric characters, dashes, and underscores
+    valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
+    filename = ''.join(c for c in filename if c in valid_chars)
+    # Remove spaces
+    filename = filename.replace(' ', '_')
+    return filename or 'video'  # Return 'video' if filename becomes empty
 
 def extract_video_id(url: str) -> Optional[str]:
     """Extract video ID from various YouTube URL formats."""
@@ -37,6 +50,10 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
                 "Example: https://youtube.com/watch?v=..."
             )
 
+        # Generate a safe output template
+        video_id = extract_video_id(url)
+        output_template = f'youtube_{video_id}.%(ext)s'
+
         # Configure yt-dlp options
         ydl_opts = {
             'format': 'best[filesize<50M]',  # Best format under 50MB
@@ -44,6 +61,8 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
+            'outtmpl': output_template,  # Use safe output template
+            'restrictfilenames': True,  # Restrict filenames to ASCII
         }
 
         # Get video info first
@@ -59,8 +78,11 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
                 # Download the video
                 ydl.download([url])
 
-                # Get the downloaded file path
-                file_path = os.path.join(os.getcwd(), f"{info['title']}.mp4")
+                # Get the downloaded file path using video ID
+                file_path = os.path.join(os.getcwd(), f'youtube_{video_id}.mp4')
+                if not os.path.exists(file_path):
+                    logger.error(f"Expected file not found at: {file_path}")
+                    return False, "❌ Download failed. Please try another video."
 
                 success_msg = (
                     "✅ Video downloaded successfully!\n\n"
