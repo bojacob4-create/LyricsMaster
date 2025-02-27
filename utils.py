@@ -12,7 +12,7 @@ def get_song_statistics(lyrics: str) -> Dict:
     Returns:
         Dict: Statistics including word count, unique words, common words, etc.
     """
-    # Enhanced stop words list with common lyrics-specific words
+    # Enhanced stop words list with common lyrics-specific words and contractions
     stop_words = {'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'i', 
                 'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at',
                 'this', 'but', 'his', 'by', 'from', 'they', 'we', 'say', 'her', 
@@ -27,17 +27,25 @@ def get_song_statistics(lyrics: str) -> Dict:
                 'most', 'us', 'im', 'gonna', 'wanna', 'cause', 'yeah', 'oh',
                 'uh', 'huh', 'hmm', 'la', 'na', 'ooh', 'hey', 'yo', 'um',
                 'chorus', 'verse', 'bridge', 'repeat', 'instrumental', 'outro',
-                'intro', 'refrain', 'pre'}
+                'intro', 'refrain', 'pre', 'ive', 've', 're', 'll', 'd', 'm', 's',
+                'dont', 'cant', 'wont', 'aint', 'youre', 'youve', 'youll',
+                'thats', 'wasnt', 'hadnt', 'hasnt', 'havent', 'didnt', 'isnt'}
 
     lyrics_clean = lyrics.lower()
-    lyrics_clean = re.sub(r'\[.*?\]', '', lyrics_clean)  # Remove section markers [Verse], [Chorus] etc.
-    lyrics_clean = re.sub(r'[^\w\s]', ' ', lyrics_clean)  # Remove punctuation
+    # Remove section markers but preserve apostrophes in contractions
+    lyrics_clean = re.sub(r'\[.*?\]', '', lyrics_clean)
+    # Replace multiple spaces with single space
+    lyrics_clean = re.sub(r'\s+', ' ', lyrics_clean)
+    # Special handling for contractions - preserve apostrophes in known contractions
+    lyrics_clean = re.sub(r"'(?!(ve|re|ll|s|m|d|t)\\b)", " ", lyrics_clean)
+    # Remove other punctuation except apostrophes
+    lyrics_clean = re.sub(r'[^\w\s\']', ' ', lyrics_clean)
 
     lines = [line.strip() for line in lyrics_clean.split('\n') if line.strip()]
     line_count = len(lines)
 
-    # Get all words
-    words = re.findall(r'\b\w+\b', lyrics_clean)
+    # Get all words, keeping contractions intact
+    words = re.findall(r"\b[a-z']+\b", lyrics_clean)
     word_count = len(words)
 
     # Filter out stop words and get meaningful words
