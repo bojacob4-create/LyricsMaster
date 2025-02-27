@@ -116,7 +116,7 @@ def main():
 
         # Initialize the bot with improved settings for stability
         updater = Updater(
-            token,
+            token=token,
             use_context=True,
             request_kwargs={
                 'read_timeout': 30,

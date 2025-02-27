@@ -15,6 +15,7 @@ app.config.from_object(config['production'])
 config['production'].init_app(app)
 
 # Health check endpoints
+@app.route('/')
 @app.route('/health')
 def health_check():
     """Basic health check endpoint."""
