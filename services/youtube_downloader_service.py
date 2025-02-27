@@ -6,22 +6,19 @@ import os
 logger = logging.getLogger(__name__)
 
 def download_youtube_video(url: str) -> Tuple[bool, str]:
-    """
-    Download a YouTube video and return a status message.
-
-    Args:
-        url (str): YouTube video URL
-
-    Returns:
-        Tuple[bool, str]: (success status, message)
-    """
+    """Download a YouTube video and return a status message."""
     try:
+        logger.info(f"Starting download process for URL: {url}")
+
         # Create YouTube object with custom user agent
         yt = YouTube(
             url,
-            use_oauth=True,
-            allow_oauth_cache=True
+            use_oauth=False,  # Disable OAuth
+            allow_oauth_cache=False
         )
+        yt.bypass_age_gate()  # Try to bypass age restrictions
+
+        logger.info(f"Successfully created YouTube object for video: {yt.title}")
 
         # Get video info before downloading
         info = {
@@ -31,6 +28,7 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
             'views': yt.views
         }
 
+        logger.info("Fetching available streams...")
         # Get the best progressive stream (includes both video and audio)
         video = yt.streams.filter(
             progressive=True,
@@ -38,6 +36,7 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
         ).order_by('resolution').desc().first()
 
         if not video:
+            logger.error("No suitable video stream found")
             return False, (
                 "❌ No suitable video stream found.\n"
                 "Please try another video! 🎬"
@@ -45,6 +44,7 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
 
         # Check if file size is reasonable (less than 50MB for Telegram)
         if video.filesize > 50 * 1024 * 1024:  # 50MB in bytes
+            logger.warning(f"Video size {video.filesize/(1024*1024):.1f}MB exceeds 50MB limit")
             return False, (
                 "❌ Video is too large for Telegram (>50MB).\n"
                 "Please try a shorter video! 🎬"
@@ -52,11 +52,14 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
 
         # Download video with retry mechanism
         try:
+            logger.info(f"Starting download for video: {info['title']}")
             video.download()
             file_path = video.default_filename
+            logger.info(f"Successfully downloaded to: {file_path}")
         except Exception as download_error:
             logger.error(f"First download attempt failed: {str(download_error)}")
             # Retry with different stream
+            logger.info("Attempting retry with 720p resolution...")
             video = yt.streams.filter(
                 progressive=True,
                 file_extension='mp4',
@@ -64,8 +67,10 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
             ).first()
             if not video:
                 return False, "❌ Download failed. Please try another video."
+
             video.download()
             file_path = video.default_filename
+            logger.info(f"Successfully downloaded to: {file_path} on second attempt")
 
         # Format success message
         success_msg = (
@@ -84,14 +89,15 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
         error_details = str(e)
         logger.error(f"Error downloading YouTube video: {error_details}")
 
-        if "403" in error_details:
+        if "age restricted" in error_details.lower():
             return False, (
-                "😓 Sorry, this video is not accessible.\n"
-                "This could be because:\n"
-                "• The video is age-restricted\n"
-                "• The video is private\n"
-                "• YouTube's security measures\n\n"
-                "Please try another video! 🎬"
+                "😓 Sorry, this video is age-restricted.\n"
+                "Please try a different video that's not age-restricted! 🎬"
+            )
+        elif "private video" in error_details.lower():
+            return False, (
+                "❌ This video is private.\n"
+                "Please try a public video instead! 🎬"
             )
         elif "not available" in error_details.lower():
             return False, (
@@ -104,11 +110,11 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
         else:
             return False, (
                 "😓 Something went wrong while downloading.\n"
-                "Please try:\n"
-                "• Using a different video\n"
-                "• Checking the URL is correct\n"
-                "• Waiting a few minutes\n\n"
-                f"Error: {str(e)}"
+                "Please check:\n"
+                "• The video URL is valid\n"
+                "• The video is not age-restricted\n"
+                "• Try another video\n"
+                "Error: HTTP Error 403: Forbidden"
             )
 
 def cleanup_video(file_path: str) -> None:
