@@ -1,74 +1,92 @@
 import os
 import logging
-from telegram import Update
-from telegram.ext import Updater, CommandHandler, CallbackContext
-from telegram.error import TelegramError
+import asyncio
+import sys
+from typing import Optional, Any
 
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    CallbackContext
 )
+
+# Enable logging
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+    stream=sys.stdout
+)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-def start(update: Update, context: CallbackContext) -> None:
-    """Send a message when the command /start is issued."""
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Start command handler."""
     try:
         user = update.effective_user
-        logger.info(f"Start command received from user {user.id}")
-        update.message.reply_text(
-            f'👋 Hi {user.first_name}! I am your music bot!'
+        logger.info(f"Start command from user {user.id}")
+        await update.message.reply_text(
+            f"👋 Hi {user.first_name}! I am your music bot! 🎵"
         )
     except Exception as e:
         logger.error(f"Error in start command: {str(e)}", exc_info=True)
+        await update.message.reply_text("Sorry, something went wrong. Please try again.")
 
-def help_command(update: Update, context: CallbackContext) -> None:
-    """Send a message when the command /help is issued."""
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Help command handler."""
     try:
-        logger.info(f"Help command received from user {update.effective_user.id}")
-        update.message.reply_text('Send /start to test the bot!')
+        logger.info(f"Help command from user {update.effective_user.id}")
+        await update.message.reply_text(
+            "Send /start to begin using the bot! 🎵"
+        )
     except Exception as e:
         logger.error(f"Error in help command: {str(e)}", exc_info=True)
+        await update.message.reply_text("Sorry, something went wrong. Please try again.")
 
-def error_handler(update: Update, context: CallbackContext) -> None:
-    """Log Errors caused by Updates."""
-    logger.error(f"Update {update} caused error {context.error}", exc_info=True)
+async def error_handler(update: Optional[object], context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle errors."""
+    logger.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
 
 def main() -> None:
     """Start the bot."""
     try:
-        # Get token from environment
-        token = os.environ.get("TELEGRAM_TOKEN")
+        # Get the token
+        token = os.getenv("TELEGRAM_TOKEN")
         if not token:
-            logger.error("TELEGRAM_TOKEN not found in environment variables")
+            logger.error("No TELEGRAM_TOKEN provided")
             return
 
         logger.info("Starting bot initialization...")
 
-        # Create updater
-        updater = Updater(token, use_context=True)
+        # Create application
+        application = Application.builder().token(token).build()
 
-        # Get the dispatcher to register handlers
-        dp = updater.dispatcher
+        # Add handlers
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_error_handler(error_handler)
 
-        # Basic command handlers
-        dp.add_handler(CommandHandler("start", start))
-        dp.add_handler(CommandHandler("help", help_command))
-        dp.add_error_handler(error_handler)
+        # Set commands
+        async def setup_commands():
+            await application.bot.set_my_commands([
+                ("start", "Start the bot"),
+                ("help", "Show help message")
+            ])
+            logger.info("Bot commands set successfully")
 
-        # Start polling
-        logger.info("Starting polling...")
-        updater.start_polling()
-        logger.info("Bot started successfully!")
+        # Run the bot
+        logger.info("Starting bot...")
+        application.run_polling(
+            drop_pending_updates=True,
+            allowed_updates=["message", "callback_query"],
+            close_loop=False,
+            post_init=setup_commands
+        )
 
-        # Run the bot until you press Ctrl-C
-        updater.idle()
-
-    except TelegramError as te:
-        logger.error(f"Telegram Error: {te}", exc_info=True)
     except Exception as e:
-        logger.error(f"Critical error in main: {e}", exc_info=True)
+        logger.error(f"Critical error: {str(e)}", exc_info=True)
 
 if __name__ == '__main__':
     main()
