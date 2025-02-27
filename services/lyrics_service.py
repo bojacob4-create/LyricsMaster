@@ -5,17 +5,29 @@ import requests
 from typing import Optional
 from urllib.parse import quote
 from functools import lru_cache
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
 
-# Configure session with retries and connection pooling
+# Configure session with more aggressive retries and connection pooling
 session = requests.Session()
-retries = requests.packages.urllib3.util.retry.Retry(
-    total=3,
-    backoff_factor=0.3,
+retries = Retry(
+    total=5,  # Increased from 3 to 5
+    backoff_factor=0.5,  # Increased from 0.3 to 0.5
     status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["GET"],  # Explicitly allow GET
 )
-session.mount('https://', requests.adapters.HTTPAdapter(max_retries=retries))
+
+# Configure the adapter with longer timeouts and more retries
+adapter = HTTPAdapter(
+    max_retries=retries,
+    pool_connections=10,
+    pool_maxsize=10,
+    pool_block=False
+)
+session.mount('http://', adapter)
+session.mount('https://', adapter)
 
 @lru_cache(maxsize=100)
 def get_song_lyrics(artist: str, song: str) -> Optional[str]:
@@ -47,7 +59,7 @@ def get_song_lyrics(artist: str, song: str) -> Optional[str]:
         for endpoint in endpoints:
             try:
                 logger.debug(f"Trying endpoint: {endpoint}")
-                response = session.get(endpoint, timeout=10)
+                response = session.get(endpoint, timeout=15)  # Increased timeout
 
                 logger.debug(f"Response status code: {response.status_code}")
 
@@ -70,22 +82,22 @@ def get_song_lyrics(artist: str, song: str) -> Optional[str]:
                     continue
 
                 elif response.status_code == 429:
-                    logger.debug("Rate limit hit, waiting before retry")
-                    time.sleep(2)  # Longer wait for rate limits
+                    logger.warning("Rate limit hit, waiting before retry")
+                    time.sleep(3)  # Increased wait time
                     continue
 
                 elif response.status_code >= 500:
-                    logger.debug(f"Server error {response.status_code}, trying next endpoint")
+                    logger.warning(f"Server error {response.status_code}, trying next endpoint")
                     continue
 
             except requests.exceptions.Timeout:
-                logger.debug(f"Timeout for endpoint: {endpoint}")
+                logger.warning(f"Timeout for endpoint: {endpoint}")
                 continue
             except requests.exceptions.RequestException as e:
-                logger.debug(f"Request failed for endpoint: {endpoint}, error: {str(e)}")
+                logger.warning(f"Request failed for endpoint: {endpoint}, error: {str(e)}")
                 continue
             except Exception as e:
-                logger.debug(f"Unexpected error for endpoint: {endpoint}, error: {str(e)}")
+                logger.warning(f"Unexpected error for endpoint: {endpoint}, error: {str(e)}")
                 continue
 
         # Final attempt with basic alphanumeric characters

@@ -68,6 +68,7 @@ def start_command(update: Update, context: CallbackContext):
             disable_web_page_preview=True
         )
 
+
 def help_command(update: Update, context: CallbackContext):
     """Send a message when the command /help is issued."""
     logger.info(f"User {update.effective_user.id} requested help")
@@ -120,6 +121,7 @@ def help_command(update: Update, context: CallbackContext):
             disable_web_page_preview=True
         )
 
+
 def quiz_command(update: Update, context: CallbackContext):
     """Handle the /quiz command to start a lyrics quiz."""
     user_id = update.effective_user.id
@@ -157,6 +159,7 @@ def quiz_command(update: Update, context: CallbackContext):
             "😓 Oops! Something went wrong starting the quiz.\n"
             "Please try again in a moment! 🔄"
         )
+
 
 def quiz_answer(update: Update, context: CallbackContext):
     """Handle quiz answers in regular messages."""
@@ -228,6 +231,7 @@ def quiz_answer(update: Update, context: CallbackContext):
             "Try /quiz to start a new game! 🔄"
         )
 
+
 def end_quiz_command(update: Update, context: CallbackContext):
     """Handle the /endquiz command."""
     user_id = update.effective_user.id
@@ -242,6 +246,7 @@ def end_quiz_command(update: Update, context: CallbackContext):
             "😓 Oops! Something went wrong ending the quiz.\n"
             "Try /quiz to start a new game! 🔄"
         )
+
 
 def lyrics_command(update: Update, context: CallbackContext):
     """Handle the /lyrics command."""
@@ -325,6 +330,7 @@ def lyrics_command(update: Update, context: CallbackContext):
             "Please try again in a moment! 🔄"
         )
 
+
 def stats_command(update: Update, context: CallbackContext):
     """Handle the /stats command."""
     user_id = update.effective_user.id
@@ -346,12 +352,22 @@ def stats_command(update: Update, context: CallbackContext):
         # Send typing action
         update.message.chat.send_action(action="typing")
 
+        # First send a processing message
+        processing_msg = update.message.reply_text(
+            "🔄 Analyzing the song...\n"
+            "This will take just a moment! 📊"
+        )
+
         lyrics = get_song_lyrics(artist.strip(), song.strip())
         if not lyrics:
             logger.info(f"No lyrics found for '{artist.strip()} - {song.strip()}'")
-            update.message.reply_text(
+            processing_msg.edit_text(
                 "😕 Sorry, I couldn't find that song.\n\n"
-                "Please check the spelling and try again! 🔍"
+                "Please check:\n"
+                "• The spelling of the artist and song\n"
+                "• If the song exists\n"
+                "• Try another song from the same artist\n\n"
+                "Need help? Use /help to see examples! 🔍"
             )
             return
 
@@ -365,15 +381,28 @@ def stats_command(update: Update, context: CallbackContext):
             "Want to see the lyrics? Try /lyrics with this song! 🎤"
         )
 
-        update.message.reply_text(response)
+        # Update the processing message with results
+        processing_msg.edit_text(response)
         logger.info(f"Successfully sent stats to user {user_id}")
 
     except Exception as e:
         logger.error(f"Error processing stats command for user {user_id}: {str(e)}")
-        update.message.reply_text(
+        error_message = (
             "😓 Oops! Something went wrong while analyzing the song.\n"
-            "Please try again in a moment! 🔄"
+            "Please try:\n"
+            "• Check the spelling of artist and song\n"
+            "• Wait a few moments and try again\n"
+            "• Try a different song\n\n"
+            "Example: /stats Ed Sheeran - Perfect 🎵"
         )
+        try:
+            update.message.reply_text(error_message)
+        except Exception:
+            # If the original message failed, try sending a new one
+            update.message.reply_text(
+                "😓 Something went wrong. Please try again in a moment! 🔄"
+            )
+
 
 def recommend_command(update: Update, context: CallbackContext):
     """Handle the /recommend command."""
@@ -419,6 +448,7 @@ def recommend_command(update: Update, context: CallbackContext):
             "😓 Oops! Something went wrong while getting recommendations.\n"
             "Please try again in a moment! 🔄"
         )
+
 
 def translate_lyrics_command(update: Update, context: CallbackContext):
     """Handle the /translate command."""
@@ -472,6 +502,7 @@ def translate_lyrics_command(update: Update, context: CallbackContext):
             "Let's try that again in a moment! 🔄"
         )
 
+
 def send_daily_song(context: CallbackContext):
     """Send daily song to all subscribed users."""
     try:
@@ -499,6 +530,7 @@ def send_daily_song(context: CallbackContext):
 
     except Exception as e:
         logger.error(f"Error in daily song distribution: {str(e)}")
+
 
 def subscribe_daily_command(update: Update, context: CallbackContext):
     """Handle the /subscribe command."""
@@ -530,6 +562,7 @@ def subscribe_daily_command(update: Update, context: CallbackContext):
             "Please try again later! 🔄"
         )
 
+
 def unsubscribe_daily_command(update: Update, context: CallbackContext):
     """Handle the /unsubscribe command."""
     user_id = update.effective_user.id
@@ -554,6 +587,7 @@ def unsubscribe_daily_command(update: Update, context: CallbackContext):
             "😓 Something went wrong with the unsubscription.\n"
             "Please try again later! 🔄"
         )
+
 
 def youtube_command(update: Update, context: CallbackContext):
     """Handle the /youtube command."""
@@ -590,6 +624,7 @@ def youtube_command(update: Update, context: CallbackContext):
             "😓 Oops! Something went wrong while getting the YouTube link.\n"
             "Please try again in a moment! 🔄"
         )
+
 
 def analyze_command(update: Update, context: CallbackContext):
     """Handle the /analyze command for detailed song analysis."""
@@ -639,6 +674,7 @@ def analyze_command(update: Update, context: CallbackContext):
             "😓 Oops! Something went wrong while analyzing the song.\n"
             "Please try again in a moment! 🔄"
         )
+
 
 def download_command(update: Update, context: CallbackContext):
     """Handle the /download command."""
@@ -694,12 +730,14 @@ def download_command(update: Update, context: CallbackContext):
             "Please try again later! 🔄"
         )
 
+
 def format_multiple_choice_options(options):
     """Helper function to format multiple choice options neatly."""
     option_strings = []
     for i, option in enumerate(options):
         option_strings.append(f"{chr(65 + i)}. {option['artist']} - {option['song']}")
     return "\n".join(option_strings)
+
 
 def main():
     """Initialize bot handlers and start the bot."""
@@ -738,7 +776,7 @@ def main():
         BotCommand("endquiz", "End the current quiz game"),
         BotCommand("translate", "Get Arabic translation of lyrics 🌍 (format: artist - song)"),
         BotCommand("subscribe", "Subscribe to daily song discovery 🎶"),
-        BotCommand("unsubscribe", "Unsubscribe from daily song discovery 👋"),
+BotCommand("unsubscribe", "Unsubscribe from daily song discovery 👋"),
         BotCommand("youtube", "Get YouTube link for song 🎬 (format: artist - song)"),
         BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
         BotCommand("download", "Download YouTube video 🎬 (format: /download video_url)"),
