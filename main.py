@@ -44,7 +44,7 @@ if __name__ == "__main__":
     try:
         logger.info("Starting application...")
 
-        # Start Flask in a separate thread
+        # Start Flask in a separate thread as a secondary process
         flask_thread = threading.Thread(target=run_flask, daemon=True)
         flask_thread.start()
 
@@ -52,7 +52,7 @@ if __name__ == "__main__":
         keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
         keep_alive_thread.start()
 
-        # Start the bot
+        # Start the bot as the primary process
         main()
     except Exception as e:
         logger.error(f"Application failed to start: {str(e)}", exc_info=True)
