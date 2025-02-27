@@ -2,33 +2,60 @@ import logging
 from typing import Optional, Dict, Tuple
 from pytube import YouTube
 import os
+import trafilatura
+import re
 
 logger = logging.getLogger(__name__)
+
+def extract_video_id(url: str) -> Optional[str]:
+    """Extract video ID from various YouTube URL formats."""
+    patterns = [
+        r'(?:v=|/v/|youtu\.be/|/embed/)([^&?/]+)',
+        r'youtube.com/shorts/([^&?/]+)'
+    ]
+    for pattern in patterns:
+        if match := re.search(pattern, url):
+            return match.group(1)
+    return None
+
+def validate_youtube_url(url: str) -> bool:
+    """Validate if the URL is a valid YouTube video URL."""
+    video_id = extract_video_id(url)
+    if not video_id:
+        return False
+    return True
 
 def download_youtube_video(url: str) -> Tuple[bool, str]:
     """Download a YouTube video and return a status message."""
     try:
         logger.info(f"Starting download process for URL: {url}")
 
-        # Create YouTube object with custom user agent
+        # Validate URL first
+        if not validate_youtube_url(url):
+            return False, (
+                "❌ Invalid YouTube URL.\n"
+                "Please provide a valid YouTube video URL! 🎬\n"
+                "Example: https://youtube.com/watch?v=..."
+            )
+
+        # First try to fetch the page content to verify accessibility
+        downloaded = trafilatura.fetch_url(url)
+        if not downloaded:
+            return False, (
+                "❌ Could not access the video.\n"
+                "Please check if the video exists and is public! 🔍"
+            )
+
+        # Create YouTube object with custom settings
         yt = YouTube(
             url,
-            use_oauth=False,  # Disable OAuth
+            use_oauth=False,
             allow_oauth_cache=False
         )
-        yt.bypass_age_gate()  # Try to bypass age restrictions
+        yt.bypass_age_gate()
 
-        logger.info(f"Successfully created YouTube object for video: {yt.title}")
+        logger.info(f"Successfully accessed video: {yt.title}")
 
-        # Get video info before downloading
-        info = {
-            'title': yt.title,
-            'author': yt.author,
-            'length': f"{yt.length//60}:{yt.length%60:02d}",
-            'views': yt.views
-        }
-
-        logger.info("Fetching available streams...")
         # Get the best progressive stream (includes both video and audio)
         video = yt.streams.filter(
             progressive=True,
@@ -42,7 +69,7 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
                 "Please try another video! 🎬"
             )
 
-        # Check if file size is reasonable (less than 50MB for Telegram)
+        # Check file size
         if video.filesize > 50 * 1024 * 1024:  # 50MB in bytes
             logger.warning(f"Video size {video.filesize/(1024*1024):.1f}MB exceeds 50MB limit")
             return False, (
@@ -50,56 +77,89 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
                 "Please try a shorter video! 🎬"
             )
 
-        # Download video with retry mechanism
-        try:
-            logger.info(f"Starting download for video: {info['title']}")
-            video.download()
-            file_path = video.default_filename
-            logger.info(f"Successfully downloaded to: {file_path}")
-        except Exception as download_error:
-            logger.error(f"First download attempt failed: {str(download_error)}")
-            # Retry with different stream
-            logger.info("Attempting retry with 720p resolution...")
-            video = yt.streams.filter(
-                progressive=True,
-                file_extension='mp4',
-                resolution='720p'
-            ).first()
-            if not video:
-                return False, "❌ Download failed. Please try another video."
+        # Try downloading with multiple attempts
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                logger.info(f"Download attempt {attempt + 1} of {max_attempts}")
+                video.download()
+                file_path = video.default_filename
+                logger.info(f"Successfully downloaded to: {file_path}")
 
-            video.download()
-            file_path = video.default_filename
-            logger.info(f"Successfully downloaded to: {file_path} on second attempt")
+                # Format success message
+                success_msg = (
+                    "✅ Video downloaded successfully!\n\n"
+                    f"📽️ Title: {yt.title}\n"
+                    f"👤 Channel: {yt.author}\n"
+                    f"⏱️ Length: {yt.length//60}:{yt.length%60:02d}\n"
+                    f"👀 Views: {yt.views:,}\n"
+                    f"📦 Size: {round(video.filesize / (1024 * 1024), 1)}MB\n\n"
+                    "🚀 Uploading to Telegram..."
+                )
 
-        # Format success message
-        success_msg = (
-            "✅ Video downloaded successfully!\n\n"
-            f"📽️ Title: {info['title']}\n"
-            f"👤 Channel: {info['author']}\n"
-            f"⏱️ Length: {info['length']}\n"
-            f"👀 Views: {info['views']:,}\n"
-            f"📦 Size: {round(video.filesize / (1024 * 1024), 1)}MB\n\n"
-            "🚀 Uploading to Telegram..."
-        )
+                return True, (file_path, success_msg)
 
-        return True, (file_path, success_msg)
+            except Exception as e:
+                logger.error(f"Download attempt {attempt + 1} failed: {str(e)}")
+                if attempt < max_attempts - 1:
+                    continue
+
+                # If all attempts failed, try a lower resolution
+                video = yt.streams.filter(
+                    progressive=True,
+                    file_extension='mp4',
+                    resolution='720p'
+                ).first()
+
+                if not video:
+                    return False, (
+                        "❌ Download failed after multiple attempts.\n"
+                        "Please try another video or try again later! 🔄"
+                    )
+
+                # One final attempt with lower resolution
+                try:
+                    video.download()
+                    file_path = video.default_filename
+                    logger.info(f"Successfully downloaded lower resolution to: {file_path}")
+
+                    success_msg = (
+                        "✅ Video downloaded successfully (720p)!\n\n"
+                        f"📽️ Title: {yt.title}\n"
+                        f"👤 Channel: {yt.author}\n"
+                        f"⏱️ Length: {yt.length//60}:{yt.length%60:02d}\n"
+                        f"👀 Views: {yt.views:,}\n"
+                        f"📦 Size: {round(video.filesize / (1024 * 1024), 1)}MB\n\n"
+                        "🚀 Uploading to Telegram..."
+                    )
+
+                    return True, (file_path, success_msg)
+
+                except Exception as final_e:
+                    logger.error(f"Final download attempt failed: {str(final_e)}")
+                    return False, (
+                        "❌ Download failed.\n"
+                        "This could be because:\n"
+                        "• The video is restricted\n"
+                        "• Server is busy\n"
+                        "Please try another video or wait a few minutes! 🕒"
+                    )
 
     except Exception as e:
-        error_details = str(e)
+        error_details = str(e).lower()
         logger.error(f"Error downloading YouTube video: {error_details}")
 
-        if "age restricted" in error_details.lower():
+        if "age restricted" in error_details:
             return False, (
                 "😓 Sorry, this video is age-restricted.\n"
                 "Please try a different video that's not age-restricted! 🎬"
             )
-        elif "private video" in error_details.lower():
+        elif "private video" in error_details:
             return False, (
                 "❌ This video is private.\n"
                 "Please try a public video instead! 🎬"
             )
-        elif "not available" in error_details.lower():
+        elif "not available" in error_details:
             return False, (
                 "❌ This video is not available.\n"
                 "Please check:\n"
@@ -109,12 +169,12 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
             )
         else:
             return False, (
-                "😓 Something went wrong while downloading.\n"
-                "Please check:\n"
-                "• The video URL is valid\n"
-                "• The video is not age-restricted\n"
-                "• Try another video\n"
-                "Error: HTTP Error 403: Forbidden"
+                "😓 Download failed.\n"
+                "Please try:\n"
+                "• A different video\n"
+                "• Checking if the video is public\n"
+                "• Using a shorter video\n"
+                "• Waiting a few minutes"
             )
 
 def cleanup_video(file_path: str) -> None:
