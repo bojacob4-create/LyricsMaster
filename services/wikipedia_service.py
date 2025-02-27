@@ -1,6 +1,5 @@
 import logging
 import requests
-from urllib.parse import quote
 from typing import Optional, Dict
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
@@ -27,7 +26,7 @@ session.mount('https://', adapter)
 
 def get_wikipedia_info(person_name: str) -> Optional[Dict[str, str]]:
     """
-    Get Wikipedia information about a person.
+    Get Wikipedia information about a person using the OpenSearch API.
 
     Args:
         person_name (str): Name of the person to search
@@ -37,96 +36,52 @@ def get_wikipedia_info(person_name: str) -> Optional[Dict[str, str]]:
     """
     try:
         # Clean up search terms
-        person_name = person_name.strip().replace("'", "'").replace('"', '')
-
+        person_name = person_name.strip()
         logger.info(f"Searching Wikipedia for: {person_name}")
 
-        # First, search for the page
+        # Use opensearch API to find the exact page
         search_url = "https://en.wikipedia.org/w/api.php"
         search_params = {
-            'action': 'query',
-            'list': 'search',
-            'srsearch': f"{quote(person_name, safe='')} musician singer artist",  # Improve relevance for music-related results
-            'format': 'json',
-            'srprop': 'snippet',
-            'srlimit': 1  # Limit to 1 result
-        }
-
-        logger.debug(f"Making search request with params: {search_params}")
-        search_response = session.get(search_url, params=search_params, timeout=15)
-
-        # Log the response details
-        logger.debug(f"Search response status code: {search_response.status_code}")
-        logger.debug(f"Search response content: {search_response.text[:500]}")  # Log first 500 chars of response
-
-        search_response.raise_for_status()
-        search_data = search_response.json()
-
-        # Log the search data for debugging
-        logger.debug(f"Search data: {search_data}")
-
-        search_results = search_data.get('query', {}).get('search', [])
-        if not search_results:
-            logger.info(f"No Wikipedia results found for {person_name}")
-            # Try alternative search without additional terms
-            search_params['srsearch'] = quote(person_name, safe='')
-            logger.debug("Trying alternative search without additional terms")
-            search_response = session.get(search_url, params=search_params, timeout=15)
-            search_response.raise_for_status()
-            search_data = search_response.json()
-            search_results = search_data.get('query', {}).get('search', [])
-            if not search_results:
-                # Try one last time with basic alphanumeric characters
-                logger.debug("All endpoints failed, trying one last time with simplified terms")
-                person_simple = ''.join(c for c in person_name if c.isalnum() or c.isspace()).strip()
-                if person_simple != person_name:
-                    logger.debug(f"Attempting with simplified terms: {person_simple}")
-                    search_params['srsearch'] = quote(person_simple, safe='')
-                    search_response = session.get(search_url, params=search_params, timeout=15)
-                    search_response.raise_for_status()
-                    search_data = search_response.json()
-                    search_results = search_data.get('query', {}).get('search', [])
-                    if not search_results:
-                        return None
-                else:
-                    return None
-
-        # Get the first result's page ID
-        page_id = search_results[0]['pageid']
-        logger.debug(f"Found page ID: {page_id}")
-
-        # Get page details
-        page_params = {
-            'action': 'query',
-            'prop': 'extracts|info',
-            'exintro': True,
-            'explaintext': True,
-            'inprop': 'url',
-            'pageids': page_id,
+            'action': 'opensearch',
+            'search': person_name,
+            'limit': 1,
+            'namespace': 0,
             'format': 'json'
         }
 
-        logger.debug(f"Making page details request with params: {page_params}")
-        page_response = session.get(search_url, params=page_params, timeout=15)
+        logger.debug(f"Making opensearch request with params: {search_params}")
+        search_response = session.get(search_url, params=search_params, timeout=15)
+        search_response.raise_for_status()
 
-        # Log the response details
-        logger.debug(f"Page details response status code: {page_response.status_code}")
-        logger.debug(f"Page details response content: {page_response.text[:500]}")
-
-        page_response.raise_for_status()
-        page_data = page_response.json()
-
-        if 'query' not in page_data or 'pages' not in page_data['query']:
-            logger.error("Unexpected API response structure")
-            logger.debug(f"Full API response: {page_data}")
+        # opensearch returns [query, [titles], [descriptions], [urls]]
+        results = search_response.json()
+        if not results[1]:  # No titles found
+            logger.info(f"No Wikipedia results found for {person_name}")
             return None
 
-        page = page_data['query']['pages'][str(page_id)]
+        title = results[1][0]
+        page_url = results[3][0]
 
-        # Extract content and format it
+        # Get the full page content
+        content_params = {
+            'action': 'query',
+            'prop': 'extracts',
+            'exintro': True,
+            'explaintext': True,
+            'titles': title,
+            'format': 'json'
+        }
+
+        content_response = session.get(search_url, params=content_params, timeout=15)
+        content_response.raise_for_status()
+
+        page_data = content_response.json()
+        pages = page_data['query']['pages']
+        page = next(iter(pages.values()))
+
         extract = page.get('extract', '')
         if not extract:
-            logger.warning(f"No extract found for page ID: {page_id}")
+            logger.warning(f"No extract found for page: {title}")
             return None
 
         # Clean up and format the extract
@@ -138,24 +93,17 @@ def get_wikipedia_info(person_name: str) -> Optional[Dict[str, str]]:
             truncated = extract[:max_length].rsplit('.', 1)[0]
             extract = truncated + '...'
 
-        result = {
-            'title': page.get('title', ''),
+        return {
+            'title': title,
             'extract': extract,
-            'link': f"https://en.wikipedia.org/wiki/{quote(page.get('title', '').replace(' ', '_'), safe='')}"
+            'link': page_url
         }
-
-        logger.info(f"Successfully retrieved Wikipedia info for {person_name}")
-        return result
 
     except requests.exceptions.Timeout:
         logger.warning(f"Timeout while fetching Wikipedia info for {person_name}")
         return None
     except requests.exceptions.RequestException as e:
         logger.error(f"Request error getting Wikipedia info: {str(e)}")
-        return None
-    except KeyError as e:
-        logger.error(f"KeyError processing Wikipedia response: {str(e)}")
-        logger.debug("Response data structure issue", exc_info=True)
         return None
     except Exception as e:
         logger.error(f"Unexpected error getting Wikipedia info: {str(e)}", exc_info=True)

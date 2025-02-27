@@ -27,7 +27,7 @@ from utils import (
 )
 from services.youtube_service import get_youtube_link, format_youtube_response
 from services.youtube_downloader_service import download_youtube_video, cleanup_video
-from services.wikipedia_service import get_wikipedia_info
+from services.perplexity_service import get_person_info # Added import
 
 logger = logging.getLogger(__name__)
 
@@ -752,46 +752,48 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
     try:
         query = " ".join(context.args)
         if not query:
-            logger.info(f"User {user_id} provided invalid wiki query format")
+            logger.info(f"User {user_id} provided invalid query format")
             update.message.reply_text(
                 "⚠️ Please provide a name to search!\n\n"
-                "Use this format: /wiki person name\n"
+                "Use this format: /wiki name\n"
                 "For example: /wiki Taylor Swift\n\n"
                 "Give it a try! 🔍"
             )
             return
 
-        logger.info(f"User {user_id} requested Wikipedia info for '{query}'")
+        logger.info(f"User {user_id} requested info for '{query}'")
 
         # Send typing action
         update.message.chat.send_action(action="typing")
 
         # Send initial processing message
         processing_msg = update.message.reply_text(
-            "🔍 Searching Wikipedia...\n"
-            "This will take just a moment! 📚"
+            "🤖 Let me gather some interesting information...\n"
+            "This will take just a moment! ✨"
         )
 
-        # Get Wikipedia information
-        wiki_info = get_wikipedia_info(query)
+        # Get AI-generated information
+        person_info = get_person_info(query)
 
-        if not wiki_info:
+        if not person_info:
             processing_msg.edit_text(
-                "😕 Sorry, I couldn't find that person on Wikipedia.\n\n"
+                "😕 Sorry, I couldn't find enough information.\n\n"
                 "Please try:\n"
                 "• Check the spelling of the name\n"
                 "• Use the full name\n"
-                "• Try adding 'musician' or 'singer' to the name\n\n"
-                f"Example: /wiki {query} musician 🔍"
+                "• Try a different spelling\n\n"
+                f"Example: /wiki {query} 🔍"
             )
             return
 
-        # Format and send response
+        # Format and send response with citations if available
+        citations = "\n\n📚 Sources:\n" +"\n".join(f"• {cite}" for cite in person_info['citations']) if person_info.get('citations') else ""
+
         response = (
-            f"📚 *{wiki_info['title']}*\n\n"
-            f"{wiki_info['extract']}\n\n"
-            f"🔗 [Read more on Wikipedia]({wiki_info['link']})\n\n"
-"Want to learn about someone else? Just use /wiki again! 🤓"
+            f"✨ *{person_info['title']}*\n\n"
+            f"{person_info['info']}"
+            f"{citations}\n\n"
+            "Want to learn about someone else? Just use /wiki again! 🤓"
         )
 
         try:
@@ -808,7 +810,7 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
                 disable_web_page_preview=True
             )
 
-        logger.info(f"Successfully sent Wikipedia info to user {user_id}")
+        logger.info(f"Successfully sent AI-generated info to user {user_id}")
 
     except TelegramError as e:
         logger.error(f"Telegram error in wiki command for user {user_id}: {str(e)}")
@@ -820,14 +822,15 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
         logger.error(f"Error in wiki command for user {user_id}: {str(e)}", exc_info=True)
         if 'processing_msg' in locals():
             processing_msg.edit_text(
-                "😓 Oops! Something went wrong while searching Wikipedia.\n"
+                "😓 Oops! Something went wrong while gathering information.\n"
                 "Please try again in a moment! 🔄"
             )
         else:
             update.message.reply_text(
-                "😓 Oops! Something went wrong while searching Wikipedia.\n"
+                "😓 Oops! Something went wrong while gathering information.\n"
                 "Please try again in a moment! 🔄"
             )
+
 
 def main():
     """Initialize bot handlers and start the bot."""
