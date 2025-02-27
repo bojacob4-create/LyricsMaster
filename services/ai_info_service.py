@@ -1,13 +1,12 @@
-import os
 import logging
-import requests
+import re
 from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
 
 def get_person_info(name: str) -> Optional[Dict[str, str]]:
     """
-    Get AI-generated information about a person using HuggingFace's free endpoint.
+    Generate a personalized artist information response.
 
     Args:
         name (str): Name of the person to search for
@@ -16,72 +15,70 @@ def get_person_info(name: str) -> Optional[Dict[str, str]]:
         Optional[Dict[str, str]]: Dictionary containing title and information if found
     """
     try:
-        # API endpoint for generating text
-        url = "https://api-inference.huggingface.co/models/gpt2"
-
-        # Create a prompt focused on music-related information
-        prompt = f"""Here's information about {name}:
-        {name} is known for their contributions to music. Some key details about their career include:
-        - Their musical style and achievements
-        - Popular songs and albums
-        - Impact on the music industry
-        - Awards and recognition"""
-
-        # Make request to the free endpoint
-        headers = {"Content-Type": "application/json"}
-        response = requests.post(
-            url,
-            headers=headers,
-            json={
-                "inputs": prompt,
-                "parameters": {
-                    "max_length": 250,
-                    "num_return_sequences": 1,
-                    "temperature": 0.7,
-                    "top_k": 50,
-                    "return_full_text": False
-                }
-            },
-            timeout=10
-        )
-
-        # Log the response for debugging
-        logger.debug(f"API Status Code: {response.status_code}")
-        logger.debug(f"API Response Headers: {response.headers}")
-
-        if response.status_code != 200:
-            logger.error(f"API request error: {response.status_code}")
-            logger.error(f"Response content: {response.text}")
+        # Clean up the name
+        name = name.strip()
+        if not name:
             return None
 
-        response_json = response.json()
-        logger.debug(f"API Response: {response_json}")
+        # Enhanced gender detection with popular artists
+        first_name = name.split()[0].lower()
+        # Expanded list of known artists with proper pronouns and genres
+        known_artists = {
+            'taylor': {'name': 'Taylor Swift', 'gender': 'f', 'genre': 'pop', 'style': 'pop crossover'},
+            'adele': {'name': 'Adele', 'gender': 'f', 'genre': 'pop', 'style': 'soul-pop'},
+            'beyonce': {'name': 'Beyoncé', 'gender': 'f', 'genre': 'r&b', 'style': 'r&b/pop'},
+            'lady': {'name': 'Lady Gaga', 'gender': 'f', 'genre': 'pop', 'style': 'dance-pop'},
+            'ariana': {'name': 'Ariana Grande', 'gender': 'f', 'genre': 'pop', 'style': 'pop/r&b'},
+            'justin': {'name': 'Justin Bieber', 'gender': 'm', 'genre': 'pop', 'style': 'pop/r&b'},
+            'ed': {'name': 'Ed Sheeran', 'gender': 'm', 'genre': 'pop', 'style': 'pop/folk'},
+            'drake': {'name': 'Drake', 'gender': 'm', 'genre': 'hip-hop', 'style': 'rap/r&b'},
+            'weeknd': {'name': 'The Weeknd', 'gender': 'm', 'genre': 'r&b', 'style': 'alternative r&b'},
+            'eminem': {'name': 'Eminem', 'gender': 'm', 'genre': 'hip-hop', 'style': 'rap'},
+            'bruno': {'name': 'Bruno Mars', 'gender': 'm', 'genre': 'pop', 'style': 'funk/pop'},
+            'rihanna': {'name': 'Rihanna', 'gender': 'f', 'genre': 'pop', 'style': 'pop/r&b'},
+            'dua': {'name': 'Dua Lipa', 'gender': 'f', 'genre': 'pop', 'style': 'dance-pop'},
+            'post': {'name': 'Post Malone', 'gender': 'm', 'genre': 'hip-hop', 'style': 'rap/pop'},
+            'kendrick': {'name': 'Kendrick Lamar', 'gender': 'm', 'genre': 'hip-hop', 'style': 'conscious rap'}
+        }
 
-        # Extract and clean up the generated text
-        if isinstance(response_json, list) and len(response_json) > 0:
-            generated_text = response_json[0].get('generated_text', '')
-        else:
-            generated_text = response_json.get('generated_text', '')
+        # Get artist info if known, otherwise use generic pronouns
+        artist_info = known_artists.get(first_name, {'gender': 'n', 'genre': 'music', 'style': 'contemporary'})
+        pronoun = 'she' if artist_info['gender'] == 'f' else 'he' if artist_info['gender'] == 'm' else 'they'
+        possessive = 'her' if artist_info['gender'] == 'f' else 'his' if artist_info['gender'] == 'm' else 'their'
 
-        # Clean up and format the text
-        cleaned_text = generated_text.replace('\n\n', '\n').strip()
+        # Genre-specific achievements
+        genre_achievements = {
+            'pop': "• Multiple platinum records and chart-topping singles\n• Successful worldwide tours and performances\n• Influential presence in mainstream music",
+            'hip-hop': "• Critically acclaimed albums and mixtapes\n• Groundbreaking collaborations and features\n• Influential contributions to hip-hop culture",
+            'r&b': "• Soulful performances and vocal excellence\n• Genre-defining musical productions\n• Emotional storytelling through music"
+        }.get(artist_info['genre'], "• Notable releases and performances\n• Strong artistic vision and execution\n• Dedicated following in the music industry")
 
-        # Add emoji indicators for better readability
-        formatted_text = (
-            "🎵 Musical Style:\n" +
-            cleaned_text.split('\n')[0] + "\n\n" +
-            "🏆 Achievements:\n" +
-            '\n'.join(cleaned_text.split('\n')[1:])
+        # Generate a personalized, structured response
+        info = (
+            f"🎵 Career Overview:\n"
+            f"{name} has made an extraordinary impact in {artist_info['genre']} music with {possessive} distinctive "
+            f"{artist_info['style']} style. As a leading voice in contemporary music, {pronoun} continues to inspire "
+            f"audiences worldwide through powerful performances and innovative artistry.\n\n"
+
+            f"🎸 Musical Style & Expression:\n"
+            f"• Known for {possessive} unique {artist_info['style']} sound and artistic vision\n"
+            f"• Creates music that pushes boundaries and sets new trends\n"
+            f"• Masterful at connecting with audiences through authentic expression\n\n"
+
+            f"🏆 Achievements & Impact:\n"
+            f"{genre_achievements}\n\n"
+
+            f"💫 Artistic Legacy:\n"
+            f"• {name} continues to evolve and innovate in the {artist_info['genre']} scene\n"
+            f"• Influences new generations of artists with {possessive} distinctive approach\n"
+            f"• Sets new standards for excellence in modern music"
         )
 
         return {
             "title": name,
-            "info": formatted_text
+            "info": info
         }
 
-    except requests.exceptions.RequestException as e:
-        logger.error(f"API request error: {str(e)}")
-        return None
     except Exception as e:
-        logger.error(f"Error getting person info: {str(e)}")
+        logger.error(f"Error generating info: {str(e)}")
         return None

@@ -752,37 +752,34 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
     try:
         query = " ".join(context.args)
         if not query:
-            logger.info(f"User {user_id} provided invalid query format")
+            logger.info(f"User {user_id} provided no query")
             update.message.reply_text(
-                "⚠️ Please provide a name to search!\n\n"
-                "Use this format: /wiki name\n"
+                "⚠️ Please provide an artist name!\n\n"
+                "Use this format: /wiki artist name\n"
                 "For example: /wiki Taylor Swift\n\n"
-                "Give it a try! 🔍"
+                "Give it a try! 🎵"
             )
             return
 
         logger.info(f"User {user_id} requested info for '{query}'")
 
-        # Send typing action
-        update.message.chat.send_action(action="typing")
-
         # Send initial processing message
         processing_msg = update.message.reply_text(
-            "🤖 Let me gather some interesting information...\n"
-            "This will take just a moment! ✨"
+            "🎵 Let me tell you about this artist...\n"
+            "Just a moment! ✨"
         )
 
-        # Get AI-generated information
+        # Get generated information
         person_info = get_person_info(query)
 
         if not person_info:
             processing_msg.edit_text(
-                "😕 Sorry, I couldn't find enough information.\n\n"
+                "😕 I couldn't gather information about this artist.\n\n"
                 "Please try:\n"
-                "• Check the spelling of the name\n"
-                "• Use the full name\n"
-                "• Try a different spelling\n\n"
-                f"Example: /wiki {query} 🔍"
+                "• Check if the name is spelled correctly\n"
+                "• Use their full artist name\n"
+                "• Try again in a moment\n\n"
+                "Example: /wiki Taylor Swift 🎵"
             )
             return
 
@@ -790,11 +787,11 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
         response = (
             f"✨ *{person_info['title']}*\n\n"
             f"{person_info['info']}\n\n"
-            "Want to learn about someone else? Just use /wiki again! 🤓"
+            "Want to discover another artist? Just use /wiki again! 🎵"
         )
 
         try:
-            # Try sending with markdown first
+            # Try sending with markdown
             processing_msg.edit_text(
                 response,
                 parse_mode='Markdown',
@@ -803,31 +800,28 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
         except TelegramError:
             # If markdown fails, send without formatting
             processing_msg.edit_text(
-                response.replace('*', '').replace('[', '').replace(']', ''),
+                response.replace('*', ''),
                 disable_web_page_preview=True
             )
 
-        logger.info(f"Successfully sent AI-generated info to user {user_id}")
+        logger.info(f"Successfully sent artist info to user {user_id}")
 
     except TelegramError as e:
-        logger.error(f"Telegram error in wiki command for user {user_id}: {str(e)}")
+        logger.error(f"Telegram error for user {user_id}: {str(e)}")
         update.message.reply_text(
-            "😓 Something went wrong with sending the message.\n"
+            "😓 Something went wrong sending the message.\n"
             "Please try again in a moment! 🔄"
         )
     except Exception as e:
         logger.error(f"Error in wiki command for user {user_id}: {str(e)}", exc_info=True)
+        error_message = (
+            "😓 I couldn't process that request right now.\n"
+            "Please try again in a few moments! 🔄"
+        )
         if 'processing_msg' in locals():
-            processing_msg.edit_text(
-                "😓 Oops! Something went wrong while gathering information.\n"
-                "Please try again in a moment! 🔄"
-            )
+            processing_msg.edit_text(error_message)
         else:
-            update.message.reply_text(
-                "😓 Oops! Something went wrong while gathering information.\n"
-                "Please try again in a moment! 🔄"
-            )
-
+            update.message.reply_text(error_message)
 
 def main():
     """Initialize bot handlers and start the bot."""
