@@ -71,23 +71,11 @@ class TelegramBotWrapper:
         self.start_time = None
         self.health_check_interval = 300  # 5 minutes
 
-    def log_health_status(self):
-        """Log bot health status."""
-        if self.start_time:
-            uptime = datetime.now() - self.start_time
-            last_seen = datetime.now() - last_activity
-            logger.info(
-                f"Bot Health Status:\n"
-                f"Uptime: {uptime}\n"
-                f"Last Activity: {last_seen.seconds} seconds ago\n"
-                f"Retry Count: {self.retry_count}\n"
-                f"Connection Status: Active\n"
-                f"Memory Usage: Active" 
-            )
-
     def setup_bot(self):
         """Set up the bot with handlers and commands."""
         try:
+            logger.info("Starting bot setup with token...")
+
             # Initialize with higher timeouts for better stability
             self.updater = Updater(
                 token=self.token,
@@ -97,28 +85,36 @@ class TelegramBotWrapper:
                     'connect_timeout': 60
                 }
             )
+
+            # Test bot connection immediately
+            bot_info = self.updater.bot.get_me()
+            logger.info(f"Bot connection test successful - Username: {bot_info.username}")
+
             dp = self.updater.dispatcher
+            logger.info("Setting up command handlers...")
 
-            # Register command handlers
-            dp.add_handler(CommandHandler("start", start_command))
-            dp.add_handler(CommandHandler("help", help_command))
-            dp.add_handler(CommandHandler("lyrics", lyrics_command))
-            dp.add_handler(CommandHandler("stats", stats_command))
-            dp.add_handler(CommandHandler("recommend", recommend_command))
-            dp.add_handler(CommandHandler("quiz", quiz_command))
-            dp.add_handler(CommandHandler("endquiz", end_quiz_command))
-            dp.add_handler(CommandHandler("translate", translate_lyrics_command))
-            dp.add_handler(CommandHandler("youtube", youtube_command))
-            dp.add_handler(CommandHandler("analyze", analyze_command))
-            dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
-            dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
-            dp.add_handler(CommandHandler("download", download_command))
-            dp.add_handler(CommandHandler("wiki", wiki_command))
+            # Register command handlers with logging
+            dp.add_handler(CommandHandler("start", self.log_command(start_command)))
+            dp.add_handler(CommandHandler("help", self.log_command(help_command)))
+            dp.add_handler(CommandHandler("lyrics", self.log_command(lyrics_command)))
+            dp.add_handler(CommandHandler("stats", self.log_command(stats_command)))
+            dp.add_handler(CommandHandler("recommend", self.log_command(recommend_command)))
+            dp.add_handler(CommandHandler("quiz", self.log_command(quiz_command)))
+            dp.add_handler(CommandHandler("endquiz", self.log_command(end_quiz_command)))
+            dp.add_handler(CommandHandler("translate", self.log_command(translate_lyrics_command)))
+            dp.add_handler(CommandHandler("youtube", self.log_command(youtube_command)))
+            dp.add_handler(CommandHandler("analyze", self.log_command(analyze_command)))
+            dp.add_handler(CommandHandler("subscribe", self.log_command(subscribe_daily_command)))
+            dp.add_handler(CommandHandler("unsubscribe", self.log_command(unsubscribe_daily_command)))
+            dp.add_handler(CommandHandler("download", self.log_command(download_command)))
+            dp.add_handler(CommandHandler("wiki", self.log_command(wiki_command)))
 
-            # Add message handler for quiz answers with activity tracking
+            # Add message handler for quiz answers with activity tracking and logging
             def wrapped_quiz_answer(update: Update, context: CallbackContext):
+                logger.info(f"Received quiz answer from user {update.effective_user.id}")
                 update_activity()
                 return quiz_answer(update, context)
+
             dp.add_handler(MessageHandler(Filters.text & ~Filters.command, wrapped_quiz_answer))
 
             # Add error handler
@@ -134,6 +130,20 @@ class TelegramBotWrapper:
         except Exception as e:
             logger.error(f"Error in bot setup: {str(e)}", exc_info=True)
             return False
+
+    def log_command(self, handler):
+        """Decorator to add logging to command handlers."""
+        def wrapped(update: Update, context: CallbackContext):
+            user_id = update.effective_user.id
+            command = update.message.text
+            logger.info(f"Received command '{command}' from user {user_id}")
+            try:
+                return handler(update, context)
+            except Exception as e:
+                logger.error(f"Error processing command '{command}' for user {user_id}: {str(e)}", exc_info=True)
+                update.message.reply_text("😓 Something went wrong processing your command. Please try again!")
+                raise
+        return wrapped
 
     def set_commands(self):
         """Set up bot commands with descriptions."""
@@ -187,6 +197,20 @@ class TelegramBotWrapper:
             logger.error(f"Error in error handler: {str(e)}")
             logger.info("Will attempt automatic recovery")
 
+    def log_health_status(self):
+        """Log bot health status."""
+        if self.start_time:
+            uptime = datetime.now() - self.start_time
+            last_seen = datetime.now() - last_activity
+            logger.info(
+                f"Bot Health Status:\n"
+                f"Uptime: {uptime}\n"
+                f"Last Activity: {last_seen.seconds} seconds ago\n"
+                f"Retry Count: {self.retry_count}\n"
+                f"Connection Status: Active\n"
+                f"Memory Usage: Active" 
+            )
+
     def health_check(self):
         """Perform periodic health checks."""
         while not should_stop:
@@ -231,7 +255,7 @@ class TelegramBotWrapper:
 
                 logger.info("Starting bot polling with improved recovery...")
                 self.updater.start_polling(drop_pending_updates=True)
-                logger.info("Bot started successfully! Monitoring for issues...")
+                logger.info("Bot started successfully! Ready to process commands...")
 
                 # Reset retry count on successful connection
                 self.retry_count = 0
