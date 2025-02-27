@@ -27,6 +27,7 @@ from utils import (
 from services.youtube_service import get_youtube_link, format_youtube_response
 from app import app
 from services.youtube_downloader_service import download_youtube_video, cleanup_video
+from services.wikipedia_service import get_wikipedia_info # Added import
 
 logger = logging.getLogger(__name__)
 
@@ -739,6 +740,62 @@ def format_multiple_choice_options(options):
     return "\n".join(option_strings)
 
 
+def wiki_command(update: Update, context: CallbackContext):
+    """Handle the /wiki command."""
+    user_id = update.effective_user.id
+    try:
+        query = " ".join(context.args)
+        if not query:
+            logger.info(f"User {user_id} provided no name for wiki search")
+            update.message.reply_text(
+                "⚠️ Please provide a name to search!\n\n"
+                "Use this format: /wiki person name\n"
+                "For example: /wiki Adele\n\n"
+                "Give it a try! 🔍"
+            )
+            return
+
+        logger.info(f"User {user_id} requested Wikipedia info for '{query}'")
+
+        # Send typing action
+        update.message.chat.send_action(action="typing")
+
+        # First send a processing message
+        processing_msg = update.message.reply_text(
+            "🔄 Searching Wikipedia...\n"
+            "This will take just a moment! 📚"
+        )
+
+        wiki_info = get_wikipedia_info(query)
+        if not wiki_info:
+            processing_msg.edit_text(
+                "😕 Sorry, I couldn't find that person on Wikipedia.\n\n"
+                "Please try:\n"
+                "• Check the spelling of the name\n"
+                "• Use the full name\n"
+                "• Try a more specific search term\n\n"
+                "Example: /wiki Taylor Swift 🔍"
+            )
+            return
+
+        response = (
+            f"📚 {wiki_info['title']}\n\n"
+            f"{wiki_info['extract']}\n\n"
+            f"🔗 Read more: {wiki_info['link']}\n\n"
+            "Want to learn about someone else? Just use /wiki again! 🤓"
+        )
+
+        # Update the processing message with results
+        processing_msg.edit_text(response, disable_web_page_preview=True)
+        logger.info(f"Successfully sent Wikipedia info to user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error processing wiki command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Oops! Something went wrong while searching Wikipedia.\n"
+            "Please try again in a moment! 🔄"
+        )
+
 def main():
     """Initialize bot handlers and start the bot."""
     from telegram.ext import Updater, MessageHandler, Filters
@@ -761,6 +818,7 @@ def main():
     dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
     dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
     dp.add_handler(CommandHandler("download", download_command))
+    dp.add_handler(CommandHandler("wiki", wiki_command)) #added wiki handler
 
     # Add message handler for quiz answers
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
@@ -776,10 +834,11 @@ def main():
         BotCommand("endquiz", "End the current quiz game"),
         BotCommand("translate", "Get Arabic translation of lyrics 🌍 (format: artist - song)"),
         BotCommand("subscribe", "Subscribe to daily song discovery 🎶"),
-BotCommand("unsubscribe", "Unsubscribe from daily song discovery 👋"),
+        BotCommand("unsubscribe", "Unsubscribe from daily song discovery 👋"),
         BotCommand("youtube", "Get YouTube link for song 🎬 (format: artist - song)"),
         BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
         BotCommand("download", "Download YouTube video 🎬 (format: /download video_url)"),
+        BotCommand("wiki", "Get Wikipedia link for a person 📚 (format: /wiki person name)"), #added wiki command
     ]
 
     updater.bot.set_my_commands(commands)
