@@ -26,6 +26,7 @@ from utils import (
 )
 from services.youtube_service import get_youtube_link, format_youtube_response
 from app import app
+from services.youtube_downloader_service import download_youtube_video, cleanup_video
 
 logger = logging.getLogger(__name__)
 
@@ -616,6 +617,61 @@ def analyze_command(update: Update, context: CallbackContext):
         )
 
 
+def download_command(update: Update, context: CallbackContext):
+    """Handle the /download command."""
+    user_id = update.effective_user.id
+    try:
+        # Get URL from command arguments
+        if not context.args:
+            logger.info(f"User {user_id} provided no URL for download")
+            update.message.reply_text(
+                "⚠️ Please provide a YouTube video URL!\n\n"
+                "Use this format: /download video_url\n"
+                "For example: /download https://www.youtube.com/watch?v=example"
+            )
+            return
+
+        url = context.args[0]
+        logger.info(f"User {user_id} requested download of: {url}")
+
+        # Send processing message
+        processing_message = update.message.reply_text(
+            "🎬 Processing your download request...\n"
+            "This might take a moment! ⏳"
+        )
+
+        # Download video
+        success, result = download_youtube_video(url)
+
+        if success:
+            file_path, info_message = result
+
+            # Update processing message with file info
+            processing_message.edit_text(info_message)
+
+            # Send video file
+            with open(file_path, 'rb') as video_file:
+                update.message.reply_video(
+                    video_file,
+                    caption="🎉 Enjoy your video! /help for more commands",
+                    supports_streaming=True
+                )
+
+            # Cleanup
+            cleanup_video(file_path)
+
+        else:
+            # Update processing message with error
+            processing_message.edit_text(result)
+
+    except Exception as e:
+        logger.error(f"Error in download command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong with the download.\n"
+            "Please try again later! 🔄"
+        )
+
+
 def format_multiple_choice_options(options):
     """Helper function to format multiple choice options neatly."""
     option_strings = []
@@ -645,6 +701,7 @@ def main():
     dp.add_handler(CommandHandler("analyze", analyze_command))
     dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
     dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
+    dp.add_handler(CommandHandler("download", download_command))
 
     # Add message handler for quiz answers
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
@@ -663,6 +720,7 @@ def main():
         BotCommand("unsubscribe", "Unsubscribe from daily song discovery 👋"),
         BotCommand("youtube", "Get YouTube link for song 🎬 (format: artist - song)"),
         BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
+        BotCommand("download", "Download YouTube video 🎬 (format: /download video_url)"),
     ]
 
     updater.bot.set_my_commands(commands)

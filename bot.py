@@ -17,6 +17,7 @@ from handlers import (
     translate_lyrics_command,
     youtube_command,
     analyze_command,
+    download_command,
     subscribe_daily_command,
     unsubscribe_daily_command,
     send_daily_song
@@ -85,6 +86,7 @@ def main():
         dp.add_handler(CommandHandler("analyze", analyze_command))
         dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
         dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
+        dp.add_handler(CommandHandler("download", download_command))
         logger.info("Command handlers registered successfully")
 
         # Add message handler for quiz answers
@@ -117,7 +119,8 @@ def main():
             BotCommand("subscribe", "Get a daily song with analysis 📅"),
             BotCommand("unsubscribe", "Stop receiving daily songs 🔕"),
             BotCommand("youtube", "Get YouTube link for song 🎬 (format: artist - song)"),
-            BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)")
+            BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
+            BotCommand("download", "Download YouTube video 🎬 (format: /download video_url)")
         ]
         updater.bot.set_my_commands(commands)
         logger.info("Bot commands set successfully")
