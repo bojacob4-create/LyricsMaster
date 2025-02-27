@@ -54,7 +54,7 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
         video_id = extract_video_id(url)
         output_template = f'youtube_{video_id}.%(ext)s'
 
-        # Configure yt-dlp options
+        # Configure yt-dlp options for video download only
         ydl_opts = {
             'format': 'best[filesize<50M]',  # Best format under 50MB
             'noplaylist': True,  # Single video only
