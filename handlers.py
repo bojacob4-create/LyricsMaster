@@ -27,7 +27,7 @@ from utils import (
 )
 from services.youtube_service import get_youtube_link, format_youtube_response
 from services.youtube_downloader_service import download_youtube_video, cleanup_video
-from services.perplexity_service import get_person_info # Added import
+from services.ai_info_service import get_person_info # Changed import
 
 logger = logging.getLogger(__name__)
 
@@ -786,13 +786,10 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
             )
             return
 
-        # Format and send response with citations if available
-        citations = "\n\n📚 Sources:\n" +"\n".join(f"• {cite}" for cite in person_info['citations']) if person_info.get('citations') else ""
-
+        # Format and send response
         response = (
             f"✨ *{person_info['title']}*\n\n"
-            f"{person_info['info']}"
-            f"{citations}\n\n"
+            f"{person_info['info']}\n\n"
             "Want to learn about someone else? Just use /wiki again! 🤓"
         )
 
