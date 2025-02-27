@@ -49,7 +49,8 @@ def start_command(update: Update, context: CallbackContext):
         "🎬 */youtube* - Find song on YouTube\n"
         "📥 */download* - Download YouTube videos\n"
         "📈 */analyze* - Get deep song analysis\n"
-        "🔔 */subscribe* - Get daily song discoveries\n\n"
+        "🔔 */subscribe* - Get daily song discoveries\n"
+        "📚 */wiki* - Get Wikipedia info about artists\n\n"
         "*Quick Start:*\n"
         "Try */lyrics Ed Sheeran - Perfect* to see the magic! ✨\n\n"
         "Need help? Just type */help* for more details! 💫"
@@ -98,6 +99,10 @@ def help_command(update: Update, context: CallbackContext):
         "   Find song on YouTube\n"
         "▫️ */download video_url*\n"
         "   Download YouTube videos\n\n"
+        "*Information:*\n"
+        "▫️ */wiki person_name*\n"
+        "   Get Wikipedia information\n"
+        "   Example: */wiki Taylor Swift*\n\n"
         "*Daily Updates:*\n"
         "▫️ */subscribe* - Get daily song picks\n"
         "▫️ */unsubscribe* - Stop daily updates\n\n"
@@ -782,7 +787,7 @@ def wiki_command(update: Update, context: CallbackContext):
             f"📚 {wiki_info['title']}\n\n"
             f"{wiki_info['extract']}\n\n"
             f"🔗 Read more: {wiki_info['link']}\n\n"
-            "Want to learn about someone else? Just use /wiki again! 🤓"
+            "Want to learn about someone else?Just use /wiki again! 🤓"
         )
 
         # Update the processing message with results
@@ -803,6 +808,7 @@ def wiki_command(update: Update, context: CallbackContext):
                     processing_msg.edit_text(error_message)
                 except Exception:
                     pass
+
 
 def main():
     """Initialize bot handlers and start the bot."""
@@ -826,19 +832,19 @@ def main():
     dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
     dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
     dp.add_handler(CommandHandler("download", download_command))
-    dp.add_handler(CommandHandler("wiki", wiki_command)) #added wiki handler
+    dp.add_handler(CommandHandler("wiki", wiki_command))
 
     # Add message handler for quiz answers
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
 
-    # Set command list
+    # Register commands in the menu
     commands = [
-        BotCommand("start", "Start the bot"),
-        BotCommand("help", "Get help and instructions"),
-        BotCommand("lyrics", "Get song lyrics with mood analysis 🎤 (format: artist - song)"),
-        BotCommand("stats", "Get detailed song statistics 📊 (format: artist - song)"),
+        BotCommand("start", "Start the bot 👋"),
+        BotCommand("help", "Show all commands and how to use them ℹ️"),
+        BotCommand("lyrics", "Get song lyrics 🎵 (format: artist - song)"),
+        BotCommand("stats", "Get song statistics 📊 (format: artist - song)"),
         BotCommand("recommend", "Get song recommendations 🎵 (format: artist - song)"),
-        BotCommand("quiz", "Play a fun lyrics guessing game 🎮"),
+        BotCommand("quiz", "Start a lyrics quiz game 🎮"),
         BotCommand("endquiz", "End the current quiz game"),
         BotCommand("translate", "Get Arabic translation of lyrics 🌍 (format: artist - song)"),
         BotCommand("subscribe", "Subscribe to daily song discovery 🎶"),
@@ -846,7 +852,7 @@ def main():
         BotCommand("youtube", "Get YouTube link for song 🎬 (format: artist - song)"),
         BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
         BotCommand("download", "Download YouTube video 🎬 (format: /download video_url)"),
-        BotCommand("wiki", "Get Wikipedia link for a person 📚 (format: /wiki person name)"), #added wiki command
+        BotCommand("wiki", "Get Wikipedia info about artists 📚 (format: /wiki name)")
     ]
 
     updater.bot.set_my_commands(commands)
