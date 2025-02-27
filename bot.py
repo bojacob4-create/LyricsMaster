@@ -40,7 +40,7 @@ from services.daily_song_service import send_daily_song
 # Configure logging with more detail
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG
+    level=logging.DEBUG  # Set to DEBUG for more detailed logs
 )
 logger = logging.getLogger(__name__)
 
@@ -81,20 +81,20 @@ class TelegramBotWrapper:
                 f"Uptime: {uptime}\n"
                 f"Last Activity: {last_seen.seconds} seconds ago\n"
                 f"Retry Count: {self.retry_count}\n"
-                f"Connection Status: Active\n"
-                f"Memory Usage: Active" 
+                f"Connection Status: Active"
             )
 
     def setup_bot(self):
         """Set up the bot with handlers and commands."""
         try:
-            # Initialize with higher timeouts for better stability
             self.updater = Updater(
                 token=self.token,
                 use_context=True,
                 request_kwargs={
-                    'read_timeout': 60,
-                    'connect_timeout': 60
+                    'read_timeout': 30,
+                    'connect_timeout': 30,
+                    'pool_timeout': 3.0,
+                    'connect_retries': 3,
                 }
             )
             dp = self.updater.dispatcher
@@ -163,17 +163,14 @@ class TelegramBotWrapper:
         """Handle errors with retry logic."""
         try:
             if isinstance(context.error, NetworkError):
-                logger.warning(f"Network error occurred: {str(context.error)}")
-                logger.info("Connection recovery will be attempted automatically")
+                logger.warning("Network error occurred, will retry connection")
                 raise context.error
             elif isinstance(context.error, TimedOut):
-                logger.warning(f"Request timed out: {str(context.error)}")
-                logger.info("Timeout recovery will be attempted automatically")
+                logger.warning("Request timed out, will retry")
                 raise context.error
             elif isinstance(context.error, RetryAfter):
-                retry_after = context.error.retry_after
-                logger.warning(f"Rate limit hit - Need to retry after {retry_after} seconds")
-                time.sleep(retry_after)
+                logger.warning(f"Need to retry after {context.error.retry_after} seconds")
+                time.sleep(context.error.retry_after)
                 return
             else:
                 logger.error(f"Update {update} caused error: {context.error}", exc_info=True)
@@ -181,42 +178,30 @@ class TelegramBotWrapper:
             if update and update.effective_message:
                 update.effective_message.reply_text(
                     "😓 Oops! Something went wrong.\n"
-                    "Don't worry, I'll try to reconnect automatically! 🔄"
+                    "Please try again in a moment! 🔄"
                 )
         except Exception as e:
             logger.error(f"Error in error handler: {str(e)}")
-            logger.info("Will attempt automatic recovery")
 
     def health_check(self):
         """Perform periodic health checks."""
         while not should_stop:
-            try:
-                time.sleep(self.health_check_interval)
-                self.log_health_status()
+            time.sleep(self.health_check_interval)
+            self.log_health_status()
 
-                # Check for long periods of inactivity
-                if (datetime.now() - last_activity).seconds > 3600:  # 1 hour
-                    logger.warning("No activity detected for over an hour, checking connection...")
-                    try:
-                        # Test the connection by getting bot info
-                        bot_info = self.updater.bot.get_me()
-                        logger.info(f"Connection test successful - Bot ID: {bot_info.id}")
-                        logger.info("All systems operational")
-                    except NetworkError as ne:
-                        logger.error(f"Network connectivity issue: {str(ne)}")
-                        return False
-                    except Exception as e:
-                        logger.error(f"Connection test failed: {str(e)}")
-                        return False
+            # Check for long periods of inactivity
+            if (datetime.now() - last_activity).seconds > 3600:  # 1 hour
+                logger.warning("No activity detected for over an hour, checking connection...")
+                try:
+                    # Test the connection by getting bot info
+                    self.updater.bot.get_me()
+                    logger.info("Connection test successful")
+                except Exception as e:
+                    logger.error(f"Connection test failed: {str(e)}")
+                    return False
 
-                if should_stop:
-                    logger.info("Health check stopping due to shutdown signal")
-                    break
-
-            except Exception as e:
-                logger.error(f"Error in health check: {str(e)}")
-                logger.info("Will continue monitoring in next interval")
-                continue
+            if should_stop:
+                break
 
         return True
 
@@ -226,12 +211,11 @@ class TelegramBotWrapper:
         while not should_stop:
             try:
                 if not self.setup_bot():
-                    logger.error("Bot setup failed, will retry...")
                     raise Exception("Bot setup failed")
 
-                logger.info("Starting bot polling with improved recovery...")
+                logger.info("Starting bot polling...")
                 self.updater.start_polling(drop_pending_updates=True)
-                logger.info("Bot started successfully! Monitoring for issues...")
+                logger.info("Bot started successfully!")
 
                 # Reset retry count on successful connection
                 self.retry_count = 0
@@ -242,14 +226,13 @@ class TelegramBotWrapper:
                 health_thread = threading.Thread(target=self.health_check)
                 health_thread.daemon = True
                 health_thread.start()
-                logger.info("Health monitoring thread started")
 
                 # Keep the bot running
                 self.updater.idle()
 
                 # If we get here, idle() was interrupted
                 if should_stop:
-                    logger.info("Received stop signal, shutting down gracefully...")
+                    logger.info("Stopping bot gracefully...")
                     self.updater.stop()
                     break
 
@@ -260,8 +243,8 @@ class TelegramBotWrapper:
                 self.retry_count += 1
                 delay = min(self.base_delay * (2 ** self.retry_count), self.max_delay)
 
-                logger.error(f"Bot crashed with error: {str(e)}", exc_info=True)
-                logger.info(f"Attempting to restart in {delay} seconds... (Attempt {self.retry_count}/{self.max_retries})")
+                logger.error(f"Bot crashed: {str(e)}", exc_info=True)
+                logger.info(f"Attempting to restart in {delay} seconds... (Attempt {self.retry_count})")
 
                 if self.retry_count > self.max_retries:
                     logger.critical("Maximum retry attempts reached. Bot is shutting down.")

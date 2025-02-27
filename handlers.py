@@ -783,7 +783,7 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
             )
             return
 
-        # Format response
+        # Format and send response
         response = (
             f"✨ *{person_info['title']}*\n\n"
             f"{person_info['info']}\n\n"
@@ -797,14 +797,14 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
                 parse_mode='Markdown',
                 disable_web_page_preview=True
             )
-            logger.info(f"Successfully sent artist info to user {user_id}")
         except TelegramError:
             # If markdown fails, send without formatting
             processing_msg.edit_text(
                 response.replace('*', ''),
                 disable_web_page_preview=True
             )
-            logger.info(f"Sent artist info without markdown to user {user_id}")
+
+        logger.info(f"Successfully sent artist info to user {user_id}")
 
     except TelegramError as e:
         logger.error(f"Telegram error for user {user_id}: {str(e)}")
@@ -845,9 +845,9 @@ def main():
         dp.add_handler(CommandHandler("translate", translate_lyrics_command))
         dp.add_handler(CommandHandler("youtube", youtube_command))
         dp.add_handler(CommandHandler("analyze", analyze_command))
-        dp.add_handler(CommandHandler("download", download_command))
         dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
         dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
+        dp.add_handler(CommandHandler("download", download_command))
         dp.add_handler(CommandHandler("wiki", wiki_command))
 
         # Add message handler for quiz answers
@@ -863,23 +863,22 @@ def main():
             BotCommand("quiz", "Start a lyrics quiz game 🎮"),
             BotCommand("endquiz", "End the current quiz game"),
             BotCommand("translate", "Get Arabic translation of lyrics 🌍 (format: artist - song)"),
+            BotCommand("subscribe", "Subscribe to daily song discovery 🎶"),
+            BotCommand("unsubscribe", "Unsubscribe from daily song discovery 👋"),
             BotCommand("youtube", "Get YouTube link for song 🎬 (format: artist - song)"),
             BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
             BotCommand("download", "Download YouTube video 🎬 (format: /download video_url)"),
-            BotCommand("subscribe", "Subscribe to daily song discovery 🎶"),
-            BotCommand("unsubscribe", "Unsubscribe from daily song discovery 👋"),
             BotCommand("wiki", "Get Wikipedia info about artists 📚 (format: /wiki name)")
         ]
 
         updater.bot.set_my_commands(commands)
 
         # Start the bot
-        logger.info("Starting bot polling...")
         updater.start_polling()
-        updater.idle()
+        logger.info("Bot started successfully")
 
     except Exception as e:
-        logger.error(f"Error in main function: {str(e)}", exc_info=True)
+        logger.error(f"Error starting bot: {str(e)}", exc_info=True)
 
 if __name__ == "__main__":
     main()
