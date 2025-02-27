@@ -33,45 +33,42 @@ logger = logging.getLogger(__name__)
 
 def start_command(update: Update, context: CallbackContext):
     """Send a message when the command /start is issued."""
+    logger.info(f"User {update.effective_user.id} started the bot")
+
+    user_first_name = update.effective_user.first_name
+    welcome_message = (
+        f"🎵 *Welcome to Your Musical Companion, {user_first_name}!* 🎸\n\n"
+        "I'm your personal music assistant, ready to help you discover and enjoy music in new ways! ✨\n\n"
+        "*Here's what I can do for you:*\n\n"
+        "🎤 */lyrics* - Get song lyrics with mood analysis\n"
+        "📊 */stats* - See detailed song statistics\n"
+        "🎵 */recommend* - Discover similar songs\n"
+        "🎮 */quiz* - Play a fun lyrics quiz\n"
+        "🌍 */translate* - Get Arabic lyrics translation\n"
+        "🎬 */youtube* - Find song on YouTube\n"
+        "📥 */download* - Download YouTube videos\n"
+        "📈 */analyze* - Get deep song analysis\n"
+        "🔔 */subscribe* - Get daily song discoveries\n"
+        "📚 */wiki* - Get Wikipedia info about artists\n\n"
+        "*Quick Start:*\n"
+        "Try */lyrics Ed Sheeran - Perfect* to see the magic! ✨\n\n"
+        "Need help? Just type */help* for more details! 💫"
+    )
+
     try:
-        user_id = update.effective_user.id
-        logger.info(f"Received /start command from user {user_id}")
-
-        user_first_name = update.effective_user.first_name
-        welcome_message = (
-            f"🎵 *Welcome to Your Musical Companion, {user_first_name}!* 🎸\n\n"
-            "I'm your personal music assistant, ready to help you discover and enjoy music in new ways! ✨\n\n"
-            "*Here's what I can do for you:*\n\n"
-            "🎤 */lyrics* - Get song lyrics with mood analysis\n"
-            "📊 */stats* - See detailed song statistics\n"
-            "🎵 */recommend* - Discover similar songs\n"
-            "🎮 */quiz* - Play a fun lyrics quiz\n"
-            "🌍 */translate* - Get Arabic lyrics translation\n"
-            "🎬 */youtube* - Find song on YouTube\n"
-            "📥 */download* - Download YouTube videos\n"
-            "📈 */analyze* - Get deep song analysis\n"
-            "🔔 */subscribe* - Get daily song discoveries\n"
-            "📚 */wiki* - Get Wikipedia info about artists\n\n"
-            "*Quick Start:*\n"
-            "Try */lyrics Ed Sheeran - Perfect* to see the magic! ✨\n\n"
-            "Need help? Just type */help* for more details! 💫"
-        )
-
-        logger.info(f"Sending welcome message to user {user_id}")
         update.message.reply_text(
             welcome_message,
             parse_mode='Markdown',
             disable_web_page_preview=True
         )
-        logger.info(f"Welcome message sent successfully to user {user_id}")
-
     except Exception as e:
-        logger.error(f"Error in start command: {str(e)}", exc_info=True)
+        logger.error(f"Error in start command: {str(e)}")
         # Fallback to plain text if markdown fails
         update.message.reply_text(
             welcome_message.replace('*', ''),
             disable_web_page_preview=True
         )
+
 
 
 def help_command(update: Update, context: CallbackContext):
@@ -788,7 +785,7 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
 
         # Format and send response
         response = (
-            f"✨ *{person_info['title']*\n\n"
+            f"✨ *{person_info['title']}*\n\n"
             f"{person_info['info']}\n\n"
             "Want to discover another artist? Just use /wiki again! 🎵"
         )
@@ -825,7 +822,6 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
             processing_msg.edit_text(error_message)
         else:
             update.message.reply_text(error_message)
-
 
 def main():
     """Initialize bot handlers and start the bot."""
@@ -883,7 +879,6 @@ def main():
 
     except Exception as e:
         logger.error(f"Error starting bot: {str(e)}", exc_info=True)
-
 
 if __name__ == "__main__":
     main()

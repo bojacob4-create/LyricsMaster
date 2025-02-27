@@ -11,7 +11,6 @@ dependencies = [
     "googletrans-py>=4.0.0",
     "gunicorn>=23.0.0",
     "lyricsgenius>=3.2.0",
-    "psutil>=7.0.0",
     "psycopg2-binary>=2.9.10",
     "pylast>=5.3.0",
     "python-telegram-bot==13.7",
@@ -22,6 +21,5 @@ dependencies = [
     "sqlalchemy>=2.0.38",
     "telegram>=0.0.1",
     "trafilatura>=2.0.0",
-    "twilio>=9.4.6",
     "yt-dlp>=2025.2.19",
 ]
