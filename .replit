@@ -4,8 +4,9 @@ modules = ["python-3.11", "python3"]
 channel = "stable-24_05"
 
 [deployment]
-deploymentTarget = "autoscale"
+deploymentTarget = "gce"
 run = ["gunicorn", "--bind", "0.0.0.0:5000", "main:app"]
+ignorePorts = true
 
 [workflows]
 runButton = "Project"
