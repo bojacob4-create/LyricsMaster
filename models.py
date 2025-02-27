@@ -1,4 +1,2 @@
-from app import db
-from datetime import datetime
-
-# Previous Favorite model removed to resolve deployment issues
+# This file is kept empty intentionally
+# Database functionality has been removed to resolve deployment issues
