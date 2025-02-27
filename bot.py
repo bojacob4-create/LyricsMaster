@@ -34,7 +34,7 @@ from handlers import (
     unsubscribe_daily_command,
     download_command,
     wiki_command,
-    download_music_command
+    mp3_command  # Changed from download_music_command
 )
 from services.daily_song_service import send_daily_song
 
@@ -95,52 +95,52 @@ class TelegramBotWrapper:
                 use_context=True,
                 request_kwargs={
                     'read_timeout': 60,
-                    'connect_timeout': 60
+                    'connect_timeout': 60,
                 }
             )
+
+            # Get dispatcher to register handlers
             dp = self.updater.dispatcher
+            logger.info("Setting up command handlers...")
 
             # Register command handlers
-            dp.add_handler(CommandHandler("start", start_command))
-            dp.add_handler(CommandHandler("help", help_command))
-            dp.add_handler(CommandHandler("lyrics", lyrics_command))
-            dp.add_handler(CommandHandler("stats", stats_command))
-            dp.add_handler(CommandHandler("recommend", recommend_command))
-            dp.add_handler(CommandHandler("quiz", quiz_command))
-            dp.add_handler(CommandHandler("endquiz", end_quiz_command))
-            dp.add_handler(CommandHandler("translate", translate_lyrics_command))
-            dp.add_handler(CommandHandler("youtube", youtube_command))
-            dp.add_handler(CommandHandler("analyze", analyze_command))
-            dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
-            dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
-            dp.add_handler(CommandHandler("download", download_command))
-            dp.add_handler(CommandHandler("wiki", wiki_command))
-            dp.add_handler(CommandHandler("download_music", download_music_command))
+            commands = {
+                'start': start_command,
+                'help': help_command,
+                'lyrics': lyrics_command,
+                'stats': stats_command,
+                'recommend': recommend_command,
+                'quiz': quiz_command,
+                'endquiz': end_quiz_command,
+                'translate': translate_lyrics_command,
+                'youtube': youtube_command,
+                'analyze': analyze_command,
+                'subscribe': subscribe_daily_command,
+                'unsubscribe': unsubscribe_daily_command,
+                'download': download_command,
+                'wiki': wiki_command,
+                'mp3': mp3_command
+            }
+
+            # Add handlers and log each addition
+            for cmd, handler in commands.items():
+                dp.add_handler(CommandHandler(cmd, handler))
+                logger.info(f"Registered command handler: /{cmd}")
 
             # Add message handler for quiz answers with activity tracking
             def wrapped_quiz_answer(update: Update, context: CallbackContext):
                 update_activity()
                 return quiz_answer(update, context)
+
             dp.add_handler(MessageHandler(Filters.text & ~Filters.command, wrapped_quiz_answer))
+            logger.info("Registered quiz answer handler")
 
             # Add error handler
             dp.add_error_handler(self.error_handler)
+            logger.info("Registered error handler")
 
-            # Set commands list
-            self.set_commands()
-
-            logger.info("Bot setup completed successfully")
-            self.start_time = datetime.now()
-            return True
-
-        except Exception as e:
-            logger.error(f"Error in bot setup: {str(e)}", exc_info=True)
-            return False
-
-    def set_commands(self):
-        """Set up bot commands with descriptions."""
-        try:
-            commands = [
+            # Set up command list
+            bot_commands = [
                 BotCommand("start", "Begin your musical journey 🎵"),
                 BotCommand("help", "Get detailed help and tips 💡"),
                 BotCommand("lyrics", "Get song lyrics with mood analysis 🎤"),
@@ -155,12 +155,20 @@ class TelegramBotWrapper:
                 BotCommand("subscribe", "Get daily song discoveries 📅"),
                 BotCommand("unsubscribe", "Stop daily song updates 🔕"),
                 BotCommand("wiki", "Get Wikipedia info about artists 📚"),
-                BotCommand("download_music", "Download songs as MP3 🎵")
+                BotCommand("mp3", "Download songs as MP3 🎵")
             ]
-            self.updater.bot.set_my_commands(commands)
+
+            # Set bot commands
+            self.updater.bot.set_my_commands(bot_commands)
             logger.info("Successfully set bot commands")
+
+            logger.info("Bot setup completed successfully")
+            self.start_time = datetime.now()
+            return True
+
         except Exception as e:
-            logger.error(f"Failed to set bot commands: {str(e)}")
+            logger.error(f"Error in bot setup: {str(e)}", exc_info=True)
+            return False
 
     def error_handler(self, update: Update, context: CallbackContext):
         """Handle errors with retry logic."""

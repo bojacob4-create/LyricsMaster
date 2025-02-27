@@ -50,7 +50,8 @@ def start_command(update: Update, context: CallbackContext):
         "📥 */download* - Download YouTube videos\n"
         "📈 */analyze* - Get deep song analysis\n"
         "🔔 */subscribe* - Get daily song discoveries\n"
-        "📚 */wiki* - Get Wikipedia info about artists\n\n"
+        "📚 */wiki* - Get Wikipedia info about artists\n"
+        "🎵 */mp3* - Download songs as MP3\n\n"
         "*Quick Start:*\n"
         "Try */lyrics Ed Sheeran - Perfect* to see the magic! ✨\n\n"
         "Need help? Just type */help* for more details! 💫"
@@ -100,7 +101,7 @@ def help_command(update: Update, context: CallbackContext):
         "   Find song on YouTube\n"
         "▫️ */download video_url*\n"
         "   Download YouTube videos\n"
-        "▫️ */download_music artist - song*\n"
+        "▫️ */mp3 artist - song*\n"
         "   Download music (max 10 mins)\n\n"
         "*Information:*\n"
         "▫️ */wiki person_name*\n"
@@ -129,7 +130,6 @@ def help_command(update: Update, context: CallbackContext):
             help_text.replace('*', '').replace('▫️', '•'),
             disable_web_page_preview=True
         )
-
 
 
 def quiz_command(update: Update, context: CallbackContext):
@@ -827,16 +827,16 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
             update.message.reply_text(error_message)
 
 
-def download_music_command(update: Update, context: CallbackContext):
-    """Handle the /download_music command."""
+def mp3_command(update: Update, context: CallbackContext):
+    """Handle the /mp3 command."""
     user_id = update.effective_user.id
     try:
         query = " ".join(context.args)
         if not query or "-" not in query:
             logger.info(f"User {user_id} provided invalid music download query format")
             update.message.reply_text(
-                "⚠️ Please use this format: /download_music artist - song\n"
-                "For example: /download_music Ed Sheeran - Perfect\n\n"
+                "⚠️ Please use: /mp3 artist - song\n"
+                "Example: /mp3 Ed Sheeran - Perfect\n\n"
                 "Note: Maximum song length is 10 minutes! 🎵"
             )
             return
@@ -860,7 +860,7 @@ def download_music_command(update: Update, context: CallbackContext):
                 "• The spelling of artist and song\n"
                 "• Try the official song title\n"
                 "• Make sure the song isn't too long (max 10 min)\n\n"
-                "Example: /download_music Ed Sheeran - Perfect 🎵"
+                "Example: /mp3 Ed Sheeran - Perfect 🎵"
             )
             return
 
@@ -883,7 +883,7 @@ def download_music_command(update: Update, context: CallbackContext):
         logger.info(f"Successfully sent music to user {user_id}")
 
     except Exception as e:
-        logger.error(f"Error in download_music command for user {user_id}: {str(e)}")
+        logger.error(f"Error in mp3 command for user {user_id}: {str(e)}")
         update.message.reply_text(
             "😓 Something went wrong with the download.\n"
             "Please try again later! 🔄"
@@ -916,7 +916,7 @@ def main():
         dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
         dp.add_handler(CommandHandler("download", download_command))
         dp.add_handler(CommandHandler("wiki", wiki_command))
-        dp.add_handler(CommandHandler("download_music", download_music_command))
+        dp.add_handler(CommandHandler("mp3", mp3_command))
 
         # Add message handler for quiz answers
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
@@ -937,7 +937,7 @@ def main():
             BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
             BotCommand("download", "Download YouTube video 🎬 (format: /download video_url)"),
             BotCommand("wiki", "Get Wikipedia info about artists 📚 (format: /wiki name)"),
-            BotCommand("download_music", "Download music 🎵 (format: artist - song)")
+            BotCommand("mp3", "Download music 🎵 (format: artist - song)")
         ]
 
         updater.bot.set_my_commands(commands)

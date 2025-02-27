@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 import tempfile
 from typing import Optional, Tuple
 from yt_dlp import YoutubeDL
@@ -10,11 +11,11 @@ logger = logging.getLogger(__name__)
 def download_music(artist: str, song: str) -> Optional[Tuple[str, str]]:
     """
     Download a song from YouTube and convert it to MP3.
-    
+
     Args:
         artist (str): Artist name
         song (str): Song title
-        
+
     Returns:
         Optional[Tuple[str, str]]: Tuple of (file_path, info_message) if successful, None otherwise
     """
@@ -78,9 +79,9 @@ def download_music(artist: str, song: str) -> Optional[Tuple[str, str]]:
                     original_path = os.path.join(temp_dir, mp3_files[0])
                     new_filename = f"{artist}_{song}_{int(time.time())}.mp3".replace(" ", "_")
                     new_path = os.path.join(tempfile.gettempdir(), new_filename)
-                    
+
                     os.rename(original_path, new_path)
-                    
+
                     info_message = (
                         f"🎵 Found: {video_info.get('title', 'Unknown Title')}\n"
                         f"⏱ Duration: {duration // 60}:{duration % 60:02d}\n"
