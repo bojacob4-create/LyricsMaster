@@ -170,19 +170,19 @@ class TelegramBotWrapper:
             logger.error(f"Failed to set bot commands: {str(e)}")
 
     def error_handler(self, update: Update, context: CallbackContext):
-        """Handle errors with retry logic."""
+        """Handle errors with enhanced logging."""
         try:
             if isinstance(context.error, NetworkError):
-                logger.warning(f"Network error occurred: {str(context.error)}")
-                logger.info("Connection recovery will be attempted automatically")
+                logger.error(f"Network error occurred: {str(context.error)}", exc_info=True)
+                logger.info("Attempting connection recovery...")
                 raise context.error
             elif isinstance(context.error, TimedOut):
-                logger.warning(f"Request timed out: {str(context.error)}")
-                logger.info("Timeout recovery will be attempted automatically")
+                logger.error(f"Request timed out: {str(context.error)}", exc_info=True)
+                logger.info("Attempting timeout recovery...")
                 raise context.error
             elif isinstance(context.error, RetryAfter):
                 retry_after = context.error.retry_after
-                logger.warning(f"Rate limit hit - Need to retry after {retry_after} seconds")
+                logger.warning(f"Rate limit hit. Waiting {retry_after} seconds before retry.")
                 time.sleep(retry_after)
                 return
             else:
@@ -194,7 +194,7 @@ class TelegramBotWrapper:
                     "Don't worry, I'll try to reconnect automatically! 🔄"
                 )
         except Exception as e:
-            logger.error(f"Error in error handler: {str(e)}")
+            logger.error(f"Error in error handler: {str(e)}", exc_info=True)
             logger.info("Will attempt automatic recovery")
 
     def log_health_status(self):
