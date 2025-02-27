@@ -31,18 +31,20 @@ def get_song_statistics(lyrics: str) -> Dict:
                 'dont', 'cant', 'wont', 'aint', 'youre', 'youve', 'youll',
                 'thats', 'wasnt', 'hadnt', 'hasnt', 'havent', 'didnt', 'isnt'}
 
+    # First, get the line count from the original lyrics
+    lines = [line.strip() for line in lyrics.split('\n') if line.strip()]
+    line_count = len(lines)
+
+    # Then process the lyrics for word analysis
     lyrics_clean = lyrics.lower()
-    # Remove section markers but preserve apostrophes in contractions
+    # Remove section markers but preserve line breaks
     lyrics_clean = re.sub(r'\[.*?\]', '', lyrics_clean)
-    # Replace multiple spaces with single space
-    lyrics_clean = re.sub(r'\s+', ' ', lyrics_clean)
     # Special handling for contractions - preserve apostrophes in known contractions
     lyrics_clean = re.sub(r"'(?!(ve|re|ll|s|m|d|t)\\b)", " ", lyrics_clean)
     # Remove other punctuation except apostrophes
     lyrics_clean = re.sub(r'[^\w\s\']', ' ', lyrics_clean)
-
-    lines = [line.strip() for line in lyrics_clean.split('\n') if line.strip()]
-    line_count = len(lines)
+    # Replace multiple spaces with single space
+    lyrics_clean = re.sub(r'\s+', ' ', lyrics_clean)
 
     # Get all words, keeping contractions intact
     words = re.findall(r"\b[a-z']+\b", lyrics_clean)
