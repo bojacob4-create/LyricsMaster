@@ -35,7 +35,6 @@ from handlers import (
     download_command,
     wiki_command
 )
-from services.daily_song_service import send_daily_song
 
 # Configure logging
 logging.basicConfig(
@@ -44,27 +43,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Global flags
-should_stop = False
-last_activity = datetime.now()
-
-def signal_handler(signum, frame):
-    """Handle shutdown signals gracefully."""
-    global should_stop
-    logger.info("Received shutdown signal, initiating graceful shutdown...")
-    should_stop = True
-
 class TelegramBotWrapper:
     def __init__(self, token):
         self.token = token
         self.updater = None
         self.retry_count = 0
-        self.max_retries = 10
+        self.max_retries = 5
         self.base_delay = 1
-        self.max_delay = 300
+        self.max_delay = 60
         self.last_restart = datetime.now()
         self.RESTART_AFTER = timedelta(hours=12)
-        self.CHECK_INTERVAL = 1800  # 30 minutes
+        self.is_running = False
 
     def setup_bot(self):
         """Set up the bot with error handling."""
@@ -73,8 +62,8 @@ class TelegramBotWrapper:
                 token=self.token,
                 use_context=True,
                 request_kwargs={
-                    'read_timeout': 60,
-                    'connect_timeout': 60
+                    'read_timeout': 30,
+                    'connect_timeout': 30
                 }
             )
             dp = self.updater.dispatcher
@@ -115,6 +104,9 @@ class TelegramBotWrapper:
                 BotCommand("wiki", "Get Wikipedia info about artists 📚")
             ]
             self.updater.bot.set_my_commands(commands)
+
+            logger.info("Bot initialization completed successfully")
+            print("Bot initialization completed successfully")  # Explicit stdout message
             return True
 
         except Exception as e:
@@ -146,100 +138,63 @@ class TelegramBotWrapper:
         except Exception as e:
             logger.error(f"Error in error handler: {str(e)}")
 
-    def check_connection(self):
-        """Check bot connection status."""
-        try:
-            self.updater.bot.get_me()
-            logger.info("Connection check: OK")
-            return True
-        except Exception as e:
-            logger.error(f"Connection check failed: {str(e)}")
-            return False
-
-    def health_check(self):
-        """Simple periodic health check."""
-        while not should_stop:
-            try:
-                time.sleep(self.CHECK_INTERVAL)
-
-                # Check if we need to restart
-                if datetime.now() - self.last_restart > self.RESTART_AFTER:
-                    logger.info("Performing scheduled restart...")
-                    self.updater.stop()
-                    self.setup_bot()
-                    self.updater.start_polling()
-                    self.last_restart = datetime.now()
-                    continue
-
-                # Check connection
-                if not self.check_connection():
-                    logger.warning("Connection lost, attempting to reconnect...")
-                    return False
-
-            except Exception as e:
-                logger.error(f"Health check error: {str(e)}")
-                return False
-
-        return True
-
     def start(self):
         """Start the bot with recovery."""
-        while not should_stop:
+        while True:
             try:
                 if not self.setup_bot():
                     raise Exception("Bot setup failed")
 
                 logger.info("Starting bot...")
                 self.updater.start_polling(drop_pending_updates=True)
+                self.is_running = True
                 self.retry_count = 0
                 self.last_restart = datetime.now()
 
-                # Start health check
-                import threading
-                health_thread = threading.Thread(target=self.health_check)
-                health_thread.daemon = True
-                health_thread.start()
+                # Signal that the bot is ready
+                logger.info("Bot started successfully")
+                print("Bot started successfully")  # Explicit stdout message
 
                 self.updater.idle()
 
-                if should_stop:
-                    logger.info("Shutting down...")
+            except KeyboardInterrupt:
+                logger.info("Received shutdown signal, stopping...")
+                if self.updater:
                     self.updater.stop()
-                    break
+                break
 
             except Exception as e:
-                if should_stop:
-                    break
-
+                self.is_running = False
                 self.retry_count += 1
                 delay = min(self.base_delay * (2 ** self.retry_count), self.max_delay)
 
-                logger.error(f"Bot crashed: {str(e)}")
+                logger.error(f"Bot error: {str(e)}")
                 logger.info(f"Retrying in {delay} seconds... (Attempt {self.retry_count}/{self.max_retries})")
 
                 if self.retry_count > self.max_retries:
-                    self.retry_count = 0
-                    time.sleep(60)  # Wait a minute before starting fresh
-                    continue
+                    logger.error("Maximum retry attempts reached")
+                    break
 
                 time.sleep(delay)
 
 def main():
     try:
+        # Check for required token
         token = os.environ.get("TELEGRAM_TOKEN")
         if not token:
             logger.error("TELEGRAM_TOKEN not found!")
             raise ValueError("TELEGRAM_TOKEN environment variable not set")
 
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
+        # Set up signal handlers
+        signal.signal(signal.SIGTERM, lambda signo, frame: sys.exit(0))
+        signal.signal(signal.SIGINT, lambda signo, frame: sys.exit(0))
 
-        logger.info("Starting bot with automatic recovery...")
+        logger.info("Starting bot process...")
         bot = TelegramBotWrapper(token)
         bot.start()
 
     except Exception as e:
-        logger.critical(f"Critical error: {str(e)}")
+        logger.critical(f"Fatal error: {str(e)}")
         sys.exit(1)
 
 if __name__ == '__main__':

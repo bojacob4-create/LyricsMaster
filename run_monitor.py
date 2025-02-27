@@ -5,6 +5,7 @@ import logging
 import signal
 import subprocess
 import psutil
+from datetime import datetime, timedelta
 
 # Configure logging
 logging.basicConfig(
@@ -17,85 +18,123 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Globals
-should_stop = False
+# Constants
+CHECK_INTERVAL = 5  # Check every 5 seconds
+MAX_RESTART_DELAY = 30  # Maximum delay between restarts
 
-def handle_signal(signum, frame):
-    """Handle termination signals."""
-    global should_stop
-    sig_name = signal.Signals(signum).name
-    logger.info(f"Received signal {sig_name}")
-    should_stop = True
-
-def get_monitor_process():
-    """Get the run_bot.py monitor process if it's running."""
-    try:
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-            try:
-                cmdline = proc.info['cmdline']
-                if cmdline and len(cmdline) >= 2 and 'python' in cmdline[0] and 'run_bot.py' in cmdline[1]:
-                    logger.debug(f"Found monitor process: PID={proc.pid}")
+def get_process_info(name):
+    """Get process info for the given script name."""
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            if proc.info['cmdline'] and len(proc.info['cmdline']) >= 2:
+                if 'python' in proc.info['cmdline'][0] and name in proc.info['cmdline'][1]:
                     return proc
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                continue
-    except Exception as e:
-        logger.error(f"Error getting monitor process: {str(e)}")
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
     return None
 
-def kill_process_tree(pid):
+def kill_process_tree(proc):
     """Kill a process and all its children."""
+    if not proc:
+        return
+
+    logger.info(f"Terminating process tree for PID {proc.pid}")
     try:
-        logger.info(f"Killing process tree for PID {pid}")
-        parent = psutil.Process(pid)
-        children = parent.children(recursive=True)
+        children = proc.children(recursive=True)
         for child in children:
             try:
                 child.kill()
             except psutil.NoSuchProcess:
                 pass
-        parent.kill()
-        logger.info(f"Successfully killed process tree for PID {pid}")
-    except psutil.NoSuchProcess:
-        pass
-    except Exception as e:
+        proc.kill()
+        proc.wait(5)
+    except (psutil.NoSuchProcess, psutil.TimeoutExpired) as e:
         logger.error(f"Error killing process tree: {str(e)}")
 
+def cleanup_processes():
+    """Clean up any existing bot and monitor processes."""
+    logger.info("Cleaning up existing processes...")
+
+    # Clean up bot.py processes
+    bot_proc = get_process_info('bot.py')
+    if bot_proc:
+        kill_process_tree(bot_proc)
+
+    # Clean up run_bot.py processes
+    monitor_proc = get_process_info('run_bot.py')
+    if monitor_proc:
+        kill_process_tree(monitor_proc)
+
+    # Wait for processes to fully terminate
+    time.sleep(2)
+
+def check_telegram_token():
+    """Verify Telegram token is available."""
+    token = os.environ.get("TELEGRAM_TOKEN")
+    if not token:
+        logger.critical("TELEGRAM_TOKEN not found in environment!")
+        return False
+    return True
+
 def run_supervisor():
-    """Main supervisor loop to ensure monitor is running."""
-    global should_stop
+    """Main supervisor loop with enhanced process management."""
+    if not check_telegram_token():
+        sys.exit(1)
 
-    # Set up signal handlers
-    signal.signal(signal.SIGTERM, handle_signal)
-    signal.signal(signal.SIGINT, handle_signal)
+    cleanup_processes()
 
-    while not should_stop:
+    logger.info("Starting supervisor with enhanced monitoring...")
+    consecutive_failures = 0
+    last_start_time = None
+
+    while True:
         try:
-            # Check if monitor is running
-            monitor_proc = get_monitor_process()
+            current_time = datetime.now()
+
+            # Enforce minimum delay between restarts
+            if last_start_time:
+                elapsed = (current_time - last_start_time).total_seconds()
+                if elapsed < CHECK_INTERVAL:
+                    time.sleep(CHECK_INTERVAL - elapsed)
+
+            # Check monitor process
+            monitor_proc = get_process_info('run_bot.py')
 
             if not monitor_proc:
                 logger.info("Monitor process not found, starting...")
-                # Start the monitor
+
+                # Start fresh - ensure no lingering processes
+                cleanup_processes()
+
+                # Start the monitor process
                 subprocess.Popen(
                     [sys.executable, 'run_bot.py'],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     universal_newlines=True,
                     bufsize=1,
-                    preexec_fn=os.setsid  # Create new process group
+                    preexec_fn=os.setsid
                 )
+
+                last_start_time = datetime.now()
                 logger.info("Started monitor process")
                 time.sleep(2)  # Give process time to start
+
+                # Verify monitor started successfully
+                if not get_process_info('run_bot.py'):
+                    raise Exception("Failed to start monitor process")
+
+                consecutive_failures = 0
             else:
-                # Check if monitor is responding
+                # Check monitor health
                 try:
-                    status = monitor_proc.status()
-                    if status == psutil.STATUS_ZOMBIE:
-                        logger.warning("Monitor process is zombie, restarting...")
-                        kill_process_tree(monitor_proc.pid)
+                    monitor_status = monitor_proc.status()
+                    if monitor_status == psutil.STATUS_ZOMBIE:
+                        logger.error("Monitor process is zombie, restarting...")
+                        kill_process_tree(monitor_proc)
                         continue
 
-                    # Log monitor status every minute
+                    # Log status periodically
                     if int(time.time()) % 60 == 0:
                         memory_percent = monitor_proc.memory_percent()
                         cpu_percent = monitor_proc.cpu_percent()
@@ -104,44 +143,49 @@ def run_supervisor():
                             f"PID: {monitor_proc.pid}, "
                             f"Memory: {memory_percent:.1f}%, "
                             f"CPU: {cpu_percent:.1f}%, "
-                            f"Status: {status}"
+                            f"Status: {monitor_status}"
                         )
 
-                except psutil.NoSuchProcess:
-                    logger.warning("Monitor process died, will restart")
-                    continue
-                except Exception as e:
-                    logger.error(f"Error checking monitor: {str(e)}")
-                    # Kill the process if we can't check its status
-                    kill_process_tree(monitor_proc.pid)
+                    # Verify bot process is running
+                    bot_proc = get_process_info('bot.py')
+                    if not bot_proc:
+                        logger.error("Bot process not found, restarting monitor...")
+                        kill_process_tree(monitor_proc)
+                        continue
+
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    logger.error("Lost access to monitor process, restarting...")
                     continue
 
-            # Check every second
-            time.sleep(1)
+            time.sleep(CHECK_INTERVAL)
 
         except KeyboardInterrupt:
-            logger.info("Received shutdown signal, stopping supervisor...")
-            if monitor_proc:
-                kill_process_tree(monitor_proc.pid)
+            logger.info("Received shutdown signal, cleaning up...")
+            cleanup_processes()
             sys.exit(0)
 
         except Exception as e:
             logger.error(f"Supervisor error: {str(e)}")
-            time.sleep(5)  # Wait before retry
-            continue
+            consecutive_failures += 1
+
+            if consecutive_failures >= 3:
+                logger.warning("Multiple failures, performing full cleanup...")
+                cleanup_processes()
+                consecutive_failures = 0
+                time.sleep(5)
+
+            time.sleep(min(CHECK_INTERVAL * (2 ** consecutive_failures), MAX_RESTART_DELAY))
 
 def main():
     try:
-        logger.info("Starting supervisor...")
+        # Set up signal handlers
+        signal.signal(signal.SIGTERM, lambda signo, frame: cleanup_processes())
+        signal.signal(signal.SIGINT, lambda signo, frame: cleanup_processes())
+
         run_supervisor()
-    except KeyboardInterrupt:
-        logger.info("Shutting down supervisor...")
-        monitor_proc = get_monitor_process()
-        if monitor_proc:
-            kill_process_tree(monitor_proc.pid)
-        sys.exit(0)
     except Exception as e:
         logger.critical(f"Fatal error: {str(e)}")
+        cleanup_processes()
         sys.exit(1)
 
 if __name__ == "__main__":
