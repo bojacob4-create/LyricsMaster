@@ -26,17 +26,27 @@ from handlers import (
     download_command,
     wiki_command
 )
+from services.daily_song_service import send_daily_song
+from datetime import time
 
-# Configure logging
+# Configure logging with more detail
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG
+    level=logging.DEBUG  # Set to DEBUG for more detailed logs
 )
 logger = logging.getLogger(__name__)
 
 def error_handler(update: Update, context: CallbackContext):
     """Log Errors caused by Updates."""
-    logger.error(f'Update "{update}" caused error "{context.error}"')
+    logger.error(f'Update "{update}" caused error "{context.error}"', exc_info=True)
+    try:
+        if update and update.effective_message:
+            update.effective_message.reply_text(
+                "😓 Oops! Something went wrong.\n"
+                "Please try again in a moment! 🔄"
+            )
+    except Exception as e:
+        logger.error(f"Error in error handler: {str(e)}")
 
 def main():
     """Start the bot."""
@@ -47,28 +57,19 @@ def main():
             logger.error("No token provided!")
             raise ValueError("TELEGRAM_TOKEN environment variable is not set")
 
-        logger.info("Initializing bot...")
+        logger.info("Starting bot initialization...")
 
-        # Initialize with optimized network settings
+        # Initialize the bot
         updater = Updater(
             token=token,
             use_context=True,
             request_kwargs={
-                'read_timeout': 10,
-                'connect_timeout': 10,
-                'con_pool_size': 8,
-                'proxy_url': None,
-                'urllib3_proxy_kwargs': None
+                'read_timeout': 30,
+                'connect_timeout': 30
             }
         )
-
-        logger.info("Testing bot connection...")
-        me = updater.bot.get_me()
-        logger.info(f"Bot connection successful. Username: {me.username}")
-
-        # Get the dispatcher
         dp = updater.dispatcher
-        logger.info("Dispatcher initialized")
+        logger.debug("Created updater and dispatcher")
 
         # Register command handlers
         dp.add_handler(CommandHandler("start", start_command))
@@ -85,6 +86,7 @@ def main():
         dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
         dp.add_handler(CommandHandler("download", download_command))
         dp.add_handler(CommandHandler("wiki", wiki_command))
+        logger.debug("Registered all command handlers")
 
         # Add message handler for quiz answers
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
@@ -92,7 +94,7 @@ def main():
         # Add error handler
         dp.add_error_handler(error_handler)
 
-        # Set commands list
+        # Set commands list with detailed descriptions
         commands = [
             BotCommand("start", "Begin your musical journey 🎵"),
             BotCommand("help", "Get detailed help and tips 💡"),
@@ -112,30 +114,20 @@ def main():
 
         try:
             updater.bot.set_my_commands(commands)
-            logger.info("Bot commands set successfully")
+            logger.info("Successfully set bot commands")
         except Exception as e:
-            logger.warning(f"Failed to set commands: {str(e)}")
+            logger.error(f"Failed to set bot commands: {str(e)}")
 
-        # Start the Bot with optimized settings
+        # Start the Bot
         logger.info("Starting bot polling...")
-        updater.start_polling(
-            drop_pending_updates=True,
-            bootstrap_retries=5,
-            read_latency=1.0,
-            timeout=30,
-            clean=True
-        )
-
+        updater.start_polling(drop_pending_updates=True)
         logger.info("Bot started successfully!")
 
         # Run the bot until you press Ctrl-C
         updater.idle()
 
-    except TelegramError as te:
-        logger.error(f"Telegram Error: {str(te)}")
-        raise
     except Exception as e:
-        logger.error(f"Critical error: {str(e)}", exc_info=True)
+        logger.error(f"Critical error during bot initialization: {str(e)}", exc_info=True)
         raise
 
 if __name__ == '__main__':

@@ -763,11 +763,17 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
 
         logger.info(f"User {user_id} requested info for '{query}'")
 
+        # Send initial processing message
+        processing_msg = update.message.reply_text(
+            "🎵 Let me tell you about this artist...\n"
+            "Just a moment! ✨"
+        )
+
         # Get generated information
         person_info = get_person_info(query)
 
         if not person_info:
-            update.message.reply_text(
+            processing_msg.edit_text(
                 "😕 I couldn't gather information about this artist.\n\n"
                 "Please try:\n"
                 "• Check if the name is spelled correctly\n"
@@ -784,27 +790,38 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
             "Want to discover another artist? Just use /wiki again! 🎵"
         )
 
-        # Send response with error handling
         try:
-            update.message.reply_text(
+            # Try sending with markdown
+            processing_msg.edit_text(
                 response,
                 parse_mode='Markdown',
                 disable_web_page_preview=True
             )
-            logger.info(f"Successfully sent artist info to user {user_id}")
         except TelegramError:
-            # Fallback to plain text if markdown fails
-            update.message.reply_text(
+            # If markdown fails, send without formatting
+            processing_msg.edit_text(
                 response.replace('*', ''),
                 disable_web_page_preview=True
             )
 
-    except Exception as e:
-        logger.error(f"Error in wiki command for user {user_id}: {str(e)}")
+        logger.info(f"Successfully sent artist info to user {user_id}")
+
+    except TelegramError as e:
+        logger.error(f"Telegram error for user {user_id}: {str(e)}")
         update.message.reply_text(
+            "😓 Something went wrong sending the message.\n"
+            "Please try again in a moment! 🔄"
+        )
+    except Exception as e:
+        logger.error(f"Error in wiki command for user {user_id}: {str(e)}", exc_info=True)
+        error_message = (
             "😓 I couldn't process that request right now.\n"
             "Please try again in a few moments! 🔄"
         )
+        if 'processing_msg' in locals():
+            processing_msg.edit_text(error_message)
+        else:
+            update.message.reply_text(error_message)
 
 def main():
     """Initialize bot handlers and start the bot."""
