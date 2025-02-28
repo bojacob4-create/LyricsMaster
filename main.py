@@ -22,10 +22,10 @@ if __name__ == "__main__":
         os.environ['BOT_DEPLOYMENT'] = 'true'
 
         # Add deployment-specific exception handling
-        max_restart_attempts = 3
+        max_restart_attempts = 5  # Increased from 3
         restart_count = 0
 
-        while True:  # Changed to infinite loop for persistence
+        while True:  # Infinite loop for persistence
             try:
                 # Initial startup check
                 token = os.environ.get("TELEGRAM_TOKEN")
@@ -42,7 +42,7 @@ if __name__ == "__main__":
                 # If bot_main returns normally, reset the restart counter
                 restart_count = 0
                 logger.info("Bot terminated normally, restarting...")
-                time.sleep(5)  # Brief pause before restart
+                time.sleep(10)  # Brief pause before restart
                 continue
 
             except Exception as e:
@@ -56,12 +56,12 @@ if __name__ == "__main__":
                 )
 
                 if restart_count < max_restart_attempts:
-                    logger.info("Attempting automatic restart in 30 seconds...")
-                    time.sleep(30)
+                    logger.info("Attempting automatic restart in 60 seconds...")  # Increased wait time
+                    time.sleep(60)
                 else:
                     logger.critical("Maximum restart attempts reached. Resetting counter...")
                     restart_count = 0  # Reset counter to allow for future restarts
-                    time.sleep(60)  # Longer cooldown before starting fresh
+                    time.sleep(120)  # Longer cooldown before starting fresh
                     continue  # Continue the outer loop
 
     except Exception as e:

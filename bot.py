@@ -85,8 +85,9 @@ class TelegramBotWrapper:
                         token=self.token,
                         use_context=True,
                         request_kwargs={
-                            'read_timeout': 30,
-                            'connect_timeout': 30
+                            'read_timeout': 90,  # Increased for stability
+                            'connect_timeout': 60,
+                            'pool_timeout': 90
                         }
                     )
 
@@ -100,15 +101,13 @@ class TelegramBotWrapper:
                             if attempt == 2:  # Last attempt
                                 raise
                             logger.warning(f"Connection test attempt {attempt + 1} failed, retrying...")
-                            time.sleep(2)
+                            time.sleep(5)  # Increased sleep time between retries
 
-                    # Configure dispatcher with error handling
                     dp = self.updater.dispatcher
                     if not dp:
                         raise Exception("Failed to initialize dispatcher")
 
                     logger.info("Setting up command handlers...")
-
                     # Register command handlers with logging
                     dp.add_handler(CommandHandler("start", self.log_command(start_command)))
                     dp.add_handler(CommandHandler("help", self.log_command(help_command)))
@@ -145,7 +144,7 @@ class TelegramBotWrapper:
 
                 except Exception as e:
                     retry_count += 1
-                    wait_time = min(2 ** retry_count, 60)  # Cap wait time at 60 seconds
+                    wait_time = min(2 ** retry_count, 120)  # Increased max wait time
                     logger.warning(f"Setup attempt {retry_count} failed: {str(e)}. Retrying in {wait_time} seconds...")
                     time.sleep(wait_time)
                     if retry_count == max_retries:
@@ -196,15 +195,17 @@ class TelegramBotWrapper:
             logger.error(f"Failed to set bot commands: {str(e)}")
 
     def error_handler(self, update: Update, context: CallbackContext):
-        """Handle errors with enhanced logging."""
+        """Handle errors with enhanced logging and recovery."""
         try:
             if isinstance(context.error, NetworkError):
                 logger.error(f"Network error occurred: {str(context.error)}", exc_info=True)
                 logger.info("Attempting connection recovery...")
-                raise context.error
+                time.sleep(5)  # Brief pause before retry
+                raise context.error  # Propagate to trigger reconnection
             elif isinstance(context.error, TimedOut):
                 logger.error(f"Request timed out: {str(context.error)}", exc_info=True)
                 logger.info("Attempting timeout recovery...")
+                time.sleep(10)  # Longer pause for timeout
                 raise context.error
             elif isinstance(context.error, RetryAfter):
                 retry_after = context.error.retry_after
@@ -214,7 +215,8 @@ class TelegramBotWrapper:
             else:
                 logger.error(f"Update {update} caused error: {context.error}", exc_info=True)
 
-            if update and update.effective_message:
+            # Only send message for non-connection errors to avoid spam
+            if update and update.effective_message and not isinstance(context.error, (NetworkError, TimedOut)):
                 update.effective_message.reply_text(
                     "😓 Oops! Something went wrong.\n"
                     "Don't worry, I'll try to reconnect automatically! 🔄"
@@ -290,7 +292,7 @@ class TelegramBotWrapper:
         """Start the bot with enhanced retry mechanism."""
         global should_stop
         consecutive_failures = 0
-        max_consecutive_failures = 3
+        max_consecutive_failures = 5  # Increased max failures
 
         while not should_stop:
             try:
@@ -301,9 +303,10 @@ class TelegramBotWrapper:
                 logger.info("Starting bot polling with improved recovery...")
                 self.updater.start_polling(
                     timeout=60,
-                    bootstrap_retries=5,
+                    bootstrap_retries=10,  # Increased retries
                     read_latency=5.0,
-                    allowed_updates=['message', 'callback_query', 'chosen_inline_result', 'inline_query', 'chat_member']  # Extended update types
+                    drop_pending_updates=False,  # Don't drop updates on restart
+                    allowed_updates=['message', 'callback_query', 'chosen_inline_result', 'inline_query', 'chat_member']
                 )
                 logger.info("Bot started successfully! Ready to process commands...")
 
@@ -313,7 +316,7 @@ class TelegramBotWrapper:
 
                 # Start health check in the background
                 import threading
-                health_thread = threading.Thread(target=self.health_check, daemon=True)  # Make thread daemon
+                health_thread = threading.Thread(target=self.health_check, daemon=True)
                 health_thread.start()
                 logger.info("Health monitoring thread started")
 
@@ -321,8 +324,11 @@ class TelegramBotWrapper:
                 self.updater.idle()
 
                 if should_stop:
-                    logger.info("Received stop signal, shutting down gracefully...")
-                    self.updater.stop()
+                    logger.info("Received stop signal, attempting graceful shutdown...")
+                    try:
+                        self.updater.stop()
+                    except:
+                        pass
                     break
 
             except Exception as e:
@@ -343,16 +349,16 @@ class TelegramBotWrapper:
                             self.updater.stop()
                         except:
                             pass
-                    self.updater = None  # Force complete reinitialization
+                    self.updater = None
                     consecutive_failures = 0
-                    time.sleep(30)  # Longer cooldown period
+                    time.sleep(120)  # Increased cooldown period
                     continue
 
                 if self.retry_count > self.max_retries:
                     logger.critical("Maximum retry attempts reached. Resetting retry count...")
-                    self.retry_count = 0  # Reset instead of breaking
+                    self.retry_count = 0
                     consecutive_failures = 0
-                    time.sleep(60)  # Longer cooldown before fresh start
+                    time.sleep(180)  # Extended cooldown before fresh start
                     continue
 
                 time.sleep(delay)
