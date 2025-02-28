@@ -26,38 +26,65 @@ def create_app():
     """Application factory function."""
     app = Flask(__name__)
 
-    # Initialize bot
-    token = os.environ.get("TELEGRAM_TOKEN")
-    if not token:
-        raise ValueError("TELEGRAM_TOKEN not found")
+    # Initialize bot and dispatcher as global app variables
+    app.bot = None
+    app.dispatcher = None
 
-    bot = Bot(token=token)
-    dispatcher = Dispatcher(bot, None, use_context=True)
+    def initialize_bot():
+        """Initialize bot if not already initialized."""
+        if app.bot is None:
+            token = os.environ.get("TELEGRAM_TOKEN")
+            if not token:
+                raise ValueError("TELEGRAM_TOKEN not found")
 
-    # Register handlers
-    dispatcher.add_handler(CommandHandler("start", start_command))
-    dispatcher.add_handler(CommandHandler("help", help_command))
-    dispatcher.add_handler(CommandHandler("lyrics", lyrics_command))
-    dispatcher.add_handler(CommandHandler("stats", stats_command))
-    dispatcher.add_handler(CommandHandler("recommend", recommend_command))
-    dispatcher.add_handler(CommandHandler("quiz", quiz_command))
-    dispatcher.add_handler(CommandHandler("endquiz", end_quiz_command))
-    dispatcher.add_handler(CommandHandler("translate", translate_lyrics_command))
-    dispatcher.add_handler(CommandHandler("youtube", youtube_command))
-    dispatcher.add_handler(CommandHandler("analyze", analyze_command))
-    dispatcher.add_handler(CommandHandler("subscribe", subscribe_daily_command))
-    dispatcher.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
-    dispatcher.add_handler(CommandHandler("download", download_command))
-    dispatcher.add_handler(CommandHandler("wiki", wiki_command))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
+            app.bot = Bot(token=token)
+            app.dispatcher = Dispatcher(app.bot, None, use_context=True)
+
+            # Register handlers
+            app.dispatcher.add_handler(CommandHandler("start", start_command))
+            app.dispatcher.add_handler(CommandHandler("help", help_command))
+            app.dispatcher.add_handler(CommandHandler("lyrics", lyrics_command))
+            app.dispatcher.add_handler(CommandHandler("stats", stats_command))
+            app.dispatcher.add_handler(CommandHandler("recommend", recommend_command))
+            app.dispatcher.add_handler(CommandHandler("quiz", quiz_command))
+            app.dispatcher.add_handler(CommandHandler("endquiz", end_quiz_command))
+            app.dispatcher.add_handler(CommandHandler("translate", translate_lyrics_command))
+            app.dispatcher.add_handler(CommandHandler("youtube", youtube_command))
+            app.dispatcher.add_handler(CommandHandler("analyze", analyze_command))
+            app.dispatcher.add_handler(CommandHandler("subscribe", subscribe_daily_command))
+            app.dispatcher.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
+            app.dispatcher.add_handler(CommandHandler("download", download_command))
+            app.dispatcher.add_handler(CommandHandler("wiki", wiki_command))
+            app.dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
+
+            logger.info("Bot initialized successfully")
+
+    def setup_webhook(url):
+        """Set up webhook with the given URL."""
+        try:
+            if app.bot is None:
+                initialize_bot()
+
+            # Delete any existing webhooks first
+            app.bot.delete_webhook()
+            # Set new webhook
+            app.bot.set_webhook(url)
+            logger.info(f"Webhook set to {url}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to set webhook: {str(e)}")
+            return False
 
     @app.route('/')
     @app.route('/health')
     def health_check():
         """Health check endpoint."""
         try:
+            if app.bot is None:
+                initialize_bot()
+
             # Verify bot connection
-            bot.get_me()
+            app.bot.get_me()
             return jsonify({
                 'status': 'healthy',
                 'bot_running': True,
@@ -70,40 +97,16 @@ def create_app():
                 'error': str(e)
             }), 500
 
-    @app.route(f'/{token}', methods=['POST'])
-    def webhook():
-        """Handle incoming webhook updates from Telegram."""
-        try:
-            logger.info("Received webhook request")
-            update = Update.de_json(request.get_json(force=True), bot)
-            dispatcher.process_update(update)
-            return 'ok'
-        except Exception as e:
-            logger.error(f"Error processing update: {str(e)}")
-            return jsonify({'error': str(e)}), 500
-
-    def setup_webhook(url):
-        """Set up webhook with the given URL."""
-        try:
-            # Delete any existing webhooks first
-            bot.delete_webhook()
-            # Set the new webhook
-            bot.set_webhook(url)
-            logger.info(f"Webhook set to {url}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to set webhook: {str(e)}")
-            return False
-
-    # Setup webhook route
     @app.route('/setup_webhook')
     def init_webhook():
         """Initialize webhook setup."""
         try:
+            # Get domain from request headers
             replit_domain = request.headers.get('X-Replit-User-Domain')
             if not replit_domain:
                 replit_domain = request.host
 
+            token = os.environ.get("TELEGRAM_TOKEN")
             webhook_url = f"https://{replit_domain}/{token}"
             success = setup_webhook(webhook_url)
 
@@ -114,6 +117,28 @@ def create_app():
         except Exception as e:
             logger.error(f"Error in webhook setup: {str(e)}")
             return jsonify({'error': str(e)}), 500
+
+    @app.route(f'/{os.environ.get("TELEGRAM_TOKEN")}', methods=['POST'])
+    def webhook():
+        """Handle incoming webhook updates from Telegram."""
+        try:
+            if app.bot is None:
+                initialize_bot()
+
+            logger.info("Received webhook request")
+            update = Update.de_json(request.get_json(force=True), app.bot)
+            app.dispatcher.process_update(update)
+            return 'ok'
+        except Exception as e:
+            logger.error(f"Error processing update: {str(e)}")
+            return jsonify({'error': str(e)}), 500
+
+    # Initialize bot on app creation
+    initialize_bot()
+
+    # Set up webhook on app creation
+    with app.test_request_context():
+        init_webhook()
 
     return app
 
