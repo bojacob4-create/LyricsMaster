@@ -1,10 +1,15 @@
 import os
 import logging
-import threading
-import atexit
-from flask import Flask, jsonify
-from telegram.ext import Updater
-from main import main as bot_main
+from flask import Flask, jsonify, request
+from telegram import Update, Bot
+from telegram.ext import Dispatcher, CommandHandler, MessageHandler, Filters
+from handlers import (
+    start_command, help_command, lyrics_command, stats_command,
+    recommend_command, quiz_command, quiz_answer, end_quiz_command,
+    translate_lyrics_command, youtube_command, analyze_command,
+    subscribe_daily_command, unsubscribe_daily_command,
+    download_command, wiki_command
+)
 
 # Configure logging
 logging.basicConfig(
@@ -17,100 +22,81 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create Flask app
-app = Flask(__name__)
+def create_app():
+    """Application factory function."""
+    app = Flask(__name__)
 
-# Global variables for bot management
-updater = None
-bot_thread = None
-bot_status = {"running": False, "last_error": None, "health_check_fails": 0}
+    # Initialize bot
+    token = os.environ.get("TELEGRAM_TOKEN")
+    if not token:
+        raise ValueError("TELEGRAM_TOKEN not found")
 
-def start_bot():
-    """Start the bot in a separate thread."""
-    global updater, bot_status
-    try:
-        logger.info("Starting bot thread...")
-        token = os.environ.get("TELEGRAM_TOKEN")
-        if not token:
-            raise ValueError("TELEGRAM_TOKEN not found")
+    bot = Bot(token=token)
+    dispatcher = Dispatcher(bot, None, use_context=True)
 
-        updater = Updater(token, use_context=True)
-        bot_main()  # This will set up handlers and start polling
-        bot_status["running"] = True
-        bot_status["last_error"] = None
-        bot_status["health_check_fails"] = 0
-    except Exception as e:
-        bot_status["running"] = False
-        bot_status["last_error"] = str(e)
-        logger.error(f"Bot error: {str(e)}")
+    # Register handlers
+    dispatcher.add_handler(CommandHandler("start", start_command))
+    dispatcher.add_handler(CommandHandler("help", help_command))
+    dispatcher.add_handler(CommandHandler("lyrics", lyrics_command))
+    dispatcher.add_handler(CommandHandler("stats", stats_command))
+    dispatcher.add_handler(CommandHandler("recommend", recommend_command))
+    dispatcher.add_handler(CommandHandler("quiz", quiz_command))
+    dispatcher.add_handler(CommandHandler("endquiz", end_quiz_command))
+    dispatcher.add_handler(CommandHandler("translate", translate_lyrics_command))
+    dispatcher.add_handler(CommandHandler("youtube", youtube_command))
+    dispatcher.add_handler(CommandHandler("analyze", analyze_command))
+    dispatcher.add_handler(CommandHandler("subscribe", subscribe_daily_command))
+    dispatcher.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
+    dispatcher.add_handler(CommandHandler("download", download_command))
+    dispatcher.add_handler(CommandHandler("wiki", wiki_command))
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
 
-def cleanup_bot():
-    """Cleanup function to handle bot thread shutdown."""
-    global bot_thread, updater, bot_status
-    try:
-        if updater:
-            logger.info("Stopping updater...")
-            updater.stop()
-        if bot_thread and bot_thread.is_alive():
-            logger.info("Shutting down bot thread...")
-            bot_status["running"] = False
-            bot_thread.join(timeout=5)
-    except Exception as e:
-        logger.error(f"Error during cleanup: {str(e)}")
+    @app.route('/')
+    @app.route('/health')
+    def health_check():
+        """Health check endpoint."""
+        try:
+            # Verify bot connection
+            bot.get_me()
+            return jsonify({
+                'status': 'healthy',
+                'bot_running': True,
+                'last_error': None
+            })
+        except Exception as e:
+            logger.error(f"Health check error: {str(e)}")
+            return jsonify({
+                'status': 'error',
+                'error': str(e)
+            }), 500
 
-# Register the cleanup function
-atexit.register(cleanup_bot)
+    @app.route(f'/{token}', methods=['POST'])
+    def webhook():
+        """Handle incoming webhook updates from Telegram."""
+        try:
+            update = Update.de_json(request.get_json(force=True), bot)
+            dispatcher.process_update(update)
+            return 'ok'
+        except Exception as e:
+            logger.error(f"Error processing update: {str(e)}")
+            return jsonify({'error': str(e)}), 500
 
-@app.route('/')
-@app.route('/health')
-def health_check():
-    """Health check endpoint that also ensures bot is running."""
-    global bot_thread, bot_status, updater
+    @app.before_first_request
+    def setup_webhook():
+        """Set up webhook before the first request."""
+        try:
+            # Get the Replit-specific domain from the request
+            webhook_url = f"https://{request.host}/{token}"
+            bot.set_webhook(webhook_url)
+            logger.info(f"Webhook set to {webhook_url}")
+        except Exception as e:
+            logger.error(f"Failed to set webhook: {str(e)}")
 
-    try:
-        # Check if bot thread needs to be started
-        if bot_thread is None or not bot_thread.is_alive():
-            bot_thread = threading.Thread(target=start_bot, daemon=True)
-            bot_thread.start()
-            logger.info("Started new bot thread")
+    return app
 
-        # Verify bot connection
-        if updater and updater.bot:
-            try:
-                updater.bot.get_me()
-                bot_status["health_check_fails"] = 0
-            except Exception as e:
-                bot_status["health_check_fails"] += 1
-                logger.warning(f"Bot connection check failed: {str(e)}")
-
-                # If too many health checks fail, force restart
-                if bot_status["health_check_fails"] >= 3:
-                    logger.warning("Too many health check failures, forcing restart...")
-                    cleanup_bot()
-                    bot_thread = None
-                    return health_check()
-
-        status = {
-            'status': 'healthy' if bot_status["running"] else 'error',
-            'bot_running': bot_thread.is_alive() if bot_thread else False,
-            'health_checks_failed': bot_status["health_check_fails"],
-            'last_error': bot_status["last_error"]
-        }
-
-        return jsonify(status)
-    except Exception as e:
-        logger.error(f"Health check error: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'error': str(e)
-        }), 500
+# Create app instance
+app = create_app()
 
 if __name__ == '__main__':
-    # Start bot in background thread
-    bot_thread = threading.Thread(target=start_bot, daemon=True)
-    bot_thread.start()
-    logger.info("Initial bot thread started")
-
-    # Run Flask app with gunicorn settings
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
