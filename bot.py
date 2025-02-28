@@ -140,8 +140,7 @@ class TelegramBotWorker:
                 use_context=True,
                 request_kwargs={
                     'read_timeout': 30,
-                    'connect_timeout': 30,
-                    'pool_timeout': 3600,  # 1 hour pool timeout
+                    'connect_timeout': 30
                 }
             )
 
