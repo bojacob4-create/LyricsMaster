@@ -85,9 +85,9 @@ class TelegramBotWrapper:
                         token=self.token,
                         use_context=True,
                         request_kwargs={
-                            'read_timeout': 120,  # Increased timeout
-                            'connect_timeout': 120,
-                            'pool_timeout': 180
+                            'read_timeout': 30,  # Reduced timeout for better stability
+                            'connect_timeout': 30,
+                            'pool_timeout': 35
                         }
                     )
 
@@ -293,7 +293,9 @@ class TelegramBotWrapper:
                     drop_pending_updates=True,
                     timeout=60,
                     bootstrap_retries=5,
-                    read_latency=5.0
+                    read_latency=5.0,
+                    clean=True,  # Added to ensure clean startup
+                    allowed_updates=['message', 'callback_query']  # Specify allowed updates
                 )
                 logger.info("Bot started successfully! Ready to process commands...")
 
@@ -329,6 +331,11 @@ class TelegramBotWrapper:
 
                 if consecutive_failures >= max_consecutive_failures:
                     logger.critical("Too many consecutive failures. Forcing full restart...")
+                    if self.updater:
+                        try:
+                            self.updater.stop()
+                        except:
+                            pass
                     self.updater = None  # Force complete reinitialization
                     consecutive_failures = 0
                     time.sleep(30)  # Longer cooldown period
