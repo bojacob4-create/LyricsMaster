@@ -1,7 +1,8 @@
 import logging
 import os
 import sys
-import time  # Added time import at the top level
+import time
+import signal
 from datetime import datetime
 from telegram import Update, BotCommand
 from telegram.ext import (
@@ -25,13 +26,13 @@ from handlers import (
     download_command, wiki_command
 )
 
-# Configure logging
+# Configure logging with both console and file handlers
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('bot.log')
+        logging.FileHandler('bot_monitor.log')
     ]
 )
 logger = logging.getLogger(__name__)
@@ -43,6 +44,23 @@ class TelegramBotWorker:
         self.retry_count = 0
         self.max_retries = 5
         self.retry_delay = 60  # seconds
+        self.last_keepalive = time.time()
+        self.keepalive_interval = 30  # seconds
+        self.running = True
+
+        # Log bot startup
+        logger.info("Bot worker initialized with monitor logging")
+
+        # Set up signal handlers
+        signal.signal(signal.SIGINT, self.signal_handler)
+        signal.signal(signal.SIGTERM, self.signal_handler)
+
+    def signal_handler(self, signum, frame):
+        """Handle termination signals gracefully."""
+        logger.info(f"Received signal {signum}. Shutting down gracefully...")
+        self.running = False
+        if self.updater:
+            self.updater.stop()
 
     def setup_commands(self):
         """Set up bot commands menu."""
@@ -71,12 +89,16 @@ class TelegramBotWorker:
         try:
             if isinstance(context.error, NetworkError):
                 logger.warning(f"Network error occurred: {str(context.error)}")
+                self.handle_connection_error()
                 return
             elif isinstance(context.error, TimedOut):
                 logger.warning("Request timed out")
+                self.handle_connection_error()
                 return
             elif isinstance(context.error, RetryAfter):
-                logger.warning(f"Rate limit hit. Waiting {context.error.retry_after} seconds")
+                retry_after = context.error.retry_after
+                logger.warning(f"Rate limit hit. Waiting {retry_after} seconds")
+                time.sleep(retry_after)
                 return
             else:
                 logger.error(f"Update {update} caused error: {context.error}")
@@ -88,6 +110,27 @@ class TelegramBotWorker:
         except Exception as e:
             logger.error(f"Error in error handler: {str(e)}")
 
+    def handle_connection_error(self):
+        """Handle connection errors with exponential backoff."""
+        wait_time = min(300, self.retry_delay * (2 ** self.retry_count))  # Max 5 minutes
+        logger.info(f"Connection error, waiting {wait_time} seconds before retry...")
+        time.sleep(wait_time)
+        self.retry_count += 1
+
+    def keepalive(self):
+        """Perform keepalive tasks."""
+        current_time = time.time()
+        if current_time - self.last_keepalive >= self.keepalive_interval:
+            try:
+                # Verify bot connection
+                self.updater.bot.get_me()
+                logger.debug("Keepalive check successful")
+                self.last_keepalive = current_time
+                self.retry_count = 0  # Reset retry count on successful keepalive
+            except Exception as e:
+                logger.warning(f"Keepalive check failed: {str(e)}")
+                self.handle_connection_error()
+
     def initialize(self):
         """Initialize the bot with handlers."""
         try:
@@ -97,7 +140,8 @@ class TelegramBotWorker:
                 use_context=True,
                 request_kwargs={
                     'read_timeout': 30,
-                    'connect_timeout': 30
+                    'connect_timeout': 30,
+                    'pool_timeout': 3600,  # 1 hour pool timeout
                 }
             )
 
@@ -137,8 +181,8 @@ class TelegramBotWorker:
             return False
 
     def run(self):
-        """Run the bot with automatic reconnection."""
-        while True:
+        """Run the bot with automatic reconnection and keepalive."""
+        while self.running:
             try:
                 if not self.initialize():
                     if self.retry_count >= self.max_retries:
@@ -146,14 +190,18 @@ class TelegramBotWorker:
                         sys.exit(1)
 
                     self.retry_count += 1
-                    logger.info(f"Retrying initialization in {self.retry_delay} seconds... (Attempt {self.retry_count}/{self.max_retries})")
-                    time.sleep(self.retry_delay)
+                    wait_time = self.retry_delay * (2 ** (self.retry_count - 1))
+                    logger.info(f"Retrying initialization in {wait_time} seconds... (Attempt {self.retry_count}/{self.max_retries})")
+                    time.sleep(wait_time)
                     continue
 
                 # Reset retry count on successful initialization
                 self.retry_count = 0
+                self.last_keepalive = time.time()
 
                 logger.info("Starting bot polling...")
+
+                # Start polling in a non-blocking way
                 self.updater.start_polling(
                     drop_pending_updates=True,
                     timeout=30,
@@ -162,7 +210,11 @@ class TelegramBotWorker:
                 )
 
                 logger.info("Bot is running successfully")
-                self.updater.idle()
+
+                # Main loop with keepalive checks
+                while self.running and self.updater.running:
+                    self.keepalive()
+                    time.sleep(1)  # Prevent CPU overuse
 
             except Exception as e:
                 logger.error(f"Bot crashed: {str(e)}")
@@ -178,8 +230,11 @@ class TelegramBotWorker:
                     sys.exit(1)
 
                 self.retry_count += 1
-                logger.info(f"Restarting bot in {self.retry_delay} seconds... (Attempt {self.retry_count}/{self.max_retries})")
-                time.sleep(self.retry_delay)
+                wait_time = self.retry_delay * (2 ** (self.retry_count - 1))
+                logger.info(f"Restarting bot in {wait_time} seconds... (Attempt {self.retry_count}/{self.max_retries})")
+                time.sleep(wait_time)
+
+        logger.info("Bot shutdown complete")
 
 def main():
     """Entry point for the bot worker."""
