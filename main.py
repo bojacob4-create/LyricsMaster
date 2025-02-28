@@ -25,7 +25,7 @@ if __name__ == "__main__":
         max_restart_attempts = 3
         restart_count = 0
 
-        while restart_count < max_restart_attempts:
+        while True:  # Changed to infinite loop for persistence
             try:
                 # Initial startup check
                 token = os.environ.get("TELEGRAM_TOKEN")
@@ -59,10 +59,10 @@ if __name__ == "__main__":
                     logger.info("Attempting automatic restart in 30 seconds...")
                     time.sleep(30)
                 else:
-                    logger.critical("Maximum restart attempts reached. Shutting down.")
+                    logger.critical("Maximum restart attempts reached. Resetting counter...")
                     restart_count = 0  # Reset counter to allow for future restarts
                     time.sleep(60)  # Longer cooldown before starting fresh
-                    continue  # Instead of breaking, continue the outer loop
+                    continue  # Continue the outer loop
 
     except Exception as e:
         logger.error(f"Application failed to start: {str(e)}", exc_info=True)

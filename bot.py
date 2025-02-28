@@ -69,7 +69,7 @@ class TelegramBotWrapper:
         self.base_delay = 1  # Base delay in seconds
         self.max_delay = 300  # Maximum delay of 5 minutes
         self.start_time = None
-        self.health_check_interval = 300  # 5 minutes
+        self.health_check_interval = 30  # Reduced health check interval to 30 seconds
 
     def setup_bot(self):
         """Set up the bot with handlers and commands."""
@@ -85,9 +85,8 @@ class TelegramBotWrapper:
                         token=self.token,
                         use_context=True,
                         request_kwargs={
-                            'read_timeout': 30,  # Reduced timeout for better stability
-                            'connect_timeout': 30,
-                            'pool_timeout': 35
+                            'read_timeout': 30,
+                            'connect_timeout': 30
                         }
                     )
 
@@ -257,8 +256,8 @@ class TelegramBotWrapper:
                 self.log_health_status()
 
                 # Check for long periods of inactivity
-                if (datetime.now() - last_activity).seconds > 3600:  # 1 hour
-                    logger.warning("No activity detected for over an hour, checking connection...")
+                if (datetime.now() - last_activity).seconds > 1800:  # Reduced to 30 minutes
+                    logger.warning("No activity detected for over 30 minutes, checking connection...")
                     for attempt in range(3):  # Try up to 3 times
                         if self.monitor_bot_health():
                             logger.info("Bot health check passed after retry")
@@ -274,7 +273,7 @@ class TelegramBotWrapper:
                             return False  # This will trigger a restart in the main loop
                         else:
                             logger.warning(f"Health check attempt {attempt + 1} failed, retrying...")
-                            time.sleep(10)
+                            time.sleep(5)  # Reduced wait time between retries
 
                 if should_stop:
                     logger.info("Health check stopping due to shutdown signal")
@@ -301,12 +300,10 @@ class TelegramBotWrapper:
 
                 logger.info("Starting bot polling with improved recovery...")
                 self.updater.start_polling(
-                    drop_pending_updates=True,
                     timeout=60,
                     bootstrap_retries=5,
                     read_latency=5.0,
-                    clean=True,  # Added to ensure clean startup
-                    allowed_updates=['message', 'callback_query']  # Specify allowed updates
+                    allowed_updates=['message', 'callback_query', 'chosen_inline_result', 'inline_query', 'chat_member']  # Extended update types
                 )
                 logger.info("Bot started successfully! Ready to process commands...")
 
@@ -316,8 +313,7 @@ class TelegramBotWrapper:
 
                 # Start health check in the background
                 import threading
-                health_thread = threading.Thread(target=self.health_check)
-                health_thread.daemon = True
+                health_thread = threading.Thread(target=self.health_check, daemon=True)  # Make thread daemon
                 health_thread.start()
                 logger.info("Health monitoring thread started")
 
