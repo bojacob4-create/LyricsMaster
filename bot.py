@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+import time  # Added time import at the top level
 from datetime import datetime
 from telegram import Update, BotCommand
 from telegram.ext import (
@@ -27,30 +28,81 @@ from handlers import (
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.INFO,
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('bot.log')
+    ]
 )
 logger = logging.getLogger(__name__)
 
-class TelegramBotWrapper:
+class TelegramBotWorker:
     def __init__(self, token):
         self.token = token
         self.updater = None
+        self.retry_count = 0
+        self.max_retries = 5
+        self.retry_delay = 60  # seconds
 
-    def setup_bot(self):
+    def setup_commands(self):
+        """Set up bot commands menu."""
         try:
-            # Initialize with minimal settings
+            commands = [
+                BotCommand("start", "Begin your musical journey 🎵"),
+                BotCommand("help", "Get detailed help and tips 💡"),
+                BotCommand("lyrics", "Get song lyrics with mood analysis 🎤"),
+                BotCommand("stats", "Get detailed song statistics 📊"),
+                BotCommand("recommend", "Discover similar songs 🎵"),
+                BotCommand("quiz", "Play an interactive lyrics quiz 🎮"),
+                BotCommand("translate", "Get Arabic lyrics translation 🌍"),
+                BotCommand("youtube", "Find songs on YouTube 🎬"),
+                BotCommand("analyze", "Get deep song analysis 📈"),
+                BotCommand("subscribe", "Get daily song discoveries 🔔"),
+                BotCommand("unsubscribe", "Stop daily updates 🔕"),
+                BotCommand("wiki", "Get Wikipedia info about artists 📚")
+            ]
+            self.updater.bot.set_my_commands(commands)
+            logger.info("Bot commands menu set up successfully")
+        except Exception as e:
+            logger.error(f"Failed to set up bot commands: {str(e)}")
+
+    def error_handler(self, update: Update, context: CallbackContext):
+        """Handle bot errors."""
+        try:
+            if isinstance(context.error, NetworkError):
+                logger.warning(f"Network error occurred: {str(context.error)}")
+                return
+            elif isinstance(context.error, TimedOut):
+                logger.warning("Request timed out")
+                return
+            elif isinstance(context.error, RetryAfter):
+                logger.warning(f"Rate limit hit. Waiting {context.error.retry_after} seconds")
+                return
+            else:
+                logger.error(f"Update {update} caused error: {context.error}")
+
+            if update and update.effective_message:
+                update.effective_message.reply_text(
+                    "😓 Something went wrong. Please try again in a moment! 🔄"
+                )
+        except Exception as e:
+            logger.error(f"Error in error handler: {str(e)}")
+
+    def initialize(self):
+        """Initialize the bot with handlers."""
+        try:
+            # Create the Updater with persistent retry settings
             self.updater = Updater(
                 token=self.token,
                 use_context=True,
                 request_kwargs={
-                    'read_timeout': 10,
-                    'connect_timeout': 10
+                    'read_timeout': 30,
+                    'connect_timeout': 30
                 }
             )
 
+            # Get the dispatcher
             dp = self.updater.dispatcher
-            if not dp:
-                raise Exception("Failed to initialize dispatcher")
 
             # Register command handlers
             dp.add_handler(CommandHandler("start", start_command))
@@ -71,102 +123,78 @@ class TelegramBotWrapper:
             # Add message handler for quiz answers
             dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
 
-            # Set up error handler
+            # Add error handler
             dp.add_error_handler(self.error_handler)
 
-            # Set commands
-            self.set_commands()
+            # Set up commands menu
+            self.setup_commands()
 
+            logger.info("Bot initialized successfully")
             return True
 
         except Exception as e:
-            logger.error(f"Error in bot setup: {str(e)}")
+            logger.error(f"Failed to initialize bot: {str(e)}")
             return False
 
-    def set_commands(self):
-        try:
-            commands = [
-                BotCommand("start", "Begin your musical journey 🎵"),
-                BotCommand("help", "Get detailed help and tips 💡"),
-                BotCommand("lyrics", "Get song lyrics with mood analysis 🎤"),
-                BotCommand("stats", "Get detailed song statistics 📊"),
-                BotCommand("recommend", "Discover similar songs 🎵"),
-                BotCommand("quiz", "Play an interactive lyrics quiz 🎮"),
-                BotCommand("endquiz", "End the current quiz game 🎲"),
-                BotCommand("translate", "Get Arabic lyrics translation 🌍"),
-                BotCommand("youtube", "Find songs on YouTube 🎬"),
-                BotCommand("analyze", "Get deep song analysis 📈"),
-                BotCommand("download", "Download YouTube videos 📥"),
-                BotCommand("subscribe", "Get daily song discoveries 📅"),
-                BotCommand("unsubscribe", "Stop daily song updates 🔕"),
-                BotCommand("wiki", "Get Wikipedia info about artists 📚")
-            ]
-            self.updater.bot.set_my_commands(commands)
-        except Exception as e:
-            logger.error(f"Failed to set bot commands: {str(e)}")
-
-    def error_handler(self, update: Update, context: CallbackContext):
-        try:
-            if isinstance(context.error, (NetworkError, TimedOut)):
-                # Just log and let polling handle reconnection
-                logger.warning(f"Connection error: {str(context.error)}")
-                return
-            elif isinstance(context.error, RetryAfter):
-                logger.warning(f"Rate limit hit. Waiting {context.error.retry_after} seconds.")
-                return
-            else:
-                logger.error(f"Update {update} caused error: {context.error}")
-
-            if update and update.effective_message:
-                update.effective_message.reply_text(
-                    "😓 Oops! Something went wrong.\n"
-                    "Please try again in a moment! 🔄"
-                )
-        except Exception as e:
-            logger.error(f"Error in error handler: {str(e)}")
-
-    def start(self):
-        """Start the bot with minimal settings."""
+    def run(self):
+        """Run the bot with automatic reconnection."""
         while True:
             try:
-                if not self.setup_bot():
-                    logger.error("Bot setup failed, retrying...")
+                if not self.initialize():
+                    if self.retry_count >= self.max_retries:
+                        logger.error("Max retries reached. Exiting...")
+                        sys.exit(1)
+
+                    self.retry_count += 1
+                    logger.info(f"Retrying initialization in {self.retry_delay} seconds... (Attempt {self.retry_count}/{self.max_retries})")
+                    time.sleep(self.retry_delay)
                     continue
+
+                # Reset retry count on successful initialization
+                self.retry_count = 0
 
                 logger.info("Starting bot polling...")
                 self.updater.start_polling(
-                    timeout=10,
-                    read_latency=1.0,
                     drop_pending_updates=True,
+                    timeout=30,
+                    read_latency=1.0,
                     allowed_updates=['message', 'callback_query']
                 )
 
-                logger.info("Bot is running...")
+                logger.info("Bot is running successfully")
                 self.updater.idle()
 
             except Exception as e:
-                logger.error(f"Bot encountered an error: {str(e)}")
+                logger.error(f"Bot crashed: {str(e)}")
                 if self.updater:
                     try:
                         self.updater.stop()
                     except:
                         pass
-                    self.updater = None
-                continue
+                self.updater = None
+
+                if self.retry_count >= self.max_retries:
+                    logger.error("Max retries reached. Exiting...")
+                    sys.exit(1)
+
+                self.retry_count += 1
+                logger.info(f"Restarting bot in {self.retry_delay} seconds... (Attempt {self.retry_count}/{self.max_retries})")
+                time.sleep(self.retry_delay)
 
 def main():
-    """Start the bot."""
+    """Entry point for the bot worker."""
     try:
+        # Get token from environment
         token = os.environ.get("TELEGRAM_TOKEN")
         if not token:
-            logger.error("No token provided!")
-            raise ValueError("TELEGRAM_TOKEN environment variable is not set")
+            raise ValueError("TELEGRAM_TOKEN not found in environment variables")
 
-        bot = TelegramBotWrapper(token)
-        bot.start()
+        # Create and run bot
+        bot_worker = TelegramBotWorker(token)
+        bot_worker.run()
 
     except Exception as e:
-        logger.critical(f"Critical error in bot initialization: {str(e)}")
+        logger.critical(f"Critical error: {str(e)}")
         sys.exit(1)
 
 if __name__ == '__main__':

@@ -46,7 +46,7 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python main.py"
+args = "python bot.py"
 
 [[workflows.workflow]]
 name = "Flask Server"

@@ -69,9 +69,18 @@ def create_app():
 
             # Verify bot connection
             app.bot.get_me()
+
+            # Get webhook info
+            webhook_info = app.bot.get_webhook_info()
+
             return jsonify({
                 'status': 'healthy',
                 'bot_running': True,
+                'webhook_info': {
+                    'url': webhook_info.url,
+                    'has_custom_certificate': webhook_info.has_custom_certificate,
+                    'pending_update_count': webhook_info.pending_update_count
+                },
                 'last_error': None
             })
         except Exception as e:
@@ -88,29 +97,56 @@ def create_app():
             if app.bot is None:
                 initialize_bot()
 
-            # Get domain from environment or headers
-            replit_domain = os.environ.get('REPL_SLUG')
+            # Get domain from environment
+            replit_slug = os.environ.get('REPL_SLUG')
             repl_owner = os.environ.get('REPL_OWNER')
-            if replit_domain and repl_owner:
-                domain = f"{replit_domain}.{repl_owner}.repl.co"
-            else:
-                domain = request.headers.get('X-Replit-User-Domain', request.host)
+
+            if not replit_slug or not repl_owner:
+                return jsonify({
+                    'success': False,
+                    'error': 'Replit environment variables not found',
+                    'message': 'Cannot set up webhook without Replit domain information.'
+                }), 500
 
             token = os.environ.get("TELEGRAM_TOKEN")
+            domain = f"{replit_slug}.{repl_owner}.repl.co"
             webhook_url = f"https://{domain}/{token}"
 
             # Delete existing webhook and set new one
             app.bot.delete_webhook()
             app.bot.set_webhook(webhook_url)
 
-            logger.info(f"Webhook set to {webhook_url}")
+            # Get webhook info to verify
+            webhook_info = app.bot.get_webhook_info()
+
+            # Verify webhook was set correctly
+            if webhook_info.url != webhook_url:
+                return jsonify({
+                    'success': False,
+                    'error': 'Webhook URL mismatch',
+                    'message': 'Webhook was not set correctly.'
+                }), 500
+
+            logger.info(f"Webhook set successfully to {webhook_url}")
             return jsonify({
                 'success': True,
-                'webhook_url': webhook_url
+                'message': 'Webhook setup successful! 🎉',
+                'webhook_url': webhook_url,
+                'webhook_info': {
+                    'url': webhook_info.url,
+                    'has_custom_certificate': webhook_info.has_custom_certificate,
+                    'pending_update_count': webhook_info.pending_update_count,
+                    'max_connections': webhook_info.max_connections
+                }
             })
         except Exception as e:
-            logger.error(f"Error in webhook setup: {str(e)}")
-            return jsonify({'error': str(e)}), 500
+            error_msg = f"Failed to set webhook: {str(e)}"
+            logger.error(error_msg)
+            return jsonify({
+                'success': False,
+                'error': error_msg,
+                'message': 'Webhook setup failed 😕 Please try again.'
+            }), 500
 
     @app.route(f'/{os.environ.get("TELEGRAM_TOKEN")}', methods=['POST'])
     def webhook():
@@ -140,7 +176,11 @@ def create_app():
             return jsonify({'error': str(e)}), 500
 
     # Initialize bot on app creation
-    initialize_bot()
+    try:
+        initialize_bot()
+        logger.info("Bot initialized during app creation")
+    except Exception as e:
+        logger.error(f"Failed to initialize bot during app creation: {str(e)}")
 
     return app
 
