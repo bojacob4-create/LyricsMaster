@@ -47,6 +47,15 @@ class TelegramBotWorker:
         self.last_keepalive = time.time()
         self.keepalive_interval = 30  # seconds
         self.running = True
+        self.lock_file = "/tmp/telegram_bot.lock"
+        
+        # Check if another instance is running
+        if self._is_another_instance_running():
+            logger.error("Another bot instance is already running. Exiting.")
+            sys.exit(1)
+            
+        # Create lock file
+        self._create_lock_file()
 
         # Log bot startup
         logger.info("Bot worker initialized with monitor logging")
@@ -54,6 +63,33 @@ class TelegramBotWorker:
         # Set up signal handlers
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
+        
+    def _is_another_instance_running(self):
+        """Check if another instance is running by attempting to create a lock file."""
+        if os.path.exists(self.lock_file):
+            # Check if the process with this PID is still running
+            try:
+                with open(self.lock_file, 'r') as f:
+                    pid = int(f.read().strip())
+                
+                # Try to check if process exists
+                os.kill(pid, 0)
+                return True  # Process exists
+            except (OSError, ValueError):
+                # Process doesn't exist or invalid PID, remove stale lock file
+                try:
+                    os.remove(self.lock_file)
+                except OSError:
+                    pass
+        return False
+        
+    def _create_lock_file(self):
+        """Create a lock file with the current PID."""
+        try:
+            with open(self.lock_file, 'w') as f:
+                f.write(str(os.getpid()))
+        except Exception as e:
+            logger.error(f"Failed to create lock file: {str(e)}")
 
     def signal_handler(self, signum, frame):
         """Handle termination signals gracefully."""
@@ -61,6 +97,18 @@ class TelegramBotWorker:
         self.running = False
         if self.updater:
             self.updater.stop()
+        
+        # Clean up lock file
+        self._cleanup()
+    
+    def _cleanup(self):
+        """Remove the lock file on exit."""
+        try:
+            if os.path.exists(self.lock_file):
+                os.remove(self.lock_file)
+                logger.info("Removed lock file")
+        except Exception as e:
+            logger.error(f"Error removing lock file: {str(e)}")
 
     def setup_commands(self):
         """Set up bot commands menu."""
