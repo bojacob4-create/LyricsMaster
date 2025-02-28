@@ -26,7 +26,7 @@ def create_app():
     """Application factory function."""
     app = Flask(__name__)
 
-    # Initialize bot and dispatcher as global app variables
+    # Initialize bot and dispatcher as globals
     app.bot = None
     app.dispatcher = None
 
@@ -59,22 +59,6 @@ def create_app():
 
             logger.info("Bot initialized successfully")
 
-    def setup_webhook(url):
-        """Set up webhook with the given URL."""
-        try:
-            if app.bot is None:
-                initialize_bot()
-
-            # Delete any existing webhooks first
-            app.bot.delete_webhook()
-            # Set new webhook
-            app.bot.set_webhook(url)
-            logger.info(f"Webhook set to {url}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to set webhook: {str(e)}")
-            return False
-
     @app.route('/')
     @app.route('/health')
     def health_check():
@@ -101,18 +85,28 @@ def create_app():
     def init_webhook():
         """Initialize webhook setup."""
         try:
-            # Get domain from request headers
-            replit_domain = request.headers.get('X-Replit-User-Domain')
-            if not replit_domain:
-                replit_domain = request.host
+            if app.bot is None:
+                initialize_bot()
+
+            # Get domain from environment or headers
+            replit_domain = os.environ.get('REPL_SLUG')
+            repl_owner = os.environ.get('REPL_OWNER')
+            if replit_domain and repl_owner:
+                domain = f"{replit_domain}.{repl_owner}.repl.co"
+            else:
+                domain = request.headers.get('X-Replit-User-Domain', request.host)
 
             token = os.environ.get("TELEGRAM_TOKEN")
-            webhook_url = f"https://{replit_domain}/{token}"
-            success = setup_webhook(webhook_url)
+            webhook_url = f"https://{domain}/{token}"
 
+            # Delete existing webhook and set new one
+            app.bot.delete_webhook()
+            app.bot.set_webhook(webhook_url)
+
+            logger.info(f"Webhook set to {webhook_url}")
             return jsonify({
-                'success': success,
-                'webhook_url': webhook_url if success else None
+                'success': True,
+                'webhook_url': webhook_url
             })
         except Exception as e:
             logger.error(f"Error in webhook setup: {str(e)}")
@@ -126,8 +120,20 @@ def create_app():
                 initialize_bot()
 
             logger.info("Received webhook request")
-            update = Update.de_json(request.get_json(force=True), app.bot)
+
+            # Get the request data
+            if not request.is_json:
+                logger.error("Received non-JSON request")
+                return jsonify({'error': 'Request must be JSON'}), 400
+
+            update_data = request.get_json()
+            logger.debug(f"Received update data: {update_data}")
+
+            # Process the update
+            update = Update.de_json(update_data, app.bot)
             app.dispatcher.process_update(update)
+
+            logger.info("Successfully processed webhook update")
             return 'ok'
         except Exception as e:
             logger.error(f"Error processing update: {str(e)}")
@@ -135,10 +141,6 @@ def create_app():
 
     # Initialize bot on app creation
     initialize_bot()
-
-    # Set up webhook on app creation
-    with app.test_request_context():
-        init_webhook()
 
     return app
 
