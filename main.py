@@ -1,1 +1,4 @@
-# This file is intentionally empty as bot logic is now handled in app.py
+from app import app
+
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=5000)

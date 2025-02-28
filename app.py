@@ -74,6 +74,7 @@ def create_app():
     def webhook():
         """Handle incoming webhook updates from Telegram."""
         try:
+            logger.info("Received webhook request")
             update = Update.de_json(request.get_json(force=True), bot)
             dispatcher.process_update(update)
             return 'ok'
@@ -81,16 +82,38 @@ def create_app():
             logger.error(f"Error processing update: {str(e)}")
             return jsonify({'error': str(e)}), 500
 
-    @app.before_first_request
-    def setup_webhook():
-        """Set up webhook before the first request."""
+    def setup_webhook(url):
+        """Set up webhook with the given URL."""
         try:
-            # Get the Replit-specific domain from the request
-            webhook_url = f"https://{request.host}/{token}"
-            bot.set_webhook(webhook_url)
-            logger.info(f"Webhook set to {webhook_url}")
+            # Delete any existing webhooks first
+            bot.delete_webhook()
+            # Set the new webhook
+            bot.set_webhook(url)
+            logger.info(f"Webhook set to {url}")
+            return True
         except Exception as e:
             logger.error(f"Failed to set webhook: {str(e)}")
+            return False
+
+    # Setup webhook route
+    @app.route('/setup_webhook')
+    def init_webhook():
+        """Initialize webhook setup."""
+        try:
+            replit_domain = request.headers.get('X-Replit-User-Domain')
+            if not replit_domain:
+                replit_domain = request.host
+
+            webhook_url = f"https://{replit_domain}/{token}"
+            success = setup_webhook(webhook_url)
+
+            return jsonify({
+                'success': success,
+                'webhook_url': webhook_url if success else None
+            })
+        except Exception as e:
+            logger.error(f"Error in webhook setup: {str(e)}")
+            return jsonify({'error': str(e)}), 500
 
     return app
 
