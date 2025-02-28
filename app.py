@@ -1,49 +1,64 @@
 import os
 import logging
+import threading
 from flask import Flask, jsonify
-from config import config
+from main import main as bot_main
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO,
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('bot_deployment.log')
+    ]
+)
 logger = logging.getLogger(__name__)
 
-logger.info("Starting application initialization...")
-
-# Create Flask app with production config
+# Create Flask app
 app = Flask(__name__)
-app.config.from_object(config['production'])
-config['production'].init_app(app)
 
-# Health check endpoints
+# Global variable to track bot thread
+bot_thread = None
+bot_status = {"running": False, "last_error": None}
+
+def start_bot():
+    """Start the bot in a separate thread."""
+    global bot_status
+    try:
+        bot_main()
+        bot_status["running"] = True
+        bot_status["last_error"] = None
+    except Exception as e:
+        bot_status["running"] = False
+        bot_status["last_error"] = str(e)
+        logger.error(f"Bot error: {str(e)}")
+
 @app.route('/')
 @app.route('/health')
 def health_check():
-    """Basic health check endpoint."""
+    """Health check endpoint that also ensures bot is running."""
+    global bot_thread, bot_status
+
+    # Start bot thread if not running
+    if bot_thread is None or not bot_thread.is_alive():
+        bot_thread = threading.Thread(target=start_bot, daemon=True)
+        bot_thread.start()
+        logger.info("Started new bot thread")
+
     status = {
-        'status': 'healthy',
-        'app_initialized': True,
-        'service_status': 'running'
+        'status': 'healthy' if bot_status["running"] else 'error',
+        'bot_running': bot_thread.is_alive() if bot_thread else False,
+        'last_error': bot_status["last_error"]
     }
-    return jsonify(status), 200
+    return jsonify(status)
 
-@app.route('/readiness')
-def readiness_check():
-    """Readiness probe endpoint."""
-    try:
-        # Add any additional checks here
-        status = {
-            'status': 'ready',
-            'dependencies': {
-                'telegram_bot': True,
-                'database': True
-            }
-        }
-        return jsonify(status), 200
-    except Exception as e:
-        logger.error(f"Readiness check failed: {str(e)}")
-        return jsonify({
-            'status': 'not ready',
-            'error': str(e)
-        }), 503
+if __name__ == '__main__':
+    # Start bot in background thread
+    bot_thread = threading.Thread(target=start_bot, daemon=True)
+    bot_thread.start()
+    logger.info("Initial bot thread started")
 
-logger.info("Application initialization completed")
+    # Run Flask app
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)

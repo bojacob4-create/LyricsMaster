@@ -1,11 +1,16 @@
 import logging
 import os
-import signal
 import sys
-import time
-from datetime import datetime
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+from handlers import (
+    start_command, help_command, lyrics_command, stats_command,
+    recommend_command, quiz_command, quiz_answer, end_quiz_command,
+    translate_lyrics_command, youtube_command, analyze_command,
+    subscribe_daily_command, unsubscribe_daily_command,
+    download_command, wiki_command
+)
 
-# Configure root logger
+# Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
@@ -16,54 +21,54 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def signal_handler(signum, frame):
-    """Handle shutdown signals gracefully."""
-    logger.info(f"Received signal {signum}, initiating graceful shutdown...")
-    sys.exit(0)
-
-if __name__ == "__main__":
+def main():
+    """Start the bot with simplified error handling."""
     try:
-        # Register signal handlers
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
+        # Get token from environment variable
+        token = os.environ.get("TELEGRAM_TOKEN")
+        if not token:
+            logger.error("No token provided!")
+            raise ValueError("TELEGRAM_TOKEN environment variable is not set")
 
-        logger.info("Starting Telegram bot in deployment mode...")
+        # Create the Updater and pass it your bot's token
+        updater = Updater(token, use_context=True)
 
-        # Set deployment flag
-        os.environ['BOT_DEPLOYMENT'] = 'true'
+        # Get the dispatcher to register handlers
+        dp = updater.dispatcher
 
-        while True:  # Infinite loop for persistence
-            try:
-                # Initial startup check
-                token = os.environ.get("TELEGRAM_TOKEN")
-                if not token:
-                    logger.critical("TELEGRAM_TOKEN not found in environment!")
-                    raise ValueError("Missing TELEGRAM_TOKEN")
+        # Register commands
+        dp.add_handler(CommandHandler("start", start_command))
+        dp.add_handler(CommandHandler("help", help_command))
+        dp.add_handler(CommandHandler("lyrics", lyrics_command))
+        dp.add_handler(CommandHandler("stats", stats_command))
+        dp.add_handler(CommandHandler("recommend", recommend_command))
+        dp.add_handler(CommandHandler("quiz", quiz_command))
+        dp.add_handler(CommandHandler("endquiz", end_quiz_command))
+        dp.add_handler(CommandHandler("translate", translate_lyrics_command))
+        dp.add_handler(CommandHandler("youtube", youtube_command))
+        dp.add_handler(CommandHandler("analyze", analyze_command))
+        dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
+        dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
+        dp.add_handler(CommandHandler("download", download_command))
+        dp.add_handler(CommandHandler("wiki", wiki_command))
 
-                logger.info("Starting bot process...")
-                start_time = datetime.now()
+        # Add message handler for quiz answers
+        dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
 
-                # Import and start the bot here to ensure fresh imports on restart
-                from bot import main as bot_main
-                bot_main()
+        # Start the Bot
+        updater.start_polling(
+            drop_pending_updates=True,
+            allowed_updates=['message', 'callback_query']
+        )
 
-                # If bot_main returns normally, log and continue
-                uptime = datetime.now() - start_time
-                logger.info(f"Bot process completed after {uptime}, restarting...")
-                time.sleep(30)  # Wait before restart
+        logger.info("Bot started successfully!")
 
-            except Exception as e:
-                uptime = datetime.now() - start_time
-                logger.error(
-                    f"Bot process crashed:\n"
-                    f"Uptime: {uptime}\n"
-                    f"Error: {str(e)}",
-                    exc_info=True
-                )
-                logger.info("Restarting bot process in 30 seconds...")
-                time.sleep(30)
-                continue
+        # Run the bot until it's stopped
+        updater.idle()
 
     except Exception as e:
-        logger.critical(f"Critical error in main process: {str(e)}", exc_info=True)
-        sys.exit(1)
+        logger.error(f"Error running bot: {e}", exc_info=True)
+        raise  # Re-raise to let Flask handle the error
+
+if __name__ == '__main__':
+    main()

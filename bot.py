@@ -27,39 +27,26 @@ from handlers import (
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('bot_deployment.log')
-    ]
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 class TelegramBotWrapper:
     def __init__(self, token):
-        """Initialize bot with Reserved VM optimized settings."""
         self.token = token
         self.updater = None
-        self.start_time = None
 
     def setup_bot(self):
-        """Set up the bot with handlers and commands."""
         try:
-            logger.info("Initializing bot...")
-
-            # Initialize with optimized timeouts for Reserved VM
+            # Initialize with minimal settings
             self.updater = Updater(
                 token=self.token,
                 use_context=True,
                 request_kwargs={
-                    'read_timeout': 30,
-                    'connect_timeout': 30
+                    'read_timeout': 10,
+                    'connect_timeout': 10
                 }
             )
-
-            # Test bot connection
-            bot_info = self.updater.bot.get_me()
-            logger.info(f"Bot connection successful - Username: {bot_info.username}")
 
             dp = self.updater.dispatcher
             if not dp:
@@ -87,19 +74,16 @@ class TelegramBotWrapper:
             # Set up error handler
             dp.add_error_handler(self.error_handler)
 
-            # Set up commands
+            # Set commands
             self.set_commands()
 
-            logger.info("Bot setup completed successfully")
-            self.start_time = datetime.now()
             return True
 
         except Exception as e:
-            logger.error(f"Error in bot setup: {str(e)}", exc_info=True)
+            logger.error(f"Error in bot setup: {str(e)}")
             return False
 
     def set_commands(self):
-        """Set up bot commands with descriptions."""
         try:
             commands = [
                 BotCommand("start", "Begin your musical journey 🎵"),
@@ -118,80 +102,71 @@ class TelegramBotWrapper:
                 BotCommand("wiki", "Get Wikipedia info about artists 📚")
             ]
             self.updater.bot.set_my_commands(commands)
-            logger.info("Successfully set bot commands")
         except Exception as e:
             logger.error(f"Failed to set bot commands: {str(e)}")
 
     def error_handler(self, update: Update, context: CallbackContext):
-        """Handle errors with enhanced logging and recovery."""
         try:
-            if isinstance(context.error, NetworkError):
-                logger.error(f"Network error occurred: {str(context.error)}")
-                # Let Reserved VM handle reconnection
-                raise context.error
-            elif isinstance(context.error, TimedOut):
-                logger.error(f"Request timed out: {str(context.error)}")
-                raise context.error
+            if isinstance(context.error, (NetworkError, TimedOut)):
+                # Just log and let polling handle reconnection
+                logger.warning(f"Connection error: {str(context.error)}")
+                return
             elif isinstance(context.error, RetryAfter):
-                retry_after = context.error.retry_after
-                logger.warning(f"Rate limit hit. Waiting {retry_after} seconds.")
+                logger.warning(f"Rate limit hit. Waiting {context.error.retry_after} seconds.")
                 return
             else:
                 logger.error(f"Update {update} caused error: {context.error}")
 
-            if update and update.effective_message and not isinstance(context.error, (NetworkError, TimedOut)):
-                update.message.reply_text(
+            if update and update.effective_message:
+                update.effective_message.reply_text(
                     "😓 Oops! Something went wrong.\n"
-                    "Don't worry, I'll try to reconnect automatically! 🔄"
+                    "Please try again in a moment! 🔄"
                 )
         except Exception as e:
             logger.error(f"Error in error handler: {str(e)}")
 
     def start(self):
-        """Start the bot with Reserved VM optimized settings."""
+        """Start the bot with minimal settings."""
         while True:
             try:
                 if not self.setup_bot():
-                    logger.error("Bot setup failed, retrying in 30 seconds...")
-                    time.sleep(30)
+                    logger.error("Bot setup failed, retrying...")
                     continue
 
                 logger.info("Starting bot polling...")
                 self.updater.start_polling(
-                    timeout=30,
-                    read_latency=2.0,
+                    timeout=10,
+                    read_latency=1.0,
                     drop_pending_updates=True,
-                    allowed_updates=['message', 'callback_query', 'chosen_inline_result', 'inline_query']
+                    allowed_updates=['message', 'callback_query']
                 )
 
-                logger.info("Bot is now running...")
+                logger.info("Bot is running...")
                 self.updater.idle()
 
             except Exception as e:
-                logger.error(f"Bot crashed: {str(e)}", exc_info=True)
+                logger.error(f"Bot encountered an error: {str(e)}")
                 if self.updater:
                     try:
                         self.updater.stop()
                     except:
                         pass
-                self.updater = None
-                time.sleep(30)
+                    self.updater = None
                 continue
 
 def main():
-    """Start the bot with improved error handling."""
+    """Start the bot."""
     try:
         token = os.environ.get("TELEGRAM_TOKEN")
         if not token:
             logger.error("No token provided!")
             raise ValueError("TELEGRAM_TOKEN environment variable is not set")
 
-        logger.info("Starting bot in deployment mode...")
         bot = TelegramBotWrapper(token)
         bot.start()
 
     except Exception as e:
-        logger.critical(f"Critical error during bot initialization: {str(e)}", exc_info=True)
+        logger.critical(f"Critical error in bot initialization: {str(e)}")
         sys.exit(1)
 
 if __name__ == '__main__':
