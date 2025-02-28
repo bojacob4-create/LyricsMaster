@@ -60,7 +60,9 @@ if __name__ == "__main__":
                     time.sleep(30)
                 else:
                     logger.critical("Maximum restart attempts reached. Shutting down.")
-                    break
+                    restart_count = 0  # Reset counter to allow for future restarts
+                    time.sleep(60)  # Longer cooldown before starting fresh
+                    continue  # Instead of breaking, continue the outer loop
 
     except Exception as e:
         logger.error(f"Application failed to start: {str(e)}", exc_info=True)

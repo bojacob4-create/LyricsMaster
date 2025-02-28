@@ -259,11 +259,22 @@ class TelegramBotWrapper:
                 # Check for long periods of inactivity
                 if (datetime.now() - last_activity).seconds > 3600:  # 1 hour
                     logger.warning("No activity detected for over an hour, checking connection...")
-                    if not self.monitor_bot_health():
-                        logger.critical("Bot appears unresponsive, forcing restart...")
-                        # Force a complete restart
-                        self.updater = None
-                        return False  # This will trigger a restart in the main loop
+                    for attempt in range(3):  # Try up to 3 times
+                        if self.monitor_bot_health():
+                            logger.info("Bot health check passed after retry")
+                            break
+                        elif attempt == 2:  # Last attempt failed
+                            logger.critical("Bot appears unresponsive, forcing restart...")
+                            if self.updater:
+                                try:
+                                    self.updater.stop()
+                                except:
+                                    pass
+                            self.updater = None
+                            return False  # This will trigger a restart in the main loop
+                        else:
+                            logger.warning(f"Health check attempt {attempt + 1} failed, retrying...")
+                            time.sleep(10)
 
                 if should_stop:
                     logger.info("Health check stopping due to shutdown signal")
@@ -342,8 +353,11 @@ class TelegramBotWrapper:
                     continue
 
                 if self.retry_count > self.max_retries:
-                    logger.critical("Maximum retry attempts reached. Bot is shutting down.")
-                    break
+                    logger.critical("Maximum retry attempts reached. Resetting retry count...")
+                    self.retry_count = 0  # Reset instead of breaking
+                    consecutive_failures = 0
+                    time.sleep(60)  # Longer cooldown before fresh start
+                    continue
 
                 time.sleep(delay)
 
