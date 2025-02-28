@@ -1,13 +1,14 @@
 import logging
 import os
+import signal
+import sys
 import time
 from datetime import datetime
-from bot import main as bot_main
 
-# Configure root logger with both file and console handlers
+# Configure root logger
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,  # Changed to INFO for deployment
+    level=logging.INFO,
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler('bot_deployment.log')
@@ -15,15 +16,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully."""
+    logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+    sys.exit(0)
+
 if __name__ == "__main__":
     try:
+        # Register signal handlers
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
         logger.info("Starting Telegram bot in deployment mode...")
+
         # Set deployment flag
         os.environ['BOT_DEPLOYMENT'] = 'true'
-
-        # Add deployment-specific exception handling
-        max_restart_attempts = 5  # Increased from 3
-        restart_count = 0
 
         while True:  # Infinite loop for persistence
             try:
@@ -33,39 +40,30 @@ if __name__ == "__main__":
                     logger.critical("TELEGRAM_TOKEN not found in environment!")
                     raise ValueError("Missing TELEGRAM_TOKEN")
 
-                logger.info("Verified environment configuration...")
+                logger.info("Starting bot process...")
                 start_time = datetime.now()
 
-                # Start the bot with monitoring
+                # Import and start the bot here to ensure fresh imports on restart
+                from bot import main as bot_main
                 bot_main()
 
-                # If bot_main returns normally, reset the restart counter
-                restart_count = 0
-                logger.info("Bot terminated normally, restarting...")
-                time.sleep(10)  # Brief pause before restart
-                continue
+                # If bot_main returns normally, log and continue
+                uptime = datetime.now() - start_time
+                logger.info(f"Bot process completed after {uptime}, restarting...")
+                time.sleep(30)  # Wait before restart
 
             except Exception as e:
-                restart_count += 1
                 uptime = datetime.now() - start_time
                 logger.error(
-                    f"Application crashed (attempt {restart_count}/{max_restart_attempts}):\n"
+                    f"Bot process crashed:\n"
                     f"Uptime: {uptime}\n"
                     f"Error: {str(e)}",
                     exc_info=True
                 )
-
-                if restart_count < max_restart_attempts:
-                    logger.info("Attempting automatic restart in 60 seconds...")  # Increased wait time
-                    time.sleep(60)
-                else:
-                    logger.critical("Maximum restart attempts reached. Resetting counter...")
-                    restart_count = 0  # Reset counter to allow for future restarts
-                    time.sleep(120)  # Longer cooldown before starting fresh
-                    continue  # Continue the outer loop
+                logger.info("Restarting bot process in 30 seconds...")
+                time.sleep(30)
+                continue
 
     except Exception as e:
-        logger.error(f"Application failed to start: {str(e)}", exc_info=True)
-        # Don't raise the exception in deployment to prevent immediate exit
-        if not os.environ.get('BOT_DEPLOYMENT'):
-            raise
+        logger.critical(f"Critical error in main process: {str(e)}", exc_info=True)
+        sys.exit(1)

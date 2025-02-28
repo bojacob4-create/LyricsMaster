@@ -1,12 +1,10 @@
 import logging
 import os
-import signal
 import sys
-import time
 from datetime import datetime
 from telegram import Update, BotCommand
 from telegram.ext import (
-    CallbackContext, 
+    CallbackContext,
     Updater,
     CommandHandler,
     MessageHandler,
@@ -19,156 +17,86 @@ from telegram.error import (
     RetryAfter
 )
 from handlers import (
-    start_command,
-    help_command,
-    lyrics_command,
-    stats_command,
-    recommend_command,
-    quiz_command,
-    quiz_answer,
-    end_quiz_command,
-    translate_lyrics_command,
-    youtube_command,
-    analyze_command,
-    subscribe_daily_command,
-    unsubscribe_daily_command,
-    download_command,
-    wiki_command
+    start_command, help_command, lyrics_command, stats_command,
+    recommend_command, quiz_command, quiz_answer, end_quiz_command,
+    translate_lyrics_command, youtube_command, analyze_command,
+    subscribe_daily_command, unsubscribe_daily_command,
+    download_command, wiki_command
 )
-from services.daily_song_service import send_daily_song
 
-# Configure logging with more detail
+# Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG
+    level=logging.INFO,
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('bot_deployment.log')
+    ]
 )
 logger = logging.getLogger(__name__)
 
-# Global flags for bot status
-should_stop = False
-last_activity = datetime.now()
-
-def signal_handler(signum, frame):
-    """Handle shutdown signals gracefully."""
-    global should_stop
-    logger.info("Received shutdown signal, initiating graceful shutdown...")
-    should_stop = True
-
-def update_activity():
-    """Update the last activity timestamp."""
-    global last_activity
-    last_activity = datetime.now()
-
 class TelegramBotWrapper:
     def __init__(self, token):
-        """Initialize the bot with retry mechanism."""
+        """Initialize bot with Reserved VM optimized settings."""
         self.token = token
         self.updater = None
-        self.retry_count = 0
-        self.max_retries = 10
-        self.base_delay = 1  # Base delay in seconds
-        self.max_delay = 300  # Maximum delay of 5 minutes
         self.start_time = None
-        self.health_check_interval = 30  # Reduced health check interval to 30 seconds
 
     def setup_bot(self):
         """Set up the bot with handlers and commands."""
         try:
-            logger.info("Starting bot setup with token...")
-            max_retries = 5
-            retry_count = 0
+            logger.info("Initializing bot...")
 
-            while retry_count < max_retries:
-                try:
-                    # Initialize with higher timeouts for better stability
-                    self.updater = Updater(
-                        token=self.token,
-                        use_context=True,
-                        request_kwargs={
-                            'read_timeout': 90,  # Increased for stability
-                            'connect_timeout': 60,
-                            'pool_timeout': 90
-                        }
-                    )
+            # Initialize with optimized timeouts for Reserved VM
+            self.updater = Updater(
+                token=self.token,
+                use_context=True,
+                request_kwargs={
+                    'read_timeout': 30,
+                    'connect_timeout': 30
+                }
+            )
 
-                    # Test bot connection immediately with multiple retries
-                    for attempt in range(3):
-                        try:
-                            bot_info = self.updater.bot.get_me()
-                            logger.info(f"Bot connection test successful - Username: {bot_info.username}")
-                            break
-                        except Exception as e:
-                            if attempt == 2:  # Last attempt
-                                raise
-                            logger.warning(f"Connection test attempt {attempt + 1} failed, retrying...")
-                            time.sleep(5)  # Increased sleep time between retries
+            # Test bot connection
+            bot_info = self.updater.bot.get_me()
+            logger.info(f"Bot connection successful - Username: {bot_info.username}")
 
-                    dp = self.updater.dispatcher
-                    if not dp:
-                        raise Exception("Failed to initialize dispatcher")
+            dp = self.updater.dispatcher
+            if not dp:
+                raise Exception("Failed to initialize dispatcher")
 
-                    logger.info("Setting up command handlers...")
-                    # Register command handlers with logging
-                    dp.add_handler(CommandHandler("start", self.log_command(start_command)))
-                    dp.add_handler(CommandHandler("help", self.log_command(help_command)))
-                    dp.add_handler(CommandHandler("lyrics", self.log_command(lyrics_command)))
-                    dp.add_handler(CommandHandler("stats", self.log_command(stats_command)))
-                    dp.add_handler(CommandHandler("recommend", self.log_command(recommend_command)))
-                    dp.add_handler(CommandHandler("quiz", self.log_command(quiz_command)))
-                    dp.add_handler(CommandHandler("endquiz", self.log_command(end_quiz_command)))
-                    dp.add_handler(CommandHandler("translate", self.log_command(translate_lyrics_command)))
-                    dp.add_handler(CommandHandler("youtube", self.log_command(youtube_command)))
-                    dp.add_handler(CommandHandler("analyze", self.log_command(analyze_command)))
-                    dp.add_handler(CommandHandler("subscribe", self.log_command(subscribe_daily_command)))
-                    dp.add_handler(CommandHandler("unsubscribe", self.log_command(unsubscribe_daily_command)))
-                    dp.add_handler(CommandHandler("download", self.log_command(download_command)))
-                    dp.add_handler(CommandHandler("wiki", self.log_command(wiki_command)))
+            # Register command handlers
+            dp.add_handler(CommandHandler("start", start_command))
+            dp.add_handler(CommandHandler("help", help_command))
+            dp.add_handler(CommandHandler("lyrics", lyrics_command))
+            dp.add_handler(CommandHandler("stats", stats_command))
+            dp.add_handler(CommandHandler("recommend", recommend_command))
+            dp.add_handler(CommandHandler("quiz", quiz_command))
+            dp.add_handler(CommandHandler("endquiz", end_quiz_command))
+            dp.add_handler(CommandHandler("translate", translate_lyrics_command))
+            dp.add_handler(CommandHandler("youtube", youtube_command))
+            dp.add_handler(CommandHandler("analyze", analyze_command))
+            dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
+            dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
+            dp.add_handler(CommandHandler("download", download_command))
+            dp.add_handler(CommandHandler("wiki", wiki_command))
 
-                    # Add message handler for quiz answers with activity tracking and logging
-                    def wrapped_quiz_answer(update: Update, context: CallbackContext):
-                        logger.info(f"Received quiz answer from user {update.effective_user.id}")
-                        update_activity()
-                        return quiz_answer(update, context)
+            # Add message handler for quiz answers
+            dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
 
-                    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, wrapped_quiz_answer))
+            # Set up error handler
+            dp.add_error_handler(self.error_handler)
 
-                    # Enhanced error handler
-                    dp.add_error_handler(self.error_handler)
+            # Set up commands
+            self.set_commands()
 
-                    # Set commands list
-                    self.set_commands()
-
-                    logger.info("Bot setup completed successfully")
-                    self.start_time = datetime.now()
-                    return True
-
-                except Exception as e:
-                    retry_count += 1
-                    wait_time = min(2 ** retry_count, 120)  # Increased max wait time
-                    logger.warning(f"Setup attempt {retry_count} failed: {str(e)}. Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
-                    if retry_count == max_retries:
-                        raise Exception(f"Failed to establish initial connection after {max_retries} retries")
-
+            logger.info("Bot setup completed successfully")
+            self.start_time = datetime.now()
             return True
 
         except Exception as e:
-            logger.error(f"Critical error in bot setup: {str(e)}", exc_info=True)
+            logger.error(f"Error in bot setup: {str(e)}", exc_info=True)
             return False
-
-    def log_command(self, handler):
-        """Decorator to add logging to command handlers."""
-        def wrapped(update: Update, context: CallbackContext):
-            user_id = update.effective_user.id
-            command = update.message.text
-            logger.info(f"Received command '{command}' from user {user_id}")
-            try:
-                return handler(update, context)
-            except Exception as e:
-                logger.error(f"Error processing command '{command}' for user {user_id}: {str(e)}", exc_info=True)
-                update.message.reply_text("😓 Something went wrong processing your command. Please try again!")
-                raise
-        return wrapped
 
     def set_commands(self):
         """Set up bot commands with descriptions."""
@@ -198,196 +126,67 @@ class TelegramBotWrapper:
         """Handle errors with enhanced logging and recovery."""
         try:
             if isinstance(context.error, NetworkError):
-                logger.error(f"Network error occurred: {str(context.error)}", exc_info=True)
-                logger.info("Attempting connection recovery...")
-                time.sleep(5)  # Brief pause before retry
-                raise context.error  # Propagate to trigger reconnection
+                logger.error(f"Network error occurred: {str(context.error)}")
+                # Let Reserved VM handle reconnection
+                raise context.error
             elif isinstance(context.error, TimedOut):
-                logger.error(f"Request timed out: {str(context.error)}", exc_info=True)
-                logger.info("Attempting timeout recovery...")
-                time.sleep(10)  # Longer pause for timeout
+                logger.error(f"Request timed out: {str(context.error)}")
                 raise context.error
             elif isinstance(context.error, RetryAfter):
                 retry_after = context.error.retry_after
-                logger.warning(f"Rate limit hit. Waiting {retry_after} seconds before retry.")
-                time.sleep(retry_after)
+                logger.warning(f"Rate limit hit. Waiting {retry_after} seconds.")
                 return
             else:
-                logger.error(f"Update {update} caused error: {context.error}", exc_info=True)
+                logger.error(f"Update {update} caused error: {context.error}")
 
-            # Only send message for non-connection errors to avoid spam
             if update and update.effective_message and not isinstance(context.error, (NetworkError, TimedOut)):
-                update.effective_message.reply_text(
+                update.message.reply_text(
                     "😓 Oops! Something went wrong.\n"
                     "Don't worry, I'll try to reconnect automatically! 🔄"
                 )
         except Exception as e:
-            logger.error(f"Error in error handler: {str(e)}", exc_info=True)
-            logger.info("Will attempt automatic recovery")
-
-    def log_health_status(self):
-        """Log bot health status."""
-        if self.start_time:
-            uptime = datetime.now() - self.start_time
-            last_seen = datetime.now() - last_activity
-            logger.info(
-                f"Bot Health Status:\n"
-                f"Uptime: {uptime}\n"
-                f"Last Activity: {last_seen.seconds} seconds ago\n"
-                f"Retry Count: {self.retry_count}\n"
-                f"Connection Status: Active\n"
-                f"Memory Usage: Active" 
-            )
-
-    def monitor_bot_health(self):
-        """Monitor bot health and force restart if unresponsive."""
-        try:
-            # Test the bot's ability to respond
-            bot_info = self.updater.bot.get_me()
-            logger.info(f"Bot health check passed - Bot ID: {bot_info.id}")
-            return True
-        except Exception as e:
-            logger.error(f"Bot health check failed: {str(e)}", exc_info=True)
-            return False
-
-    def health_check(self):
-        """Perform periodic health checks."""
-        while not should_stop:
-            try:
-                time.sleep(self.health_check_interval)
-                self.log_health_status()
-
-                # Check for long periods of inactivity
-                if (datetime.now() - last_activity).seconds > 1800:  # Reduced to 30 minutes
-                    logger.warning("No activity detected for over 30 minutes, checking connection...")
-                    for attempt in range(3):  # Try up to 3 times
-                        if self.monitor_bot_health():
-                            logger.info("Bot health check passed after retry")
-                            break
-                        elif attempt == 2:  # Last attempt failed
-                            logger.critical("Bot appears unresponsive, forcing restart...")
-                            if self.updater:
-                                try:
-                                    self.updater.stop()
-                                except:
-                                    pass
-                            self.updater = None
-                            return False  # This will trigger a restart in the main loop
-                        else:
-                            logger.warning(f"Health check attempt {attempt + 1} failed, retrying...")
-                            time.sleep(5)  # Reduced wait time between retries
-
-                if should_stop:
-                    logger.info("Health check stopping due to shutdown signal")
-                    break
-
-            except Exception as e:
-                logger.error(f"Error in health check: {str(e)}")
-                logger.info("Will continue monitoring in next interval")
-                continue
-
-        return True
+            logger.error(f"Error in error handler: {str(e)}")
 
     def start(self):
-        """Start the bot with enhanced retry mechanism."""
-        global should_stop
-        consecutive_failures = 0
-        max_consecutive_failures = 5  # Increased max failures
-
-        while not should_stop:
+        """Start the bot with Reserved VM optimized settings."""
+        while True:
             try:
                 if not self.setup_bot():
-                    logger.error("Bot setup failed, attempting recovery...")
-                    raise Exception("Bot setup failed")
+                    logger.error("Bot setup failed, retrying in 30 seconds...")
+                    time.sleep(30)
+                    continue
 
-                logger.info("Starting bot polling with improved recovery...")
+                logger.info("Starting bot polling...")
                 self.updater.start_polling(
-                    timeout=60,
-                    bootstrap_retries=10,  # Increased retries
-                    read_latency=5.0,
-                    drop_pending_updates=False,  # Don't drop updates on restart
-                    allowed_updates=['message', 'callback_query', 'chosen_inline_result', 'inline_query', 'chat_member']
+                    timeout=30,
+                    read_latency=2.0,
+                    drop_pending_updates=True,
+                    allowed_updates=['message', 'callback_query', 'chosen_inline_result', 'inline_query']
                 )
-                logger.info("Bot started successfully! Ready to process commands...")
 
-                # Reset failure count on successful start
-                consecutive_failures = 0
-                update_activity()
-
-                # Start health check in the background
-                import threading
-                health_thread = threading.Thread(target=self.health_check, daemon=True)
-                health_thread.start()
-                logger.info("Health monitoring thread started")
-
-                # Keep the bot running
+                logger.info("Bot is now running...")
                 self.updater.idle()
 
-                if should_stop:
-                    logger.info("Received stop signal, attempting graceful shutdown...")
+            except Exception as e:
+                logger.error(f"Bot crashed: {str(e)}", exc_info=True)
+                if self.updater:
                     try:
                         self.updater.stop()
                     except:
                         pass
-                    break
-
-            except Exception as e:
-                if should_stop:
-                    break
-
-                consecutive_failures += 1
-                self.retry_count += 1
-                delay = min(self.base_delay * (2 ** self.retry_count), self.max_delay)
-
-                logger.error(f"Bot crashed with error: {str(e)}", exc_info=True)
-                logger.info(f"Attempting to restart in {delay} seconds... (Attempt {self.retry_count}/{self.max_retries})")
-
-                if consecutive_failures >= max_consecutive_failures:
-                    logger.critical("Too many consecutive failures. Forcing full restart...")
-                    if self.updater:
-                        try:
-                            self.updater.stop()
-                        except:
-                            pass
-                    self.updater = None
-                    consecutive_failures = 0
-                    time.sleep(120)  # Increased cooldown period
-                    continue
-
-                if self.retry_count > self.max_retries:
-                    logger.critical("Maximum retry attempts reached. Resetting retry count...")
-                    self.retry_count = 0
-                    consecutive_failures = 0
-                    time.sleep(180)  # Extended cooldown before fresh start
-                    continue
-
-                time.sleep(delay)
+                self.updater = None
+                time.sleep(30)
+                continue
 
 def main():
-    """Start the bot with improved error handling and recovery."""
+    """Start the bot with improved error handling."""
     try:
-        # Get token from environment variable
         token = os.environ.get("TELEGRAM_TOKEN")
         if not token:
             logger.error("No token provided!")
             raise ValueError("TELEGRAM_TOKEN environment variable is not set")
 
-        # Set up signal handlers for graceful shutdown
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-
-        # Configure deployment-specific logging
-        logging.basicConfig(
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            level=logging.INFO,
-            handlers=[
-                logging.StreamHandler(),
-                logging.FileHandler('bot_deployment.log')
-            ]
-        )
-        logger.info("Starting bot in deployment mode with automatic recovery...")
-
-        # Initialize and start bot with improved error handling
+        logger.info("Starting bot in deployment mode...")
         bot = TelegramBotWrapper(token)
         bot.start()
 
