@@ -187,9 +187,7 @@ class TelegramBotWorker:
                 token=self.token,
                 use_context=True,
                 request_kwargs={
-                    'read_timeout': 60,  # Increased timeout
-                    'connect_timeout': 30,
-                    'pool_timeout': 60,  # Added pool timeout
+                    'read_timeout': 30,
                     'connect_timeout': 30
                 }
             )
@@ -250,18 +248,13 @@ class TelegramBotWorker:
 
                 logger.info("Starting bot polling...")
 
-                # Start polling in a non-blocking way with more robust settings
+                # Start polling in a non-blocking way
                 self.updater.start_polling(
                     drop_pending_updates=True,
-                    timeout=60,
-                    read_latency=2.0,
-                    clean=True,
-                    bootstrap_retries=5,
-                    allowed_updates=['message', 'callback_query', 'chat_member']
+                    timeout=30,
+                    read_latency=1.0,
+                    allowed_updates=['message', 'callback_query']
                 )
-                
-                # Log success
-                logger.info(f"Bot @{self.updater.bot.username} is polling successfully")
 
                 logger.info("Bot is running successfully")
 
