@@ -61,7 +61,6 @@ task = "packager.installForAll"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "gunicorn --bind 0.0.0.0:5000 --workers 1 --threads 2 --timeout 0 wsgi:app"
-waitForPort = 5000
 
 [[ports]]
 localPort = 5000
