@@ -14,7 +14,7 @@ from handlers import (
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
+    level=logging.DEBUG,  # Set to DEBUG for more detailed logs
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler('bot_deployment.log')
@@ -67,10 +67,14 @@ def create_app():
             if app.bot is None:
                 initialize_bot()
 
+            # Test bot connection
+            bot_info = app.bot.get_me()
+            logger.info(f"Bot connection test successful. Bot username: {bot_info.username}")
+
             return jsonify({
                 'status': 'healthy',
-                'bot_initialized': app.bot is not None,
-                'last_error': None
+                'bot_initialized': True,
+                'bot_username': bot_info.username
             })
         except Exception as e:
             logger.error(f"Health check error: {str(e)}")
@@ -86,40 +90,40 @@ def create_app():
             if app.bot is None:
                 initialize_bot()
 
-            # Use proper Replit domain
-            repl_id = os.environ.get('REPL_ID')
+            # Get Replit environment variables
             repl_slug = os.environ.get('REPL_SLUG')
-            repl_owner = os.environ.get('REPL_OWNER')
-
-            if not all([repl_id, repl_slug, repl_owner]):
-                logger.error("Missing required Replit environment variables")
+            if not repl_slug:
+                logger.error("REPL_SLUG environment variable not found")
                 return jsonify({
                     'success': False,
-                    'error': 'Missing required Replit environment variables'
+                    'error': 'REPL_SLUG environment variable not found'
                 }), 500
 
-            # Use the full qualified Replit domain
-            webhook_url = f"https://{repl_slug}.{repl_owner}.repl.co/{os.environ.get('TELEGRAM_TOKEN')}"
+            # Use basic Replit domain format
+            webhook_url = f"https://{repl_slug}.repl.co/{os.environ.get('TELEGRAM_TOKEN')}"
             logger.info(f"Setting webhook to URL: {webhook_url}")
 
             try:
-                # Delete existing webhook first
+                # Remove existing webhook
                 app.bot.delete_webhook()
-                logger.info("Successfully deleted existing webhook")
+                logger.info("Deleted existing webhook")
 
-                # Set new webhook with correct configuration
+                # Set new webhook with basic configuration
                 success = app.bot.set_webhook(
                     url=webhook_url,
-                    max_connections=40,
-                    allowed_updates=['message', 'callback_query']
+                    drop_pending_updates=True
                 )
 
                 if not success:
-                    raise ValueError("Failed to set webhook")
+                    logger.error("Failed to set webhook")
+                    return jsonify({
+                        'success': False,
+                        'error': 'Failed to set webhook'
+                    }), 500
 
                 # Get webhook info for verification
                 webhook_info = app.bot.get_webhook_info()
-                logger.info(f"Webhook info after setup: {webhook_info.url}")
+                logger.info(f"Webhook info: {webhook_info.url}")
 
                 if webhook_info.last_error_date:
                     logger.warning(f"Last webhook error: {webhook_info.last_error_message}")
@@ -129,10 +133,7 @@ def create_app():
                     'webhook_url': webhook_url,
                     'webhook_info': {
                         'url': webhook_info.url,
-                        'has_custom_certificate': webhook_info.has_custom_certificate,
-                        'pending_update_count': webhook_info.pending_update_count,
-                        'last_error_date': webhook_info.last_error_date,
-                        'last_error_message': webhook_info.last_error_message if hasattr(webhook_info, 'last_error_message') else None
+                        'last_error': webhook_info.last_error_message if webhook_info.last_error_date else None
                     }
                 })
 
@@ -140,7 +141,7 @@ def create_app():
                 logger.error(f"Webhook setup failed: {str(webhook_error)}")
                 return jsonify({
                     'success': False,
-                    'error': f'Webhook setup failed: {str(webhook_error)}'
+                    'error': str(webhook_error)
                 }), 500
 
         except Exception as e:
@@ -158,9 +159,14 @@ def create_app():
                 initialize_bot()
 
             if not request.is_json:
+                logger.error("Received non-JSON request")
                 return jsonify({'error': 'Request must be JSON'}), 400
 
-            update = Update.de_json(request.get_json(), app.bot)
+            # Log incoming update
+            update_data = request.get_json()
+            logger.debug(f"Received update: {update_data}")
+
+            update = Update.de_json(update_data, app.bot)
             app.dispatcher.process_update(update)
 
             return '', 200
