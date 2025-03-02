@@ -14,7 +14,7 @@ from handlers import (
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG,  # Set to DEBUG for more detailed logs
+    level=logging.DEBUG,
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler('bot_deployment.log')
@@ -69,12 +69,22 @@ def create_app():
 
             # Test bot connection
             bot_info = app.bot.get_me()
+            webhook_info = app.bot.get_webhook_info()
+
             logger.info(f"Bot connection test successful. Bot username: {bot_info.username}")
+            logger.info(f"Current webhook URL: {webhook_info.url}")
+
+            if webhook_info.last_error_date:
+                logger.warning(f"Last webhook error: {webhook_info.last_error_message}")
 
             return jsonify({
                 'status': 'healthy',
                 'bot_initialized': True,
-                'bot_username': bot_info.username
+                'bot_username': bot_info.username,
+                'webhook_status': {
+                    'url': webhook_info.url,
+                    'last_error': webhook_info.last_error_message if webhook_info.last_error_date else None
+                }
             })
         except Exception as e:
             logger.error(f"Health check error: {str(e)}")
@@ -90,41 +100,42 @@ def create_app():
             if app.bot is None:
                 initialize_bot()
 
-            # Get Replit environment variables
+            # First verify the bot connection
+            bot_info = app.bot.get_me()
+            logger.info(f"Bot verified: {bot_info.username}")
+
+            # Get the Replit domain info
             repl_slug = os.environ.get('REPL_SLUG')
             if not repl_slug:
-                logger.error("REPL_SLUG environment variable not found")
-                return jsonify({
-                    'success': False,
-                    'error': 'REPL_SLUG environment variable not found'
-                }), 500
+                raise ValueError("REPL_SLUG environment variable not found")
 
-            # Use basic Replit domain format
+            # Construct webhook URL - use the basic format that worked before
             webhook_url = f"https://{repl_slug}.repl.co/{os.environ.get('TELEGRAM_TOKEN')}"
             logger.info(f"Setting webhook to URL: {webhook_url}")
 
             try:
-                # Remove existing webhook
+                # Delete existing webhook
                 app.bot.delete_webhook()
-                logger.info("Deleted existing webhook")
+                logger.info("Successfully deleted existing webhook")
 
-                # Set new webhook with basic configuration
+                # Set the new webhook with minimal configuration
                 success = app.bot.set_webhook(
                     url=webhook_url,
-                    drop_pending_updates=True
+                    drop_pending_updates=True,
+                    allowed_updates=['message']  # Only allow message updates for now
                 )
 
                 if not success:
-                    logger.error("Failed to set webhook")
-                    return jsonify({
-                        'success': False,
-                        'error': 'Failed to set webhook'
-                    }), 500
+                    raise ValueError("Failed to set webhook")
 
-                # Get webhook info for verification
+                # Verify the webhook setup
                 webhook_info = app.bot.get_webhook_info()
-                logger.info(f"Webhook info: {webhook_info.url}")
+                if not webhook_info.url:
+                    raise ValueError("Webhook URL is empty after setting")
 
+                logger.info(f"Webhook successfully set to: {webhook_info.url}")
+
+                # Check for any webhook errors
                 if webhook_info.last_error_date:
                     logger.warning(f"Last webhook error: {webhook_info.last_error_message}")
 
@@ -188,5 +199,4 @@ def create_app():
 app = create_app()
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=5000)
