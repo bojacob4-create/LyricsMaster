@@ -86,8 +86,20 @@ def create_app():
             if app.bot is None:
                 initialize_bot()
 
-            # Use workspace.repl.co domain
-            webhook_url = f"https://workspace.repl.co/{os.environ.get('TELEGRAM_TOKEN')}"
+            # Use proper Replit domain
+            repl_id = os.environ.get('REPL_ID')
+            repl_slug = os.environ.get('REPL_SLUG')
+            repl_owner = os.environ.get('REPL_OWNER')
+
+            if not all([repl_id, repl_slug, repl_owner]):
+                logger.error("Missing required Replit environment variables")
+                return jsonify({
+                    'success': False,
+                    'error': 'Missing required Replit environment variables'
+                }), 500
+
+            # Use the full qualified Replit domain
+            webhook_url = f"https://{repl_slug}.{repl_owner}.repl.co/{os.environ.get('TELEGRAM_TOKEN')}"
             logger.info(f"Setting webhook to URL: {webhook_url}")
 
             try:
@@ -95,10 +107,11 @@ def create_app():
                 app.bot.delete_webhook()
                 logger.info("Successfully deleted existing webhook")
 
-                # Set new webhook with minimal configuration
+                # Set new webhook with correct configuration
                 success = app.bot.set_webhook(
                     url=webhook_url,
-                    max_connections=40
+                    max_connections=40,
+                    allowed_updates=['message', 'callback_query']
                 )
 
                 if not success:
@@ -108,13 +121,18 @@ def create_app():
                 webhook_info = app.bot.get_webhook_info()
                 logger.info(f"Webhook info after setup: {webhook_info.url}")
 
+                if webhook_info.last_error_date:
+                    logger.warning(f"Last webhook error: {webhook_info.last_error_message}")
+
                 return jsonify({
                     'success': True,
                     'webhook_url': webhook_url,
                     'webhook_info': {
                         'url': webhook_info.url,
                         'has_custom_certificate': webhook_info.has_custom_certificate,
-                        'pending_update_count': webhook_info.pending_update_count
+                        'pending_update_count': webhook_info.pending_update_count,
+                        'last_error_date': webhook_info.last_error_date,
+                        'last_error_message': webhook_info.last_error_message if hasattr(webhook_info, 'last_error_message') else None
                     }
                 })
 
