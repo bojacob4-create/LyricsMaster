@@ -1,8 +1,9 @@
 import os
 import logging
 import json
+import signal
 from flask import Flask, jsonify, request
-from telegram import Update, Bot
+from telegram import Bot
 from telegram.ext import Updater, Dispatcher, CommandHandler, MessageHandler, Filters
 from handlers import (
     start_command, help_command, lyrics_command, stats_command,
@@ -23,72 +24,45 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-LOCK_FILE = "/tmp/telegram_bot.lock"
-
 def create_app():
     """Application factory function."""
     app = Flask(__name__)
+    app.config['PROPAGATE_EXCEPTIONS'] = True
     app.updater = None
 
-    def is_bot_running():
-        """Check if bot instance is already running."""
-        if os.path.exists(LOCK_FILE):
-            try:
-                with open(LOCK_FILE, 'r') as f:
-                    pid = int(f.read().strip())
-                try:
-                    os.kill(pid, 0)  # Check if process exists
-                    return True
-                except OSError:
-                    # Process not running, remove stale lock file
-                    os.remove(LOCK_FILE)
-            except (ValueError, OSError):
-                pass
-        return False
-
-    def create_lock_file():
-        """Create lock file with current process ID."""
+    def initialize_bot():
+        """Initialize bot with proper cleanup."""
         try:
-            with open(LOCK_FILE, 'w') as f:
-                f.write(str(os.getpid()))
-            logger.info("Created lock file")
-        except OSError as e:
-            logger.error(f"Failed to create lock file: {e}")
-            raise
-
-    def cleanup_bot():
-        """Clean up any existing bot instances."""
-        try:
-            if app.updater:
-                logger.info("Stopping existing bot instance...")
+            # Stop any existing updater
+            if app.updater and app.updater.running:
+                logger.info("Stopping existing updater...")
                 app.updater.stop()
                 app.updater = None
-                logger.info("Bot instance stopped")
-
-            if os.path.exists(LOCK_FILE):
-                os.remove(LOCK_FILE)
-                logger.info("Lock file removed")
-        except Exception as e:
-            logger.error(f"Error during cleanup: {e}")
-
-    def initialize_bot():
-        """Initialize bot if not already running."""
-        try:
-            if is_bot_running():
-                raise RuntimeError("Another bot instance is already running")
-
-            cleanup_bot()  # Clean up any existing instances
-            create_lock_file()  # Create lock file for this instance
 
             token = os.environ.get("TELEGRAM_TOKEN")
             if not token:
+                logger.error("TELEGRAM_TOKEN not found")
                 raise ValueError("TELEGRAM_TOKEN not found")
 
-            logger.info("Creating new bot instance...")
-            app.updater = Updater(token=token, use_context=True)
+            logger.info("Initializing new bot instance...")
+
+            # Create updater with robust settings
+            app.updater = Updater(
+                token=token,
+                use_context=True,
+                request_kwargs={
+                    'read_timeout': 30,
+                    'connect_timeout': 30
+                }
+            )
+
+            # Verify bot token
+            bot_info = app.updater.bot.get_me()
+            logger.info(f"Bot token verified. Username: {bot_info.username}")
+
+            # Register handlers
             dispatcher = app.updater.dispatcher
 
-            # Add command handlers with logging
             handlers = [
                 ("start", start_command),
                 ("help", help_command),
@@ -110,60 +84,72 @@ def create_app():
                 logger.debug(f"Adding handler for /{command}")
                 dispatcher.add_handler(CommandHandler(command, handler))
 
+            # Add message handler for quiz answers
             dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
-            logger.debug("Added text message handler")
 
+            # Add error handler
             def error_handler(update, context):
                 """Log errors."""
                 error = context.error
                 logger.error(f"Update {update} caused error: {error}")
-                logger.error(f"Full error details: {json.dumps(str(error), indent=2)}")
 
             dispatcher.add_error_handler(error_handler)
-            logger.debug("Added error handler")
 
-            # Start polling with clean start
+            # Start polling
             logger.info("Starting bot polling...")
             app.updater.start_polling(drop_pending_updates=True)
-
-            # Verify bot
-            bot_info = app.updater.bot.get_me()
-            logger.info(f"Bot initialized successfully. Username: {bot_info.username}")
+            logger.info("Bot polling started successfully")
 
             return True
+
         except Exception as e:
             logger.error(f"Failed to initialize bot: {e}", exc_info=True)
-            cleanup_bot()  # Clean up on failure
-            raise
+            if app.updater:
+                try:
+                    app.updater.stop()
+                except:
+                    pass
+                app.updater = None
+            return False
 
     @app.route('/')
     @app.route('/health')
     def health_check():
         """Health check endpoint."""
         try:
-            if app.updater is None:
-                logger.info("No bot instance found, initializing...")
-                initialize_bot()
-
+            # Initialize bot if not running
             if not app.updater or not app.updater.running:
-                return jsonify({
-                    'status': 'error',
-                    'error': 'Bot not running'
-                }), 500
+                logger.info("Bot not running, initializing...")
+                if not initialize_bot():
+                    return jsonify({
+                        'status': 'error',
+                        'error': 'Failed to initialize bot'
+                    }), 500
 
+            # Verify bot is responsive
             bot_info = app.updater.bot.get_me()
+            logger.info(f"Health check: Bot is alive. Username: {bot_info.username}")
+
             return jsonify({
                 'status': 'healthy',
                 'bot_username': bot_info.username,
-                'mode': 'polling',
-                'is_running': True
+                'pid': os.getpid(),
+                'mode': 'polling'
             })
+
         except Exception as e:
             logger.error(f"Health check failed: {e}", exc_info=True)
             return jsonify({
                 'status': 'error',
                 'error': str(e)
             }), 500
+
+    # Initialize bot when app is created
+    try:
+        logger.info("Initializing bot during app creation...")
+        initialize_bot()
+    except Exception as e:
+        logger.error(f"Initial bot setup failed: {e}", exc_info=True)
 
     return app
 
