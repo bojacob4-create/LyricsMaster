@@ -32,7 +32,7 @@ logging.basicConfig(
     level=logging.INFO,
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('bot_monitor.log')
+        logging.FileHandler('bot.log')
     ]
 )
 logger = logging.getLogger(__name__)
@@ -48,12 +48,12 @@ class TelegramBotWorker:
         self.keepalive_interval = 30  # seconds
         self.running = True
         self.lock_file = "/tmp/telegram_bot.lock"
-        
+
         # Check if another instance is running
         if self._is_another_instance_running():
             logger.error("Another bot instance is already running. Exiting.")
             sys.exit(1)
-            
+
         # Create lock file
         self._create_lock_file()
 
@@ -63,7 +63,7 @@ class TelegramBotWorker:
         # Set up signal handlers
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
-        
+
     def _is_another_instance_running(self):
         """Check if another instance is running by attempting to create a lock file."""
         if os.path.exists(self.lock_file):
@@ -71,7 +71,7 @@ class TelegramBotWorker:
             try:
                 with open(self.lock_file, 'r') as f:
                     pid = int(f.read().strip())
-                
+
                 # Try to check if process exists
                 os.kill(pid, 0)
                 return True  # Process exists
@@ -82,7 +82,7 @@ class TelegramBotWorker:
                 except OSError:
                     pass
         return False
-        
+
     def _create_lock_file(self):
         """Create a lock file with the current PID."""
         try:
@@ -97,10 +97,10 @@ class TelegramBotWorker:
         self.running = False
         if self.updater:
             self.updater.stop()
-        
+
         # Clean up lock file
         self._cleanup()
-    
+
     def _cleanup(self):
         """Remove the lock file on exit."""
         try:
@@ -195,7 +195,7 @@ class TelegramBotWorker:
             # Get the dispatcher
             dp = self.updater.dispatcher
 
-            # Register command handlers
+            # Register command handlers (using edited code's structure)
             dp.add_handler(CommandHandler("start", start_command))
             dp.add_handler(CommandHandler("help", help_command))
             dp.add_handler(CommandHandler("lyrics", lyrics_command))

@@ -86,44 +86,57 @@ def create_app():
             if app.bot is None:
                 initialize_bot()
 
-            # Get domain from environment
-            replit_slug = os.environ.get('REPL_SLUG')
-            repl_owner = os.environ.get('REPL_OWNER')
+            # Get Replit environment variables
+            repl_slug = os.environ.get('REPL_SLUG', '')
+            repl_owner = os.environ.get('REPL_OWNER', '')
 
-            if not all([replit_slug, repl_owner]):
+            if not all([repl_slug, repl_owner]):
+                logger.error("Missing required Replit environment variables")
                 return jsonify({
                     'success': False,
-                    'error': 'Missing Replit environment variables'
+                    'error': 'Missing required Replit environment variables'
                 }), 500
 
-            domain = f"https://{replit_slug}.{repl_owner}.repl.co"
-            token = os.environ.get("TELEGRAM_TOKEN")
-            webhook_url = f"{domain}/{token}"
+            # Use the full Replit domain format
+            full_domain = f"{repl_slug}.{repl_owner}.repl.co"
+            webhook_url = f"https://{full_domain}/{os.environ.get('TELEGRAM_TOKEN')}"
 
-            # Remove existing webhook before setting new one
-            app.bot.delete_webhook()
-            app.bot.set_webhook(webhook_url)
+            logger.info(f"Setting webhook to URL: {webhook_url}")
 
-            # Verify webhook was set
-            webhook_info = app.bot.get_webhook_info()
-            if webhook_info.url != webhook_url:
+            try:
+                # First, delete any existing webhook
+                app.bot.delete_webhook()
+                logger.info("Successfully deleted existing webhook")
+
+                # Set the new webhook
+                success = app.bot.set_webhook(url=webhook_url)
+
+                if not success:
+                    raise ValueError("Failed to set webhook")
+
+                # Verify webhook was set
+                webhook_info = app.bot.get_webhook_info()
+                logger.info(f"Webhook info after setup: {webhook_info.url}")
+
+                return jsonify({
+                    'success': True,
+                    'webhook_url': webhook_url,
+                    'webhook_info': {
+                        'url': webhook_info.url,
+                        'has_custom_certificate': webhook_info.has_custom_certificate,
+                        'pending_update_count': webhook_info.pending_update_count
+                    }
+                })
+
+            except Exception as webhook_error:
+                logger.error(f"Webhook setup failed: {str(webhook_error)}")
                 return jsonify({
                     'success': False,
-                    'error': 'Failed to set webhook URL'
+                    'error': f'Webhook setup failed: {str(webhook_error)}'
                 }), 500
-
-            return jsonify({
-                'success': True,
-                'webhook_url': webhook_url,
-                'webhook_info': {
-                    'url': webhook_info.url,
-                    'has_custom_certificate': webhook_info.has_custom_certificate,
-                    'pending_update_count': webhook_info.pending_update_count
-                }
-            })
 
         except Exception as e:
-            logger.error(f"Error setting up webhook: {str(e)}")
+            logger.error(f"Error in setup_webhook: {str(e)}")
             return jsonify({
                 'success': False,
                 'error': str(e)
