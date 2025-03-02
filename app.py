@@ -86,35 +86,25 @@ def create_app():
             if app.bot is None:
                 initialize_bot()
 
-            # Get Replit environment variables
-            repl_slug = os.environ.get('REPL_SLUG', '')
-            repl_owner = os.environ.get('REPL_OWNER', '')
-
-            if not all([repl_slug, repl_owner]):
-                logger.error("Missing required Replit environment variables")
-                return jsonify({
-                    'success': False,
-                    'error': 'Missing required Replit environment variables'
-                }), 500
-
-            # Use the full Replit domain format
-            full_domain = f"{repl_slug}.{repl_owner}.repl.co"
-            webhook_url = f"https://{full_domain}/{os.environ.get('TELEGRAM_TOKEN')}"
-
+            # Use workspace.repl.co domain
+            webhook_url = f"https://workspace.repl.co/{os.environ.get('TELEGRAM_TOKEN')}"
             logger.info(f"Setting webhook to URL: {webhook_url}")
 
             try:
-                # First, delete any existing webhook
+                # Delete existing webhook first
                 app.bot.delete_webhook()
                 logger.info("Successfully deleted existing webhook")
 
-                # Set the new webhook
-                success = app.bot.set_webhook(url=webhook_url)
+                # Set new webhook with minimal configuration
+                success = app.bot.set_webhook(
+                    url=webhook_url,
+                    max_connections=40
+                )
 
                 if not success:
                     raise ValueError("Failed to set webhook")
 
-                # Verify webhook was set
+                # Get webhook info for verification
                 webhook_info = app.bot.get_webhook_info()
                 logger.info(f"Webhook info after setup: {webhook_info.url}")
 
