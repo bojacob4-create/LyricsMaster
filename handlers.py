@@ -28,6 +28,7 @@ from utils import (
 from services.youtube_service import get_youtube_link, format_youtube_response
 from services.youtube_downloader_service import download_youtube_video, cleanup_video
 from services.ai_info_service import get_person_info # Changed import
+from services.trending_service import get_trending_tracks, format_trending_response
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,8 @@ def help_command(update: Update, context: CallbackContext):
         "▫️ */wiki person_name*\n"
         "   Get Wikipedia information\n"
         "   Example: */wiki Taylor Swift*\n\n"
+        "▫️ */trending*\n"
+        "   See what's hot right now! 🔥\n\n"
         "*Daily Updates:*\n"
         "▫️ */subscribe* - Get daily song picks\n"
         "▫️ */unsubscribe* - Stop daily updates\n\n"
@@ -126,7 +129,6 @@ def help_command(update: Update, context: CallbackContext):
             help_text.replace('*', '').replace('▫️', '•'),
             disable_web_page_preview=True
         )
-
 
 
 def quiz_command(update: Update, context: CallbackContext):
@@ -786,7 +788,7 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
         # Format and send response
         response = (
             f"✨ *{person_info['title']}*\n\n"
-            f"{person_info['info']}\n\n"
+            f"{personinfo['info']}\n\n"
             "Want to discover another artist? Just use /wiki again! 🎵"
         )
 
@@ -823,6 +825,37 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
         else:
             update.message.reply_text(error_message)
 
+
+def trending_command(update: Update, context: CallbackContext):
+    """Handle the /trending command."""
+    user_id = update.effective_user.id
+    try:
+        logger.info(f"User {user_id} requested trending tracks")
+
+        # Send typing action
+        update.message.chat.send_action(action="typing")
+
+        # Get trending tracks
+        trending_tracks = get_trending_tracks(limit=10)
+        response = format_trending_response(trending_tracks)
+
+        try:
+            update.message.reply_text(
+                response,
+                parse_mode='Markdown'
+            )
+            logger.info(f"Successfully sent trending tracks to user {user_id}")
+        except TelegramError:
+            # If markdown fails, send without formatting
+            update.message.reply_text(response.replace('*', ''))
+
+    except Exception as e:
+        logger.error(f"Error processing trending command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Oops! Something went wrong fetching trending tracks.\n"
+            "Please try again in a moment! 🔄"
+        )
+
 def main():
     """Initialize bot handlers and start the bot."""
     token = os.environ.get('TELEGRAM_TOKEN')
@@ -849,6 +882,7 @@ def main():
         dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
         dp.add_handler(CommandHandler("download", download_command))
         dp.add_handler(CommandHandler("wiki", wiki_command))
+        dp.add_handler(CommandHandler("trending", trending_command)) # Add trending command handler
 
         # Add message handler for quiz answers
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
@@ -868,7 +902,8 @@ def main():
             BotCommand("youtube", "Get YouTube link for song 🎬 (format: artist - song)"),
             BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
             BotCommand("download", "Download YouTube video 🎬 (format: /download video_url)"),
-            BotCommand("wiki", "Get Wikipedia info about artists 📚 (format: /wiki name)")
+            BotCommand("wiki", "Get Wikipedia info about artists 📚 (format: /wiki name)"),
+            BotCommand("trending", "Get trending tracks 📈") # Add trending command
         ]
 
         updater.bot.set_my_commands(commands)

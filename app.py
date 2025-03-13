@@ -10,7 +10,7 @@ from handlers import (
     recommend_command, quiz_command, quiz_answer, end_quiz_command,
     translate_lyrics_command, youtube_command, analyze_command,
     subscribe_daily_command, unsubscribe_daily_command,
-    download_command, wiki_command
+    download_command, wiki_command, trending_command # Added import for trending_command
 )
 
 # Configure logging
@@ -77,7 +77,8 @@ def create_app():
                 ("subscribe", subscribe_daily_command),
                 ("unsubscribe", unsubscribe_daily_command),
                 ("download", download_command),
-                ("wiki", wiki_command)
+                ("wiki", wiki_command),
+                ("trending", trending_command)  # Add trending command
             ]
 
             for command, handler in handlers:
