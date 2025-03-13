@@ -3,14 +3,14 @@ import logging
 import json
 import signal
 from flask import Flask, jsonify, request
-from telegram import Bot, BotCommand
+from telegram import Bot
 from telegram.ext import Updater, Dispatcher, CommandHandler, MessageHandler, Filters
 from handlers import (
     start_command, help_command, lyrics_command, stats_command,
     recommend_command, quiz_command, quiz_answer, end_quiz_command,
     translate_lyrics_command, youtube_command, analyze_command,
     subscribe_daily_command, unsubscribe_daily_command,
-    download_command, wiki_command, trending_command
+    download_command, wiki_command
 )
 
 # Configure logging
@@ -63,29 +63,6 @@ def create_app():
             # Register handlers
             dispatcher = app.updater.dispatcher
 
-            # Set up bot commands menu
-            commands = [
-                BotCommand("start", "Begin your musical journey 🎵"),
-                BotCommand("help", "Get detailed help and tips 💡"),
-                BotCommand("lyrics", "Get song lyrics with mood analysis 🎤"),
-                BotCommand("stats", "Get detailed song statistics 📊"),
-                BotCommand("recommend", "Discover similar songs 🎵"),
-                BotCommand("quiz", "Play an interactive lyrics quiz 🎮"),
-                BotCommand("translate", "Get Arabic lyrics translation 🌍"),
-                BotCommand("youtube", "Find songs on YouTube 🎬"),
-                BotCommand("analyze", "Get deep song analysis 📈"),
-                BotCommand("subscribe", "Get daily song discoveries 🔔"),
-                BotCommand("unsubscribe", "Stop daily updates 🔕"),
-                BotCommand("wiki", "Get Wikipedia info about artists 📚"),
-                BotCommand("trending", "See what's hot right now! 🔥")
-            ]
-
-            try:
-                app.updater.bot.set_my_commands(commands)
-                logger.info("Bot commands menu set up successfully")
-            except Exception as e:
-                logger.error(f"Failed to set up bot commands: {e}")
-
             handlers = [
                 ("start", start_command),
                 ("help", help_command),
@@ -100,8 +77,7 @@ def create_app():
                 ("subscribe", subscribe_daily_command),
                 ("unsubscribe", unsubscribe_daily_command),
                 ("download", download_command),
-                ("wiki", wiki_command),
-                ("trending", trending_command)
+                ("wiki", wiki_command)
             ]
 
             for command, handler in handlers:
