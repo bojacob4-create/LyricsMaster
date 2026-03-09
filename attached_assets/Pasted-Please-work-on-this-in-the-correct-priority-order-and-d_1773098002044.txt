@@ -1,0 +1,127 @@
+Please work on this in the correct priority order and do not skip testing.
+
+Goal: make LyricsMaster stable first, then fast, then polished.
+
+## Phase 1 — Stabilize architecture and runtime
+Audit the current project structure and fix any duplicate bot startup paths.
+
+Files to inspect carefully:
+- `app.py`
+- `bot.py`
+- `main.py`
+- `wsgi.py`
+- `.replit`
+
+Known risk already seen in logs:
+- `Conflict: terminated by other getUpdates request; make sure that only one bot instance is running`
+
+What I want:
+- choose one clear runtime strategy
+- prevent multiple bot instances
+- remove or disable unused webhook logic if polling is the chosen mode
+- ensure the deployment run command matches the actual architecture
+- make sure Flask app creation does not initialize the Telegram bot if that causes duplicate startup
+- verify the bot can start cleanly and respond reliably
+
+Important:
+Do not assume it is fixed. Actually verify it.
+
+## Phase 2 — Improve performance and responsiveness
+After runtime is stable, optimize for speed.
+
+Check for:
+- blocking calls
+- slow external API usage
+- unnecessary repeated requests
+- missing timeouts
+- slow handlers
+
+Improve by adding:
+- timeouts for all external services
+- graceful fallbacks
+- caching where useful
+- cleaner request flow
+
+The bot should respond fast and avoid lag.
+
+## Phase 3 — Audit and improve all current commands
+Review all existing commands and services.
+
+Files/folders to inspect:
+- `handlers.py`
+- all files in `services/`
+
+For every current command:
+- confirm it works
+- confirm it is registered correctly
+- confirm it appears in `/start`, `/help`, and Telegram command menu if appropriate
+- improve bad fallback messages
+- improve formatting and readability
+- ensure errors do not break the bot
+
+Do not claim a command works unless you tested it.
+
+## Phase 4 — Make user input easier and cleaner
+Make the bot more forgiving with user input.
+
+Examples that should be handled better:
+- `/lyrics shape of you`
+- `lyrics shape of you`
+- extra spaces
+- quoted song names
+- song + artist in one line
+- messy punctuation
+
+Please add input cleaning and normalization so commands feel easier for normal users.
+
+## Phase 5 — Improve output quality
+Make outputs cleaner, more useful, and more premium.
+
+Requirements:
+- readable structure
+- consistent formatting across commands
+- no ugly walls of text
+- better fallback responses
+- more helpful guidance when something fails
+
+Examples:
+- recommendations should explain why the songs fit
+- translated lyrics should clearly separate original and translated text
+- song or artist info should be concise and useful
+- if a command fails, suggest the next best command
+
+## Phase 6 — Add only high-value improvements
+After the existing bot is stable and polished, add or improve only features that strengthen the bot naturally.
+
+Good additions if they fit cleanly:
+- `/meaning <song>` for lyric/song meaning
+- `/mood <happy/sad/chill/etc>` for mood-based recommendations
+- `/guesslyrics` for engagement
+- `/similar <song>` for similar songs
+- `/musicpersonality` if it can be done simply and well
+
+Do not add random low-value features.
+Focus on features that improve usefulness, retention, and fun.
+
+## Phase 7 — Logging and testing
+Improve logs so performance and failures are easy to diagnose.
+
+Track:
+- command name
+- response time
+- service used
+- success/failure
+- fallback usage
+
+Then test the bot properly.
+
+At the end, give me a real summary with:
+1. what was broken
+2. what you changed
+3. what you tested
+4. what still needs improvement
+
+Very important:
+- Do not make assumptions
+- Do not say something is fixed unless you tested it
+- Stability first, then speed, then commands, then new features

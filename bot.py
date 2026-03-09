@@ -45,7 +45,7 @@ class TelegramBotWorker:
         self.max_retries = 5
         self.retry_delay = 60  # seconds
         self.last_keepalive = time.time()
-        self.keepalive_interval = 30  # seconds
+        self.keepalive_interval = 300  # seconds
         self.running = True
         self.lock_file = "/tmp/telegram_bot.lock"
         
@@ -182,7 +182,6 @@ class TelegramBotWorker:
     def initialize(self):
         """Initialize the bot with handlers."""
         try:
-            # Create the Updater with persistent retry settings
             self.updater = Updater(
                 token=self.token,
                 use_context=True,
@@ -191,6 +190,9 @@ class TelegramBotWorker:
                     'connect_timeout': 30
                 }
             )
+
+            self.updater.bot.delete_webhook(drop_pending_updates=True)
+            logger.info("Webhook cleared, ready for polling")
 
             # Get the dispatcher
             dp = self.updater.dispatcher
