@@ -27,7 +27,8 @@ from utils import (
 )
 from services.youtube_service import get_youtube_link, format_youtube_response
 from services.youtube_downloader_service import download_youtube_video, cleanup_video
-from services.ai_info_service import get_person_info # Changed import
+from services.ai_info_service import get_person_info
+from input_parser import parse_song_query, search_lyrics_with_fallback, clean_input
 
 logger = logging.getLogger(__name__)
 
@@ -260,36 +261,42 @@ def lyrics_command(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     try:
         query = " ".join(context.args)
-        if not query or "-" not in query:
-            logger.info(f"User {user_id} provided invalid lyrics query format")
+        logger.info(f"User {user_id} raw lyrics input: '{query}'")
+
+        if not query:
             update.message.reply_text(
-                "⚠️ Oops! I need both the artist and song name!\n\n"
-                "Use this format: /lyrics artist - song\n"
-                "For example: /lyrics Ed Sheeran - Perfect\n\n"
-                "Give it another try! 🎵"
+                "⚠️ Please tell me what song you're looking for!\n\n"
+                "You can use any of these formats:\n"
+                "• /lyrics Tyla - Water\n"
+                "• /lyrics Water Tyla\n"
+                "• /lyrics Water\n\n"
+                "Give it a try! 🎵"
             )
             return
 
-        artist, song = query.split("-", 1)
-        logger.info(f"User {user_id} requested lyrics for '{artist.strip()} - {song.strip()}'")
-
-        # Send typing action
         update.message.chat.send_action(action="typing")
 
-        lyrics = get_song_lyrics(artist.strip(), song.strip())
+        artist, song, lyrics, status = search_lyrics_with_fallback(query)
+
         if not lyrics:
-            logger.info(f"No lyrics found for '{artist.strip()} - {song.strip()}'")
+            logger.info(f"No lyrics found for user {user_id}, query: '{query}'")
             update.message.reply_text(
                 "😕 Sorry, I couldn't find those lyrics.\n\n"
-                "Please check:\n"
-                "• The spelling of the artist and song\n"
-                "• If the song exists\n"
-                "• Try another song from the same artist\n\n"
-                "Need help? Use /help to see examples! 💡"
+                "Try different formats:\n"
+                "• /lyrics Water\n"
+                "• /lyrics Water Tyla\n"
+                "• /lyrics Tyla - Water\n\n"
+                "Tips:\n"
+                "• Check the spelling\n"
+                "• Try just the song name\n"
+                "• Use the artist's most known name\n\n"
+                "Need help? Use /help for more examples! 💡"
             )
             return
 
-        # Get mood and statistics
+        display_title = f"{artist} - {song}" if artist and song else (artist or song)
+        logger.info(f"Found lyrics for user {user_id}: '{display_title}'")
+
         mood = detect_song_mood(lyrics)
         stats = get_song_statistics(lyrics)
 
@@ -301,24 +308,20 @@ def lyrics_command(update: Update, context: CallbackContext):
             'relaxed': '😌'
         }.get(mood, '🎵')
 
-        # Format header with song info and stats
         header = (
-            f"🎵 {artist.strip()} - {song.strip()}\n\n"
+            f"🎵 {display_title}\n\n"
             f"Song mood: {mood_emoji} {mood.title()}\n"
             f"Words: {stats['total_words']} | Lines: {stats['total_lines']} | "
             f"Vocabulary: {stats['vocabulary_richness']}%\n\n"
         )
 
-        # Format and split lyrics into chunks
         formatted_lyrics = format_lyrics(lyrics)
-        max_chunk_size = 3000  # Leave room for headers and formatting
+        max_chunk_size = 3000
         chunks = [formatted_lyrics[i:i + max_chunk_size] for i in range(0, len(formatted_lyrics), max_chunk_size)]
 
-        # Send first message with header
         first_message = header + chunks[0]
         update.message.reply_text(first_message)
 
-        # Send remaining chunks if any
         for i, chunk in enumerate(chunks[1:], 1):
             continuation_header = f"🎵 Continuation ({i+1}/{len(chunks)})...\n\n"
             update.message.reply_text(continuation_header + chunk)
@@ -343,72 +346,62 @@ def stats_command(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     try:
         query = " ".join(context.args)
-        if not query or "-" not in query:
-            logger.info(f"User {user_id} provided invalid stats query format")
+        logger.info(f"User {user_id} raw stats input: '{query}'")
+
+        if not query:
             update.message.reply_text(
-                "⚠️ Oops! I need both the artist and song name!\n\n"
-                "Use this format: /stats artist - song\n"
-                "For example: /stats Ed Sheeran - Perfect\n\n"
+                "⚠️ Please tell me what song to analyze!\n\n"
+                "Examples:\n"
+                "• /stats Ed Sheeran - Perfect\n"
+                "• /stats Perfect Ed Sheeran\n"
+                "• /stats Perfect\n\n"
                 "Give it another try! 📊"
             )
             return
 
-        artist, song = query.split("-", 1)
-        logger.info(f"User {user_id} requested stats for '{artist.strip()} - {song.strip()}'")
-
-        # Send typing action
         update.message.chat.send_action(action="typing")
 
-        # First send a processing message
         processing_msg = update.message.reply_text(
             "🔄 Analyzing the song...\n"
             "This will take just a moment! 📊"
         )
 
-        lyrics = get_song_lyrics(artist.strip(), song.strip())
+        artist, song, lyrics, status = search_lyrics_with_fallback(query)
+
         if not lyrics:
-            logger.info(f"No lyrics found for '{artist.strip()} - {song.strip()}'")
+            logger.info(f"No lyrics found for stats, query: '{query}'")
             processing_msg.edit_text(
                 "😕 Sorry, I couldn't find that song.\n\n"
-                "Please check:\n"
-                "• The spelling of the artist and song\n"
-                "• If the song exists\n"
-                "• Try another song from the same artist\n\n"
+                "Try different formats:\n"
+                "• /stats Perfect\n"
+                "• /stats Perfect Ed Sheeran\n"
+                "• /stats Ed Sheeran - Perfect\n\n"
                 "Need help? Use /help to see examples! 🔍"
             )
             return
 
-        # Get statistics and format them
+        display_title = f"{artist} - {song}" if artist and song else (artist or song)
         stats = get_song_statistics(lyrics)
         formatted_stats = format_statistics(stats)
 
         response = (
-            f"🎵 {artist.strip()} - {song.strip()}\n\n"
+            f"🎵 {display_title}\n\n"
             f"{formatted_stats}\n\n"
             "Want to see the lyrics? Try /lyrics with this song! 🎤"
         )
 
-        # Update the processing message with results
         processing_msg.edit_text(response)
         logger.info(f"Successfully sent stats to user {user_id}")
 
     except Exception as e:
         logger.error(f"Error processing stats command for user {user_id}: {str(e)}")
-        error_message = (
-            "😓 Oops! Something went wrong while analyzing the song.\n"
-            "Please try:\n"
-            "• Check the spelling of artist and song\n"
-            "• Wait a few moments and try again\n"
-            "• Try a different song\n\n"
-            "Example: /stats Ed Sheeran - Perfect 🎵"
-        )
         try:
-            update.message.reply_text(error_message)
-        except Exception:
-            # If the original message failed, try sending a new one
             update.message.reply_text(
-                "😓 Something went wrong. Please try again in a moment! 🔄"
+                "😓 Oops! Something went wrong while analyzing the song.\n"
+                "Please try again in a moment! 🔄"
             )
+        except Exception:
+            pass
 
 
 def recommend_command(update: Update, context: CallbackContext):
@@ -416,35 +409,40 @@ def recommend_command(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     try:
         query = " ".join(context.args)
-        if not query or "-" not in query:
-            logger.info(f"User {user_id} provided invalid recommendation query format")
+        logger.info(f"User {user_id} raw recommend input: '{query}'")
+
+        if not query:
             update.message.reply_text(
-                "⚠️ Oops! I need both the artist and song name!\n\n"
-                "Use this format: /recommend artist - song\n"
-                "For example: /recommend Taylor Swift - Love Story\n\n"
+                "⚠️ Please tell me what song to base recommendations on!\n\n"
+                "Examples:\n"
+                "• /recommend Taylor Swift - Love Story\n"
+                "• /recommend Love Story Taylor Swift\n"
+                "• /recommend Love Story\n\n"
                 "Give it another try! 🎵"
             )
             return
 
-        artist, song = query.split("-", 1)
-        logger.info(f"User {user_id} requested recommendations for '{artist.strip()} - {song.strip()}'")
-
-        # Send typing action
         update.message.chat.send_action(action="typing")
 
-        lyrics = get_song_lyrics(artist.strip(), song.strip())
+        artist, song, lyrics, status = search_lyrics_with_fallback(query)
+
         if not lyrics:
-            logger.info(f"No lyrics found for '{artist.strip()} - {song.strip()}'")
+            logger.info(f"No lyrics found for recommendations, query: '{query}'")
             update.message.reply_text(
                 "😕 Sorry, I couldn't find that song.\n\n"
-                "Please check the spelling and try again! 🔍"
+                "Try different formats:\n"
+                "• /recommend Love Story\n"
+                "• /recommend Taylor Swift - Love Story\n\n"
+                "Check the spelling and try again! 🔍"
             )
             return
 
-        # Get song mood and recommendations
+        display_title = f"{artist} - {song}" if artist and song else (artist or song)
         mood = detect_song_mood(lyrics)
-        recommendations = get_similar_songs(artist.strip(), song.strip(), mood)
-        formatted_recommendations = format_recommendations(recommendations, f"{artist.strip()} - {song.strip()}")
+        use_artist = artist if artist else query
+        use_song = song if song else query
+        recommendations = get_similar_songs(use_artist, use_song, mood)
+        formatted_recommendations = format_recommendations(recommendations, display_title)
 
         update.message.reply_text(formatted_recommendations)
         logger.info(f"Successfully sent recommendations to user {user_id}")
@@ -462,50 +460,63 @@ def translate_lyrics_command(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     try:
         query = " ".join(context.args)
-        if not query or "-" not in query:
-            logger.info(f"User {user_id} provided invalid translation query format")
+        logger.info(f"User {user_id} raw translate input: '{query}'")
+
+        if not query:
             update.message.reply_text(
-                "⚠️ Please use this format: /translate artist - song\n"
-                "For example: /translate Adele - Hello\n\n"
+                "⚠️ Please tell me what song to translate!\n\n"
+                "Examples:\n"
+                "• /translate Adele - Hello\n"
+                "• /translate Hello Adele\n"
+                "• /translate Hello\n\n"
                 "Let's try again! 🎵"
             )
             return
 
-        artist, song = query.split("-", 1)
-        logger.info(f"User {user_id} requested translation for '{artist.strip()} - {song.strip()}'")
+        update.message.chat.send_action(action="typing")
 
-        update.message.reply_text("🔄 Magic translation in progress... Please wait! ✨")
+        artist, song, lyrics, status = search_lyrics_with_fallback(query)
 
-        lyrics = get_song_lyrics(artist.strip(), song.strip())
         if not lyrics:
-            logger.info(f"No lyrics found for translation: '{artist.strip()} - {song.strip()}'")
+            logger.info(f"No lyrics found for translation, query: '{query}'")
             update.message.reply_text(
-                "😕 I couldn't find the lyrics for this song.\n"
-                "Double-check the spelling and try again! 🔍"
+                "😕 I couldn't find the lyrics for this song, so I can't translate it.\n\n"
+                "Try different formats:\n"
+                "• /translate Hello\n"
+                "• /translate Adele - Hello\n\n"
+                "Check the spelling and try again! 🔍"
             )
             return
+
+        display_title = f"{artist} - {song}" if artist and song else (artist or song)
+
+        processing_msg = update.message.reply_text(
+            f"✅ Found lyrics for {display_title}!\n"
+            "🔄 Translating to Arabic... Please wait! ✨"
+        )
 
         translated_lyrics = translate_to_arabic(lyrics)
         if translated_lyrics:
             formatted_lyrics = format_lyrics(translated_lyrics)
             response = (
-                f"🎵 {artist.strip()} - {song.strip()}\n"
+                f"🎵 {display_title}\n"
                 f"🌍 Arabic Translation:\n\n"
                 f"{formatted_lyrics}"
             )
-            update.message.reply_text(response)
+            processing_msg.edit_text(response)
             logger.info(f"Successfully sent translated lyrics to user {user_id}")
         else:
             logger.warning(f"Translation failed for user {user_id}")
-            update.message.reply_text(
-                "😓 The translation genie is taking a break.\n"
-                "Please try again in a few moments! 🧞‍♂️"
+            processing_msg.edit_text(
+                "😓 I found the lyrics but the translation service is unavailable right now.\n"
+                "Please try again in a few moments! 🧞‍♂️\n\n"
+                f"In the meantime, try /lyrics {query} to see the original lyrics!"
             )
 
     except Exception as e:
         logger.error(f"Error processing translate command for user {user_id}: {str(e)}")
         update.message.reply_text(
-            "🤖 Oops! My translation circuits got a bit tangled.\n"
+            "🤖 Oops! Something went wrong with the translation.\n"
             "Let's try that again in a moment! 🔄"
         )
 
@@ -601,27 +612,57 @@ def youtube_command(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     try:
         query = " ".join(context.args)
-        if not query or "-" not in query:
-            logger.info(f"User {user_id} provided invalid youtube query format")
+        logger.info(f"User {user_id} raw youtube input: '{query}'")
+
+        if not query:
             update.message.reply_text(
-                "⚠️ Please use this format: /youtube artist - song\n"
-                "For example: /youtube Ed Sheeran - Perfect\n\n"
+                "⚠️ Please tell me what song to find on YouTube!\n\n"
+                "Examples:\n"
+                "• /youtube Ed Sheeran - Perfect\n"
+                "• /youtube Perfect Ed Sheeran\n"
+                "• /youtube Perfect\n\n"
                 "Let's try again! 🎵"
             )
             return
 
-        artist, song = query.split("-", 1)
-        logger.info(f"User {user_id} requested YouTube link for '{artist.strip()} - {song.strip()}'")
+        update.message.chat.send_action(action="typing")
 
-        url = get_youtube_link(artist.strip(), song.strip())
+        candidates = parse_song_query(query)
+        url = None
+        used_artist = ''
+        used_song = ''
+
+        for artist, song in candidates:
+            if not artist and not song:
+                continue
+            a = artist if artist else song
+            s = song if artist else ''
+            logger.info(f"YouTube search trying: artist='{a}', song='{s}'")
+            result = get_youtube_link(a, s)
+            if result:
+                url = result
+                used_artist = a
+                used_song = s
+                break
+
+        if not url:
+            url = get_youtube_link(query, '')
+            used_artist = query
+            used_song = ''
+
         if not url:
             update.message.reply_text(
-                "😕 Sorry, I couldn't get a YouTube link for this song.\n"
-                "Please try again in a moment! 🔄"
+                "😕 Sorry, I couldn't find this song on YouTube.\n\n"
+                "Try different formats:\n"
+                "• /youtube Perfect\n"
+                "• /youtube Ed Sheeran - Perfect\n\n"
+                "Check the spelling and try again! 🔄"
             )
             return
 
-        response = format_youtube_response(artist.strip(), song.strip(), url)
+        display_artist = used_artist
+        display_song = used_song if used_song else used_artist
+        response = format_youtube_response(display_artist, display_song, url)
         update.message.reply_text(response)
         logger.info(f"Successfully sent YouTube link to user {user_id}")
 
@@ -638,37 +679,41 @@ def analyze_command(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     try:
         query = " ".join(context.args)
-        if not query or "-" not in query:
-            logger.info(f"User {user_id} provided invalid analysis query format")
+        logger.info(f"User {user_id} raw analyze input: '{query}'")
+
+        if not query:
             update.message.reply_text(
-                "⚠️ Please use this format: /analyze artist - song\n"
-                "For example: /analyze Eminem - Lose Yourself\n\n"
-                "I'll give you a detailed analysis of the song! 📊"
+                "⚠️ Please tell me what song to analyze!\n\n"
+                "Examples:\n"
+                "• /analyze Eminem - Lose Yourself\n"
+                "• /analyze Lose Yourself Eminem\n"
+                "• /analyze Lose Yourself\n\n"
+                "I'll give you a detailed analysis! 📊"
             )
             return
 
-        artist, song = query.split("-", 1)
-        logger.info(f"User {user_id} requested analysis for '{artist.strip()} - {song.strip()}'")
-
-        # Send typing action while processing
         update.message.chat.send_action(action="typing")
 
-        lyrics = get_song_lyrics(artist.strip(), song.strip())
+        artist, song, lyrics, status = search_lyrics_with_fallback(query)
+
         if not lyrics:
-            logger.info(f"No lyrics found for '{artist.strip()} - {song.strip()}'")
+            logger.info(f"No lyrics found for analysis, query: '{query}'")
             update.message.reply_text(
                 "😕 Sorry, I couldn't find that song.\n\n"
-                "Please check the spelling and try again! 🔍"
+                "Try different formats:\n"
+                "• /analyze Lose Yourself\n"
+                "• /analyze Eminem - Lose Yourself\n\n"
+                "Check the spelling and try again! 🔍"
             )
             return
 
-        # Get detailed analysis
+        display_title = f"{artist} - {song}" if artist and song else (artist or song)
+
         analysis = get_detailed_song_analysis(lyrics)
         formatted_analysis = format_detailed_analysis(analysis)
 
-        # Format response with song info
         response = (
-            f"🎵 Detailed Analysis: {artist.strip()} - {song.strip()}\n\n"
+            f"🎵 Detailed Analysis: {display_title}\n\n"
             f"{formatted_analysis}"
         )
 
