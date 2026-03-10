@@ -1,0 +1,155 @@
+We found two small issues during testing that should be fixed, but it is extremely important that no existing working functionality is modified.
+
+The bot is currently stable and deployed, so this task must be handled carefully.
+
+Critical Rule
+
+Do NOT modify or refactor any existing command logic except where explicitly required below.
+
+Do NOT touch the implementation of the following commands because they are already working correctly:
+
+/lyrics
+/song
+/artist
+/recommend
+/youtube
+/download
+/mp3
+/translate
+/analyze
+/random
+/quiz
+/trending
+/top
+
+Do not modify:
+	•	the natural language router
+	•	button callback system
+	•	handlers unrelated to wiki
+	•	recommendation system
+	•	YouTube service
+	•	download logic
+	•	trending/top chart logic
+
+Only fix the two issues described below.
+
+⸻
+
+Issue 1 — Wikipedia search sometimes returns the wrong page
+
+Example test:
+
+User command:
+/wiki ariana grande
+
+Expected:
+Wikipedia page for the artist
+https://en.wikipedia.org/wiki/Ariana_Grande
+
+Actual result returned:
+Positions (album) page.
+
+This happens because the wiki service likely performs a search and simply selects the first search result.
+
+Required fix
+
+Improve the wiki lookup logic:
+	1.	First try an exact page lookup using the query.
+	2.	If that fails, then fall back to search.
+
+Example logic:
+
+try:
+wikipedia.page(query)
+except:
+results = wikipedia.search(query)
+use best result
+
+This will ensure that /wiki ariana grande returns the correct artist page instead of an album.
+
+Do not change the response formatting of the wiki command.
+
+⸻
+
+Issue 2 — Incorrect song normalization in some outputs
+
+Example seen during testing:
+
+The bot produced:
+
+Counting — stars
+
+instead of:
+
+Counting Stars
+
+This appears to come from the query normalization logic that converts phrases like:
+
+water by tyla
+
+into:
+
+tyla - water
+
+The normalization logic is incorrectly inserting hyphens in some cases where it should not.
+
+Required fix
+
+Ensure the normalization logic only converts patterns like:
+
+<song> by <artist>
+
+into:
+
+<artist> - <song>
+
+But it must NOT modify titles that are already standalone song names.
+
+Example expected behavior:
+
+Input:
+lyrics water by tyla
+
+Output query:
+tyla - water
+
+But for:
+
+Counting stars
+
+The query must remain:
+
+Counting Stars
+
+No hyphen insertion.
+
+⸻
+
+Important
+
+Do NOT modify the behavior of any existing working commands.
+
+All current commands must continue functioning exactly as they do now.
+
+This includes:
+
+/lyrics
+/song
+/artist
+/recommend
+/youtube
+/download
+/mp3
+/translate
+/analyze
+/random
+/quiz
+/trending
+/top
+
+Only the two issues above should be addressed.
+
+After completing the fix, confirm:
+	1.	/wiki ariana grande returns the correct Wikipedia page.
+	2.	Song titles like Counting Stars are no longer incorrectly formatted.
+	3.	All existing commands remain unchanged and working.
