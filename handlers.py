@@ -28,7 +28,10 @@ from utils import (
 from services.youtube_service import get_youtube_link, format_youtube_response
 from services.youtube_downloader_service import download_youtube_video, download_youtube_audio, cleanup_video
 from services.ai_info_service import get_person_info
-from services.artist_service import get_artist_info, format_artist_info, get_trending_songs, format_trending
+from services.artist_service import (
+    get_artist_info, format_artist_info, get_trending_songs, format_trending,
+    get_top_by_genre, format_top_songs, get_available_genres, get_random_song
+)
 from input_parser import parse_song_query, search_lyrics_with_fallback, clean_input
 
 logger = logging.getLogger(__name__)
@@ -42,23 +45,24 @@ def start_command(update: Update, context: CallbackContext):
         f"🎵 *Welcome, {user_first_name}!* 🎸\n\n"
         "I'm Lyrics Master — your personal music companion.\n\n"
         "*What I can do:*\n\n"
-        "🎤 */lyrics* — Song lyrics with mood analysis\n"
+        "🎵 */song* — Full song dashboard\n"
+        "🎤 */lyrics* — Song lyrics with mood\n"
         "📊 */stats* — Word counts and patterns\n"
         "🎵 */recommend* — Discover similar songs\n"
         "🔍 */analyze* — Deep lyrical breakdown\n"
-        "🌍 */translate* — Arabic translation\n"
+        "🎤 */artist* — Quick artist profile\n"
+        "🔝 */top* — Top songs by genre\n"
+        "🎲 */random* — Random song discovery\n"
         "🎬 */youtube* — Find the music video\n"
         "📥 */download* — Download YouTube videos\n"
         "🎵 */mp3* — Download audio as MP3\n"
         "🎮 */quiz* — Lyrics guessing game\n"
-        "📚 */wiki* — Artist Wikipedia info\n"
-        "🎤 */artist* — Quick artist info\n"
-        "📈 */trending* — Trending songs now\n"
         "🔔 */subscribe* — Daily song picks\n\n"
         "*Try it now:*\n"
-        "• /lyrics Tyla - Water\n"
+        "• /song Tyla Water\n"
         "• /lyrics Shape of You\n"
-        "• /recommend Adele - Hello\n\n"
+        "• /top afrobeats\n"
+        "• /random\n\n"
         "Type */help* for the full guide! 💫"
     )
 
@@ -83,6 +87,9 @@ def help_command(update: Update, context: CallbackContext):
     logger.info(f"User {update.effective_user.id} requested help")
     help_text = (
         "🎵 *Lyrics Master — Command Guide* 🎸\n\n"
+        "*🎵 All-in-One*\n"
+        "▫️ */song* — Full song dashboard\n"
+        "▫️ */random* — Random song discovery\n\n"
         "*🎤 Lyrics & Analysis*\n"
         "▫️ */lyrics* — Get song lyrics\n"
         "▫️ */stats* — Word counts and patterns\n"
@@ -90,9 +97,10 @@ def help_command(update: Update, context: CallbackContext):
         "▫️ */translate* — Arabic translation\n\n"
         "*🎵 Discovery*\n"
         "▫️ */recommend* — Find similar songs\n"
+        "▫️ */top* — Top songs by genre\n"
+        "▫️ */artist* — Quick artist profile\n"
         "▫️ */youtube* — Find the music video\n"
         "▫️ */wiki* — Artist Wikipedia info\n"
-        "▫️ */artist* — Quick artist info\n"
         "▫️ */trending* — Trending songs now\n\n"
         "*🎮 Fun*\n"
         "▫️ */quiz* — Lyrics guessing game (40 songs!)\n"
@@ -103,12 +111,12 @@ def help_command(update: Update, context: CallbackContext):
         "*🔔 Daily Updates*\n"
         "▫️ */subscribe* — Get daily song picks\n"
         "▫️ */unsubscribe* — Stop daily updates\n\n"
-        "*💡 How to use song commands:*\n"
-        "You can use any of these formats:\n"
+        "*💡 How to use:*\n"
+        "• /song Tyla Water\n"
         "• /lyrics Tyla - Water\n"
-        "• /lyrics Water Tyla\n"
-        "• /lyrics Water\n\n"
-        "No strict format required — I'll figure it out! 🚀"
+        "• /top afrobeats\n"
+        "• /random\n\n"
+        "No strict format needed — I'll figure it out! 🚀"
     )
 
     try:
@@ -927,6 +935,243 @@ def trending_command(update: Update, context: CallbackContext):
         )
 
 
+def song_command(update: Update, context: CallbackContext):
+    """Handle the /song command — full song dashboard."""
+    user_id = update.effective_user.id
+    try:
+        query = " ".join(context.args)
+        logger.info(f"User {user_id} raw song dashboard input: '{query}'")
+
+        if not query:
+            update.message.reply_text(
+                "🎵 Song Dashboard\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Get a full overview of any song!\n\n"
+                "Usage: /song [artist and/or song]\n\n"
+                "Examples:\n"
+                "• /song Tyla Water\n"
+                "• /song Shape of You\n"
+                "• /song Adele - Hello"
+            )
+            return
+
+        update.message.chat.send_action(action="typing")
+
+        processing_msg = update.message.reply_text(
+            "🎵 Building your song dashboard...\n"
+            "Just a moment! ✨"
+        )
+
+        artist, song, lyrics, status = search_lyrics_with_fallback(query)
+
+        if not lyrics:
+            processing_msg.edit_text(
+                "😕 Couldn't find that song.\n\n"
+                "Try:\n"
+                "• /song Water Tyla\n"
+                "• /song Tyla - Water\n"
+                "• /song Water"
+            )
+            return
+
+        display_title = f"{artist} - {song}" if artist and song else (artist or song)
+
+        mood = detect_song_mood(lyrics)
+        stats = get_song_statistics(lyrics)
+        analysis = get_detailed_song_analysis(lyrics)
+
+        mood_emoji = {
+            'happy': '😊', 'sad': '😢', 'romantic': '💖',
+            'energetic': '⚡', 'relaxed': '😌'
+        }.get(mood, '🎵')
+
+        lyrics_lines = [l.strip() for l in lyrics.strip().split('\n') if l.strip()]
+        preview_lines = lyrics_lines[:4]
+        lyrics_preview = '\n'.join(f"  {l}" for l in preview_lines)
+        if len(lyrics_lines) > 4:
+            lyrics_preview += "\n  ..."
+
+        use_artist = artist if artist else query
+        use_song = song if song else query
+
+        yt_url = get_youtube_link(use_artist, use_song)
+        yt_section = f"🎬 {yt_url}" if yt_url else "🎬 YouTube: not found"
+
+        recs = get_similar_songs(use_artist, use_song, mood)
+        recs_lines = []
+        for i, r in enumerate(recs[:3]):
+            emoji = ['🔥', '✨', '💫'][i]
+            recs_lines.append(f"  {emoji} {r['artist']} — {r['name']}")
+        recs_text = '\n'.join(recs_lines) if recs_lines else "  No recommendations available"
+
+        vocab_pct = stats.get('vocabulary_richness', 0)
+        if vocab_pct >= 70:
+            vocab_label = "Rich"
+        elif vocab_pct >= 50:
+            vocab_label = "Moderate"
+        else:
+            vocab_label = "Repetitive"
+
+        themes = analysis.get('themes', [])
+        themes_text = ', '.join(themes[:3]) if themes else 'General'
+
+        response = (
+            f"🎵 {display_title}\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"{yt_section}\n\n"
+            f"📝 Lyrics Preview:\n{lyrics_preview}\n\n"
+            f"📊 Quick Stats:\n"
+            f"  {mood_emoji} Mood: {mood.title()}\n"
+            f"  📝 Words: {stats['total_words']} | Lines: {stats['total_lines']}\n"
+            f"  🧠 Vocabulary: {vocab_pct}% ({vocab_label})\n"
+            f"  🎭 Themes: {themes_text}\n\n"
+            f"🎵 Similar Songs:\n{recs_text}\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎤 /lyrics {query} — full lyrics\n"
+            f"🔍 /analyze {query} — deep analysis"
+        )
+
+        processing_msg.edit_text(response, disable_web_page_preview=True)
+        logger.info(f"Successfully sent song dashboard to user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error in song command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong building the dashboard.\n"
+            "Please try again! 🔄"
+        )
+
+
+def top_command(update: Update, context: CallbackContext):
+    """Handle the /top command — top songs by genre."""
+    user_id = update.effective_user.id
+    try:
+        query = " ".join(context.args)
+        logger.info(f"User {user_id} requested top songs for genre: '{query}'")
+
+        if not query:
+            genres = get_available_genres()
+            genre_list = ' • '.join(g.upper() if g in ('rnb', 'kpop') else g.title() for g in genres)
+            update.message.reply_text(
+                "🔝 Top Songs by Genre\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Usage: /top [genre]\n\n"
+                f"Available: {genre_list}\n\n"
+                "Examples:\n"
+                "• /top afrobeats\n"
+                "• /top pop\n"
+                "• /top rap\n"
+                "• /top rock\n"
+                "• /top kpop"
+            )
+            return
+
+        result = get_top_by_genre(query)
+        if result:
+            genre, songs = result
+            update.message.reply_text(format_top_songs(genre, songs))
+        else:
+            genres = get_available_genres()
+            genre_list = ', '.join(g.upper() if g in ('rnb', 'kpop') else g.title() for g in genres)
+            update.message.reply_text(
+                f"😕 Genre \"{query}\" not found.\n\n"
+                f"Try one of these: {genre_list}\n\n"
+                "Example: /top afrobeats"
+            )
+
+        logger.info(f"Successfully sent top songs to user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error in top command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Couldn't fetch top songs right now.\n"
+            "Please try again! 🔄"
+        )
+
+
+def random_command(update: Update, context: CallbackContext):
+    """Handle the /random command — random song discovery."""
+    user_id = update.effective_user.id
+    try:
+        logger.info(f"User {user_id} requested random song")
+
+        update.message.chat.send_action(action="typing")
+
+        processing_msg = update.message.reply_text(
+            "🎲 Rolling the dice...\n"
+            "Finding you something great! ✨"
+        )
+
+        pick = get_random_song()
+        artist_name = pick['artist']
+        song_name = pick['song']
+
+        artist, song, lyrics, status = search_lyrics_with_fallback(f"{artist_name} {song_name}")
+
+        if not lyrics:
+            artist = artist_name
+            song = song_name
+
+        display_title = f"{artist} - {song}" if artist and song else (artist or song or f"{artist_name} - {song_name}")
+
+        yt_url = get_youtube_link(artist_name, song_name)
+        yt_section = f"🎬 {yt_url}" if yt_url else ""
+
+        lyrics_preview = ""
+        if lyrics:
+            lyrics_lines = [l.strip() for l in lyrics.strip().split('\n') if l.strip()]
+            preview = lyrics_lines[:4]
+            lyrics_preview = '\n'.join(f"  {l}" for l in preview)
+            if len(lyrics_lines) > 4:
+                lyrics_preview += "\n  ..."
+
+        mood = detect_song_mood(lyrics) if lyrics else 'happy'
+        mood_emoji = {
+            'happy': '😊', 'sad': '😢', 'romantic': '💖',
+            'energetic': '⚡', 'relaxed': '😌'
+        }.get(mood, '🎵')
+
+        recs = get_similar_songs(artist_name, song_name, mood)
+        recs_lines = []
+        for i, r in enumerate(recs[:3]):
+            emoji = ['🔥', '✨', '💫'][i]
+            recs_lines.append(f"  {emoji} {r['artist']} — {r['name']}")
+        recs_text = '\n'.join(recs_lines) if recs_lines else ""
+
+        parts = [
+            f"🎲 Random Pick!\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🎵 {display_title}\n"
+            f"  {mood_emoji} Mood: {mood.title()}"
+        ]
+
+        if yt_section:
+            parts.append(f"\n{yt_section}")
+
+        if lyrics_preview:
+            parts.append(f"\n\n📝 Preview:\n{lyrics_preview}")
+
+        if recs_text:
+            parts.append(f"\n\n🎵 You might also like:\n{recs_text}")
+
+        parts.append(
+            f"\n\n━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎤 /lyrics {artist_name} {song_name} — full lyrics\n"
+            f"🎲 /random — try another!"
+        )
+
+        response = ''.join(parts)
+        processing_msg.edit_text(response, disable_web_page_preview=True)
+        logger.info(f"Successfully sent random song to user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error in random command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong with random pick.\n"
+            "Please try again! 🔄"
+        )
+
+
 def main():
     """Initialize bot handlers and start the bot."""
     token = os.environ.get('TELEGRAM_TOKEN')
@@ -956,6 +1201,9 @@ def main():
         dp.add_handler(CommandHandler("wiki", wiki_command))
         dp.add_handler(CommandHandler("artist", artist_command))
         dp.add_handler(CommandHandler("trending", trending_command))
+        dp.add_handler(CommandHandler("song", song_command))
+        dp.add_handler(CommandHandler("top", top_command))
+        dp.add_handler(CommandHandler("random", random_command))
 
         # Add message handler for quiz answers
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
@@ -964,18 +1212,21 @@ def main():
         commands = [
             BotCommand("start", "Welcome & overview"),
             BotCommand("help", "Full command guide"),
+            BotCommand("song", "🎵 Full song dashboard"),
             BotCommand("lyrics", "🎤 Get song lyrics"),
             BotCommand("stats", "📊 Song word statistics"),
             BotCommand("recommend", "🎵 Find similar songs"),
             BotCommand("analyze", "🔍 Deep lyrical analysis"),
             BotCommand("translate", "🌍 Arabic translation"),
+            BotCommand("artist", "🎤 Quick artist profile"),
+            BotCommand("top", "🔝 Top songs by genre"),
+            BotCommand("random", "🎲 Random song discovery"),
             BotCommand("youtube", "🎬 Find the music video"),
             BotCommand("download", "📥 Download YouTube video"),
             BotCommand("mp3", "🎵 Download as MP3"),
             BotCommand("quiz", "🎮 Lyrics guessing game"),
             BotCommand("endquiz", "End current quiz"),
             BotCommand("wiki", "📚 Artist Wikipedia info"),
-            BotCommand("artist", "🎤 Quick artist info"),
             BotCommand("trending", "📈 Trending songs now"),
             BotCommand("subscribe", "🔔 Daily song picks"),
             BotCommand("unsubscribe", "Stop daily updates"),

@@ -39,8 +39,14 @@
 - 40-song pool across multiple genres and eras
 - Multiple choice (A/B/C/D) with streak tracking
 
-## Commands (17 total)
-/start, /help, /lyrics, /stats, /recommend, /analyze, /translate, /youtube, /download, /mp3, /quiz, /endquiz, /wiki, /artist, /trending, /subscribe, /unsubscribe
+## Commands (20 total)
+/start, /help, /song, /lyrics, /stats, /recommend, /analyze, /translate, /artist, /top, /random, /youtube, /download, /mp3, /quiz, /endquiz, /wiki, /trending, /subscribe, /unsubscribe
+
+### New Commands
+- **/song** — Full song dashboard (lyrics preview, YouTube, stats, mood, themes, 3 recommendations)
+- **/top** — Top songs by genre (afrobeats, pop, rap, rnb, rock, latin, country, kpop + aliases)
+- **/random** — Random song pick with lyrics preview, YouTube link, and similar songs
+- **/artist** — Enhanced artist profile card with Wikipedia + YouTube links
 
 ## Workflows
 - **Flask Server**: `gunicorn --bind 0.0.0.0:5000 --workers 1 --threads 2 --timeout 0 wsgi:app` — health checks only

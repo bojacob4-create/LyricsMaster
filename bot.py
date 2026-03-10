@@ -24,7 +24,8 @@ from handlers import (
     translate_lyrics_command, youtube_command, analyze_command,
     subscribe_daily_command, unsubscribe_daily_command,
     download_command, wiki_command, mp3_command,
-    artist_command, trending_command
+    artist_command, trending_command,
+    song_command, top_command, random_command
 )
 
 # Configure logging with both console and file handlers
@@ -117,18 +118,21 @@ class TelegramBotWorker:
             commands = [
                 BotCommand("start", "Welcome & overview"),
                 BotCommand("help", "Full command guide"),
+                BotCommand("song", "🎵 Full song dashboard"),
                 BotCommand("lyrics", "🎤 Get song lyrics"),
                 BotCommand("stats", "📊 Song word statistics"),
                 BotCommand("recommend", "🎵 Find similar songs"),
                 BotCommand("analyze", "🔍 Deep lyrical analysis"),
                 BotCommand("translate", "🌍 Arabic translation"),
+                BotCommand("artist", "🎤 Quick artist profile"),
+                BotCommand("top", "🔝 Top songs by genre"),
+                BotCommand("random", "🎲 Random song discovery"),
                 BotCommand("youtube", "🎬 Find the music video"),
                 BotCommand("download", "📥 Download YouTube video"),
                 BotCommand("mp3", "🎵 Download as MP3"),
                 BotCommand("quiz", "🎮 Lyrics guessing game"),
                 BotCommand("endquiz", "End current quiz"),
                 BotCommand("wiki", "📚 Artist Wikipedia info"),
-                BotCommand("artist", "🎤 Quick artist info"),
                 BotCommand("trending", "📈 Trending songs now"),
                 BotCommand("subscribe", "🔔 Daily song picks"),
                 BotCommand("unsubscribe", "Stop daily updates"),
@@ -221,6 +225,9 @@ class TelegramBotWorker:
             dp.add_handler(CommandHandler("wiki", wiki_command))
             dp.add_handler(CommandHandler("artist", artist_command))
             dp.add_handler(CommandHandler("trending", trending_command))
+            dp.add_handler(CommandHandler("song", song_command))
+            dp.add_handler(CommandHandler("top", top_command))
+            dp.add_handler(CommandHandler("random", random_command))
 
             # Add message handler for quiz answers
             dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))

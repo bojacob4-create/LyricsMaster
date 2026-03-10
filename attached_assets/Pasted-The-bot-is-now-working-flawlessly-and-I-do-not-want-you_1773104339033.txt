@@ -1,0 +1,104 @@
+The bot is now working flawlessly, and I do not want you to modify any of the existing commands because they are stable and high quality already.
+
+Do not touch or refactor the current working commands unless absolutely necessary for compatibility.
+
+Now I want you to add the following new commands only. These should be implemented in a lightweight way so they do not reduce speed or affect stability.
+
+1. Add /song
+
+Create a command:
+
+/song <artist and/or song>
+
+Example:
+/song tyla water
+
+This command should act like a song dashboard in one reply.
+
+Desired output:
+	•	song title + artist
+	•	YouTube video link
+	•	short lyrics preview
+	•	stats summary
+	•	short analysis summary
+	•	3 similar song recommendations
+
+The goal is to give the user one powerful overview command instead of making them run multiple commands.
+
+Keep it clean, concise, and premium-looking. Do not dump huge walls of text.
+
+2. Add /artist
+
+Create a command:
+
+/artist <artist_name>
+
+Example:
+/artist tyla
+
+Desired output:
+	•	short artist bio
+	•	genre / style
+	•	top songs
+	•	Wikipedia link
+	•	YouTube link if available
+
+This should feel like a quick artist profile card.
+
+3. Add /top
+
+Create a command:
+
+/top <genre>
+
+Examples:
+	•	/top afrobeats
+	•	/top pop
+	•	/top rap
+
+Desired behavior:
+	•	show a short list of trending or popular songs in that genre
+	•	keep the output clean and fast
+	•	if live data is unreliable, use a smart fallback approach
+
+The command should be useful for music discovery.
+
+4. Add /random
+
+Create a command:
+
+/random
+
+Desired output:
+	•	one random song recommendation
+	•	short lyrics preview
+	•	YouTube link
+	•	2 or 3 similar songs
+
+This should feel fun and addictive for discovery.
+
+5. Update bot command menu
+
+After adding these commands, make sure they are also included in:
+	•	Telegram command menu
+	•	/start
+	•	/help
+
+New commands to include:
+	•	/song
+	•	/artist
+	•	/top
+	•	/random
+
+Important requirements
+	•	do not break any existing commands
+	•	do not slow down the bot
+	•	reuse existing services where possible
+	•	keep outputs polished, concise, and premium
+	•	test the new commands before reporting success
+
+At the end, give me a summary of:
+	1.	which new commands were added
+	2.	how each one works
+	3.	what you tested
+	4.	whether the command menu, /start, and /help were updated
