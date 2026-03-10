@@ -75,57 +75,77 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
                         "Please try a shorter video! 🎬"
                     )
 
-                # Download the video
                 ydl.download([url])
 
-                # Get the downloaded file path using video ID
-                file_path = os.path.join(os.getcwd(), f'youtube_{video_id}.mp4')
-                if not os.path.exists(file_path):
-                    logger.error(f"Expected file not found at: {file_path}")
-                    return False, "❌ Download failed. Please try another video."
+                import glob as globmod
+                matches = globmod.glob(os.path.join(os.getcwd(), f'youtube_{video_id}.*'))
+                if not matches:
+                    logger.error(f"No downloaded file found for video_id: {video_id}")
+                    return False, (
+                        "❌ Download Failed\n"
+                        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                        "The video downloaded but the file couldn't be located.\n"
+                        "This usually means the format was incompatible.\n"
+                        "Try a different video."
+                    )
+
+                file_path = matches[0]
+                duration = info.get('duration', 0) or 0
+                views = info.get('view_count', 0) or 0
+                file_size_mb = round(os.path.getsize(file_path) / (1024 * 1024), 1)
 
                 success_msg = (
-                    "✅ Video downloaded successfully!\n\n"
-                    f"📽️ Title: {info['title']}\n"
-                    f"👤 Channel: {info['uploader']}\n"
-                    f"⏱️ Length: {info['duration']//60}:{info['duration']%60:02d}\n"
-                    f"👀 Views: {info.get('view_count', 0):,}\n"
-                    f"📦 Size: {round(os.path.getsize(file_path) / (1024 * 1024), 1)}MB\n\n"
-                    "🚀 Uploading to Telegram..."
+                    f"✅ Downloaded!\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"📽️ {info.get('title', 'Video')}\n"
+                    f"👤 {info.get('uploader', 'Unknown')}\n"
+                    f"⏱️ {duration//60}:{duration%60:02d}  •  📦 {file_size_mb}MB\n"
                 )
+                if views:
+                    success_msg += f"👀 {views:,} views\n"
+                success_msg += "\n🚀 Uploading to Telegram..."
 
                 return True, (file_path, success_msg)
 
             except yt_dlp.utils.DownloadError as e:
                 error_msg = str(e).lower()
+                logger.error(f"yt-dlp DownloadError: {str(e)}")
+
                 if "private video" in error_msg:
-                    return False, (
-                        "❌ This video is private.\n"
-                        "Please try a public video instead! 🎬"
-                    )
-                elif "age restricted" in error_msg:
-                    return False, (
-                        "😓 Sorry, this video is age-restricted.\n"
-                        "Please try a different video that's not age-restricted! 🎬"
-                    )
+                    reason = "This video is private and can't be accessed."
+                elif "age restricted" in error_msg or "age-restricted" in error_msg:
+                    reason = "This video is age-restricted. The bot can't bypass age verification."
+                elif "copyright" in error_msg:
+                    reason = "This video is blocked due to copyright restrictions."
+                elif "not available" in error_msg or "unavailable" in error_msg:
+                    reason = "This video is not available (may be region-locked or deleted)."
+                elif "sign in" in error_msg or "login" in error_msg:
+                    reason = "This video requires authentication to access."
+                elif "429" in error_msg or "too many" in error_msg:
+                    reason = "YouTube is rate-limiting requests. Please wait a few minutes."
                 else:
-                    return False, (
-                        "❌ Download failed.\n"
-                        "This could be because:\n"
-                        "• The video is restricted\n"
-                        "• The video is too long\n"
-                        "Please try another video! 🔄"
-                    )
+                    reason = "YouTube blocked the download. This often happens with music videos due to DRM protection."
+
+                return False, (
+                    f"❌ Download Failed\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"Reason: {reason}\n\n"
+                    f"💡 Tips:\n"
+                    f"• Try a different video\n"
+                    f"• Shorter videos work better\n"
+                    f"• Unofficial uploads are easier to download"
+                )
 
     except Exception as e:
         logger.error(f"Error downloading YouTube video: {str(e)}")
         return False, (
-            "😓 Download failed.\n"
-            "Please try:\n"
-            "• A different video\n"
-            "• Checking if the video is public\n"
-            "• Using a shorter video\n"
-            "• Waiting a few minutes"
+            "❌ Download Failed\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "An unexpected error occurred during download.\n\n"
+            "💡 Tips:\n"
+            "• Check the URL is correct\n"
+            "• Try a different video\n"
+            "• Wait a minute and retry"
         )
 
 def cleanup_video(file_path: str) -> None:

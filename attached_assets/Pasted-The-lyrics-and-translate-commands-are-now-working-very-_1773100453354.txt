@@ -1,0 +1,123 @@
+The /lyrics and /translate commands are now working very well, so do not change them unless absolutely necessary.
+
+Now I want you to focus on the rest of the existing commands and raise the overall bot quality to a Class-A standard.
+
+Current commands shown by the bot:
+	•	/lyrics
+	•	/stats
+	•	/recommend
+	•	/quiz
+	•	/translate
+	•	/youtube
+	•	/download
+	•	/analyze
+	•	/subscribe
+	•	/wiki
+
+Your task now is not just to make commands “work”. I want the outputs to be optimized, intelligent, creative, relevant, and premium.
+
+Priority 1 — Fix /recommend quality
+
+The current /recommend output is not good enough.
+
+Real example:
+Input:
+/recommend tyla water
+
+The bot recommended:
+	•	AC/DC - Thunderstruck
+	•	Survivor - Eye of the Tiger
+	•	Eminem - Lose Yourself
+
+This is not a reasonable recommendation set for “Tyla - Water”.
+
+I want /recommend to become much smarter and more musically accurate.
+
+Improve it using factors like:
+	•	genre similarity
+	•	mood similarity
+	•	energy level
+	•	vocal style
+	•	artist similarity
+	•	era / production style
+	•	audience fit
+	•	rhythm and vibe
+
+For songs like “Tyla - Water”, recommendations should feel stylistically close, not random or overly generic.
+
+Also improve the output format so it explains briefly why the recommendations fit.
+
+Priority 2 — Investigate and fix /download
+
+The /download command is still not reliable.
+
+Please audit it properly:
+	•	check supported YouTube URL formats
+	•	check whether the downloader library is working
+	•	check whether age restriction, region restriction, signature extraction, or platform limitations are causing failure
+	•	improve validation before download starts
+	•	improve the failure message so it states the likely real reason, not only a vague generic failure
+
+If downloading is fundamentally unreliable or risky, propose a better fallback behavior instead of pretending it is robust.
+
+Priority 3 — Audit all other existing commands for quality, not only function
+
+Please review all existing commands one by one and improve:
+	•	output relevance
+	•	creativity
+	•	formatting
+	•	clarity
+	•	usefulness
+	•	consistency of tone
+	•	response polish
+
+I want the bot to feel premium and thoughtfully designed.
+
+That includes:
+	•	/stats
+	•	/recommend
+	•	/quiz
+	•	/youtube
+	•	/download
+	•	/analyze
+	•	/subscribe
+	•	/wiki
+
+Priority 4 — Improve output quality to premium level
+
+For each command, improve the responses so they are:
+	•	clean
+	•	well structured
+	•	concise but rich
+	•	visually readable
+	•	not robotic
+	•	not generic
+	•	actually useful
+
+Examples:
+	•	/recommend should explain why songs match
+	•	/analyze should feel insightful, not vague
+	•	/wiki should give concise, relevant highlights, not messy dumps
+	•	/youtube should return a clean, useful result
+	•	/stats should show meaningful stats, not filler
+	•	/quiz should feel fun and engaging
+	•	/subscribe should feel polished and clear
+
+Priority 5 — Review /start and /help
+
+The current /start and /help are decent, but now that /lyrics and /translate are already working well, make sure /start and /help accurately reflect the best usage and actual strengths of the bot.
+
+Also check that they are aligned with the current real behavior of the bot.
+
+Very important
+	•	Do not spend time reworking /lyrics or /translate unless required for compatibility
+	•	Focus on the rest of the bot
+	•	Test real outputs before claiming success
+	•	Do not assume a command is “good” just because it returns something
+	•	I care about output quality, musical relevance, creativity, and polish
+
+At the end, give me a real summary with:
+	1.	which commands you reviewed
+	2.	what quality problems you found
+	3.	what you improved
+	4.	which commands still need future work

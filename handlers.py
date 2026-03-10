@@ -8,7 +8,7 @@ from services.translator_service import translate_to_arabic
 from services.recommendation_service import get_similar_songs, format_recommendations
 from services.quiz_service import (
     start_quiz, check_answer, get_quiz_stats, end_quiz,
-    format_multiple_choice_options, active_quizzes
+    format_multiple_choice_options, format_quiz_question, active_quizzes
 )
 from services.daily_song_service import (
     subscribe_user,
@@ -38,22 +38,24 @@ def start_command(update: Update, context: CallbackContext):
 
     user_first_name = update.effective_user.first_name
     welcome_message = (
-        f"🎵 *Welcome to Your Musical Companion, {user_first_name}!* 🎸\n\n"
-        "I'm your personal music assistant, ready to help you discover and enjoy music in new ways! ✨\n\n"
-        "*Here's what I can do for you:*\n\n"
-        "🎤 */lyrics* - Get song lyrics with mood analysis\n"
-        "📊 */stats* - See detailed song statistics\n"
-        "🎵 */recommend* - Discover similar songs\n"
-        "🎮 */quiz* - Play a fun lyrics quiz\n"
-        "🌍 */translate* - Get Arabic lyrics translation\n"
-        "🎬 */youtube* - Find song on YouTube\n"
-        "📥 */download* - Download YouTube videos\n"
-        "📈 */analyze* - Get deep song analysis\n"
-        "🔔 */subscribe* - Get daily song discoveries\n"
-        "📚 */wiki* - Get Wikipedia info about artists\n\n"
-        "*Quick Start:*\n"
-        "Try */lyrics Ed Sheeran - Perfect* to see the magic! ✨\n\n"
-        "Need help? Just type */help* for more details! 💫"
+        f"🎵 *Welcome, {user_first_name}!* 🎸\n\n"
+        "I'm Lyrics Master — your personal music companion.\n\n"
+        "*What I can do:*\n\n"
+        "🎤 */lyrics* — Song lyrics with mood analysis\n"
+        "📊 */stats* — Word counts and patterns\n"
+        "🎵 */recommend* — Discover similar songs\n"
+        "🔍 */analyze* — Deep lyrical breakdown\n"
+        "🌍 */translate* — Arabic translation\n"
+        "🎬 */youtube* — Find the music video\n"
+        "📥 */download* — Download YouTube videos\n"
+        "🎮 */quiz* — Lyrics guessing game\n"
+        "📚 */wiki* — Artist info from Wikipedia\n"
+        "🔔 */subscribe* — Daily song picks\n\n"
+        "*Try it now:*\n"
+        "• /lyrics Tyla - Water\n"
+        "• /lyrics Shape of You\n"
+        "• /recommend Adele - Hello\n\n"
+        "Type */help* for the full guide! 💫"
     )
 
     try:
@@ -76,42 +78,30 @@ def help_command(update: Update, context: CallbackContext):
     """Send a message when the command /help is issued."""
     logger.info(f"User {update.effective_user.id} requested help")
     help_text = (
-        "🎵 *Musical Companion Guide* 🎸\n\n"
-        "*Basic Commands:*\n"
-        "▫️ */lyrics artist - song*\n"
-        "   Get lyrics with mood analysis\n"
-        "   Example: */lyrics Taylor Swift - Love Story*\n\n"
-        "▫️ */stats artist - song*\n"
-        "   View detailed song statistics\n"
-        "   Example: */stats Adele - Hello*\n\n"
-        "▫️ */recommend artist - song*\n"
-        "   Find similar songs you might like\n"
-        "   Example: */recommend Ed Sheeran - Shape of You*\n\n"
-        "*Fun & Games:*\n"
-        "▫️ */quiz* - Start a music quiz\n"
-        "▫️ */endquiz* - End current quiz\n\n"
-        "*Language & Analysis:*\n"
-        "▫️ */translate artist - song*\n"
-        "   Get Arabic translation\n"
-        "▫️ */analyze artist - song*\n"
-        "   Deep dive into song meaning\n\n"
-        "*Media Features:*\n"
-        "▫️ */youtube artist - song*\n"
-        "   Find song on YouTube\n"
-        "▫️ */download video_url*\n"
-        "   Download YouTube videos\n\n"
-        "*Information:*\n"
-        "▫️ */wiki person_name*\n"
-        "   Get Wikipedia information\n"
-        "   Example: */wiki Taylor Swift*\n\n"
-        "*Daily Updates:*\n"
-        "▫️ */subscribe* - Get daily song picks\n"
-        "▫️ */unsubscribe* - Stop daily updates\n\n"
-        "*Pro Tips:* 💡\n"
-        "• Always use a dash (-) between artist and song\n"
-        "• Check spelling of artist and song names\n"
-        "• For downloads, use short videos (under 50MB)\n\n"
-        "Ready to explore? Try any command! 🚀"
+        "🎵 *Lyrics Master — Command Guide* 🎸\n\n"
+        "*🎤 Lyrics & Analysis*\n"
+        "▫️ */lyrics* — Get song lyrics\n"
+        "▫️ */stats* — Word counts and patterns\n"
+        "▫️ */analyze* — Full lyrical breakdown\n"
+        "▫️ */translate* — Arabic translation\n\n"
+        "*🎵 Discovery*\n"
+        "▫️ */recommend* — Find similar songs\n"
+        "▫️ */youtube* — Find the music video\n"
+        "▫️ */wiki* — Artist info from Wikipedia\n\n"
+        "*🎮 Fun*\n"
+        "▫️ */quiz* — Lyrics guessing game (40 songs!)\n"
+        "▫️ */endquiz* — End current quiz\n\n"
+        "*📥 Media*\n"
+        "▫️ */download* — Download YouTube videos\n\n"
+        "*🔔 Daily Updates*\n"
+        "▫️ */subscribe* — Get daily song picks\n"
+        "▫️ */unsubscribe* — Stop daily updates\n\n"
+        "*💡 How to use song commands:*\n"
+        "You can use any of these formats:\n"
+        "• /lyrics Tyla - Water\n"
+        "• /lyrics Water Tyla\n"
+        "• /lyrics Water\n\n"
+        "No strict format required — I'll figure it out! 🚀"
     )
 
     try:
@@ -138,25 +128,19 @@ def quiz_command(update: Update, context: CallbackContext):
         quiz_data = start_quiz(user_id, mode="multiple_choice")
         if not quiz_data:
             update.message.reply_text(
-                "😓 Oops! I couldn't start the quiz right now.\n"
+                "😓 Couldn't start the quiz right now.\n"
                 "Please try again in a moment! 🔄"
             )
             return
 
-        current_question = quiz_data["current_question"]
-        snippet = current_question["snippet"]
-        options = current_question["options"]
-
         response = (
-            "🎵 Welcome to the Multiple Choice Lyrics Quiz! 🎮\n\n"
-            "I'll show you some lyrics, and you choose the correct song!\n"
-            "Reply with A, B, C, or D to make your choice.\n\n"
-            "Here's your first lyrics snippet:\n\n"
-            f"{snippet}\n\n"
-            "Which song is this? Choose from:\n\n"
-            f"{format_multiple_choice_options(options)}\n\n"
-            "Use /endquiz to finish the game early."
+            "🎮 Lyrics Quiz — Let's Go!\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "I'll show you lyrics from famous songs.\n"
+            "Reply with A, B, C, or D to guess the song.\n"
+            "Use /endquiz to finish early.\n\n"
         )
+        response += format_quiz_question(quiz_data["current_question"], quiz_data)
 
         update.message.reply_text(response)
         logger.info(f"Successfully started quiz for user {user_id}")
@@ -174,68 +158,25 @@ def quiz_answer(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     try:
         answer = update.message.text.strip().upper()
-        logger.debug(f"Quiz answer received from user {user_id}: {answer}")
-
-        # Immediate confirmation of receiving answer
-        update.message.reply_text(f"📝 Received your answer: {answer}")
 
         if not answer or len(answer) != 1 or answer not in 'ABCD':
-            logger.debug(f"Invalid quiz answer format: {answer}")
-            return  # Not a valid quiz answer
+            return
 
-        # Get the current quiz
         quiz_data = active_quizzes.get(user_id)
         if not quiz_data or quiz_data["state"] != "active":
-            logger.debug(f"No active quiz found for user {user_id}")
-            update.message.reply_text("No active quiz found! Start a new quiz with /quiz")
             return
 
-        # Get the selected option
-        options = quiz_data["current_question"]["options"]
-        option_index = 'ABCD'.index(answer)
-        if option_index >= len(options):
-            logger.debug(f"Option index out of range: {option_index}")
-            return
+        logger.debug(f"Quiz answer from user {user_id}: {answer}")
 
-        selected_option = options[option_index]
-        formatted_answer = f"{selected_option['artist']} - {selected_option['song']}"
-        logger.debug(f"Selected answer: {formatted_answer}")
+        is_correct, feedback = check_answer(user_id, answer)
 
-        is_correct, feedback = check_answer(user_id, formatted_answer)
-        logger.debug(f"Answer check result - correct: {is_correct}, feedback: {feedback}")
-
-        # Handle quiz completion
-        if "Quiz completed!" in feedback:
-            update.message.reply_text(f"{feedback}\n\n{end_quiz(user_id)}")
-            return
-
-        # Get current quiz data after answer check
-        quiz_data = active_quizzes.get(user_id)
-        if not quiz_data or quiz_data["state"] != "active":
-            update.message.reply_text("Quiz session ended. Start a new quiz with /quiz!")
-            return
-
-        stats = get_quiz_stats(user_id)
-        current_question = quiz_data["current_question"]
-        snippet = current_question["snippet"]
-        options = current_question["options"]
-
-        response = (
-            f"{feedback}\n\n"
-            f"{stats}\n\n"
-            "Here's your next lyrics snippet:\n\n"
-            f"{snippet}\n\n"
-            "Which song is this? Choose from:\n\n"
-            f"{format_multiple_choice_options(options)}"
-        )
-
-        update.message.reply_text(response)
-        logger.info(f"Successfully sent next question to user {user_id}")
+        update.message.reply_text(feedback)
+        logger.info(f"Quiz answer processed for user {user_id}: correct={is_correct}")
 
     except Exception as e:
         logger.error(f"Error processing quiz answer for user {user_id}: {str(e)}")
         update.message.reply_text(
-            "😓 Oops! Something went wrong processing your answer.\n"
+            "😓 Something went wrong processing your answer.\n"
             "Try /quiz to start a new game! 🔄"
         )
 
@@ -559,13 +500,14 @@ def subscribe_daily_command(update: Update, context: CallbackContext):
 
         if subscribe_user(user_id, chat_id):
             update.message.reply_text(
-                "🎵 Awesome! You're now subscribed to Daily Song Discovery!\n\n"
-                "I'll send you an interesting song every day with:\n"
-                "• Lyrics analysis 📊\n"
-                "• Mood detection 🎭\n"
-                "• Fun facts about the song ✨\n\n"
-                "Your first song will arrive tomorrow! 🎶\n"
-                "Use /unsubscribe if you want to stop receiving daily songs."
+                "🔔 You're subscribed!\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Every day you'll get a curated song with:\n"
+                "• Full lyrics and mood analysis\n"
+                "• Word statistics and patterns\n"
+                "• A fresh discovery to explore\n\n"
+                "Your first pick arrives tomorrow! 🎶\n\n"
+                "To stop: /unsubscribe"
             )
             logger.info(f"Successfully subscribed user {user_id}")
         else:
@@ -589,9 +531,8 @@ def unsubscribe_daily_command(update: Update, context: CallbackContext):
 
         if unsubscribe_user(user_id):
             update.message.reply_text(
-                "👋 You've been unsubscribed from Daily Song Discovery.\n\n"
-                "I'll stop sending daily songs. You can always\n"
-                "subscribe again using /subscribe! 🎵"
+                "👋 Unsubscribed from daily songs.\n\n"
+                "You can re-subscribe anytime with /subscribe 🎵"
             )
             logger.info(f"Successfully unsubscribed user {user_id}")
         else:
@@ -736,43 +677,51 @@ def download_command(update: Update, context: CallbackContext):
         if not context.args:
             logger.info(f"User {user_id} provided no URL for download")
             update.message.reply_text(
-                "⚠️ Please provide a YouTube video URL!\n\n"
-                "Use this format: /download video_url\n"
-                "For example: /download https://www.youtube.com/watch?v=example"
+                "📥 Download a YouTube Video\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Usage: /download [YouTube URL]\n\n"
+                "Supported formats:\n"
+                "• youtube.com/watch?v=...\n"
+                "• youtu.be/...\n"
+                "• youtube.com/shorts/...\n\n"
+                "⚠️ Max file size: 50MB\n"
+                "⚠️ Some videos may be restricted"
             )
             return
 
         url = context.args[0]
         logger.info(f"User {user_id} requested download of: {url}")
 
-        # Send processing message
         processing_message = update.message.reply_text(
-            "🎬 Processing your download request...\n"
-            "This might take a moment! ⏳"
+            "📥 Downloading...\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "⏳ Fetching video info and preparing download.\n"
+            "This may take 30–60 seconds."
         )
 
-        # Download video
         success, result = download_youtube_video(url)
 
         if success:
             file_path, info_message = result
-
-            # Update processing message with file info
             processing_message.edit_text(info_message)
 
-            # Send video file
-            with open(file_path, 'rb') as video_file:
-                update.message.reply_video(
-                    video_file,
-                    caption="🎉 Enjoy your video! /help for more commands",
-                    supports_streaming=True
+            try:
+                with open(file_path, 'rb') as video_file:
+                    update.message.reply_video(
+                        video_file,
+                        caption="🎉 Here's your video!",
+                        supports_streaming=True
+                    )
+            except Exception as send_err:
+                logger.error(f"Failed to send video: {send_err}")
+                processing_message.edit_text(
+                    "❌ The video downloaded but was too large to send via Telegram.\n"
+                    "Telegram limit is 50MB. Try a shorter video."
                 )
 
-            # Cleanup
             cleanup_video(file_path)
 
         else:
-            # Update processing message with error
             processing_message.edit_text(result)
 
     except Exception as e:
@@ -781,14 +730,6 @@ def download_command(update: Update, context: CallbackContext):
             "😓 Something went wrong with the download.\n"
             "Please try again later! 🔄"
         )
-
-
-def format_multiple_choice_options(options):
-    """Helper function to format multiple choice options neatly."""
-    option_strings = []
-    for i, option in enumerate(options):
-        option_strings.append(f"{chr(65 + i)}. {option['artist']} - {option['song']}")
-    return "\n".join(option_strings)
 
 
 def wiki_command(update: Update, context: CallbackContext) -> None:
@@ -828,11 +769,10 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
             )
             return
 
-        # Format and send response
         response = (
-            f"✨ *{person_info['title']}*\n\n"
-            f"{person_info['info']}\n\n"
-            "Want to discover another artist? Just use /wiki again! 🎵"
+            f"📚 *{person_info['title']}*\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"{person_info['info']}"
         )
 
         try:
@@ -900,20 +840,20 @@ def main():
 
         # Register commands in the menu
         commands = [
-            BotCommand("start", "Start the bot 👋"),
-            BotCommand("help", "Show all commands and how to use them ℹ️"),
-            BotCommand("lyrics", "Get song lyrics 🎵 (format: artist - song)"),
-            BotCommand("stats", "Get song statistics 📊 (format: artist - song)"),
-            BotCommand("recommend", "Get song recommendations 🎵 (format: artist - song)"),
-            BotCommand("quiz", "Start a lyrics quiz game 🎮"),
-            BotCommand("endquiz", "End the current quiz game"),
-            BotCommand("translate", "Get Arabic translation of lyrics 🌍 (format: artist - song)"),
-            BotCommand("subscribe", "Subscribe to daily song discovery 🎶"),
-            BotCommand("unsubscribe", "Unsubscribe from daily song discovery 👋"),
-            BotCommand("youtube", "Get YouTube link for song 🎬 (format: artist - song)"),
-            BotCommand("analyze", "Get detailed song analysis 📊 (format: artist - song)"),
-            BotCommand("download", "Download YouTube video 🎬 (format: /download video_url)"),
-            BotCommand("wiki", "Get Wikipedia info about artists 📚 (format: /wiki name)")
+            BotCommand("start", "Welcome & overview"),
+            BotCommand("help", "Full command guide"),
+            BotCommand("lyrics", "🎤 Get song lyrics"),
+            BotCommand("stats", "📊 Song word statistics"),
+            BotCommand("recommend", "🎵 Find similar songs"),
+            BotCommand("analyze", "🔍 Deep lyrical analysis"),
+            BotCommand("translate", "🌍 Arabic translation"),
+            BotCommand("youtube", "🎬 Find the music video"),
+            BotCommand("download", "📥 Download YouTube video"),
+            BotCommand("quiz", "🎮 Lyrics guessing game"),
+            BotCommand("endquiz", "End current quiz"),
+            BotCommand("wiki", "📚 Artist info from Wikipedia"),
+            BotCommand("subscribe", "🔔 Daily song picks"),
+            BotCommand("unsubscribe", "Stop daily updates"),
         ]
 
         updater.bot.set_my_commands(commands)

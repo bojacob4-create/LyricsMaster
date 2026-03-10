@@ -22,7 +22,27 @@ DAILY_SONGS = [
     {"artist": "Taylor Swift", "song": "Shake It Off"},
     {"artist": "Elvis Presley", "song": "Can't Help Falling in Love"},
     {"artist": "Bob Marley", "song": "Three Little Birds"},
-    {"artist": "John Lennon", "song": "Imagine"}
+    {"artist": "John Lennon", "song": "Imagine"},
+    {"artist": "Tyla", "song": "Water"},
+    {"artist": "Dua Lipa", "song": "Levitating"},
+    {"artist": "Harry Styles", "song": "As It Was"},
+    {"artist": "The Weeknd", "song": "Blinding Lights"},
+    {"artist": "Billie Eilish", "song": "bad guy"},
+    {"artist": "Bruno Mars", "song": "Just the Way You Are"},
+    {"artist": "Rihanna", "song": "Umbrella"},
+    {"artist": "Coldplay", "song": "Yellow"},
+    {"artist": "Imagine Dragons", "song": "Believer"},
+    {"artist": "SZA", "song": "Kill Bill"},
+    {"artist": "Fleetwood Mac", "song": "Dreams"},
+    {"artist": "Hozier", "song": "Take Me to Church"},
+    {"artist": "Olivia Rodrigo", "song": "drivers license"},
+    {"artist": "Post Malone", "song": "Circles"},
+    {"artist": "Ariana Grande", "song": "thank u, next"},
+    {"artist": "Miley Cyrus", "song": "Flowers"},
+    {"artist": "Lewis Capaldi", "song": "Someone You Loved"},
+    {"artist": "Beyonce", "song": "Halo"},
+    {"artist": "Lana Del Rey", "song": "Summertime Sadness"},
+    {"artist": "Arctic Monkeys", "song": "Do I Wanna Know?"},
 ]
 
 def get_daily_song() -> Tuple[Dict, str, Dict]:
@@ -93,16 +113,18 @@ def format_daily_song(song: Dict, lyrics: str, analysis: Dict) -> str:
     stats = analysis["stats"]
 
     return (
-        "🎵 Your Daily Song Discovery 🎵\n\n"
-        f"Today's Pick: {song['artist']} - {song['song']}\n\n"
+        "🎵 Daily Song Discovery\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Today's Pick: {song['artist']} — {song['song']}\n\n"
         f"Mood: {mood_emoji} {analysis['mood'].title()}\n"
-        f"Words: {stats['total_words']} | Lines: {stats['total_lines']}\n"
-        f"Vocabulary Richness: {stats['vocabulary_richness']}%\n\n"
-        "=== Lyrics ===\n\n"
-        f"{lyrics[:1000]}...\n\n"  # Show first 1000 characters
-        "Want to know more about this song?\n"
-        f"Try /lyrics {song['artist']} - {song['song']} for full lyrics\n"
-        f"or /stats {song['artist']} - {song['song']} for detailed analysis!"
+        f"📝 {stats['total_lines']} lines  •  {stats['total_words']} words\n"
+        f"🎨 Vocabulary: {stats['vocabulary_richness']}%\n\n"
+        "── Preview ──\n\n"
+        f"{lyrics[:800]}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎤 /lyrics {song['artist']} - {song['song']}\n"
+        f"📊 /analyze {song['artist']} - {song['song']}\n"
+        f"🎵 /recommend {song['artist']} - {song['song']}"
     )
 
 def send_daily_song(context) -> None:

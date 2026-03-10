@@ -79,25 +79,36 @@ def get_song_statistics(lyrics: str) -> Dict:
 
 def format_statistics(stats: Dict) -> str:
     """Format song statistics into a readable message."""
-    emoji_numbers = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+    richness = stats['vocabulary_richness']
+    if richness >= 80:
+        richness_label = "Very diverse"
+    elif richness >= 60:
+        richness_label = "Diverse"
+    elif richness >= 40:
+        richness_label = "Moderate"
+    else:
+        richness_label = "Repetitive"
 
-    # Format top words with emoji numbers
     top_words_formatted = "\n".join(
-        f"{emoji} {word}: {count} times"
-        for emoji, (word, count) in zip(emoji_numbers, stats['top_words'])
+        f"  {word} ({count}x)"
+        for word, count in stats['top_words']
     )
 
+    phrases_formatted = "\n".join(
+        f"  \"{phrase}\""
+        for phrase in stats['repeated_phrases'][:3]
+    ) if stats['repeated_phrases'] else "  No repeated phrases found"
+
     return (
-        "📊 Song Statistics:\n\n"
-        f"📝 Lines: {stats['total_lines']}\n"
-        f"📚 Total Words: {stats['total_words']}\n"
-        f"🎯 Unique Words: {stats['unique_words']}\n"
-        f"🔤 Meaningful Words: {stats['meaningful_words']}\n"
-        f"🎨 Vocabulary Richness: {stats['vocabulary_richness']}%\n\n"
+        "📊 Lyrical Statistics\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📝 {stats['total_lines']} lines  •  {stats['total_words']} words\n"
+        f"🎯 {stats['unique_words']} unique words out of {stats['meaningful_words']} meaningful\n"
+        f"🎨 Vocabulary richness: {stats['vocabulary_richness']}% — {richness_label}\n\n"
         "🔝 Most Used Words:\n" +
         top_words_formatted +
-        "\n\n📎 Most Repeated Phrases:\n" +
-        "\n".join(f"• \"{phrase}\"" for phrase in stats['repeated_phrases'][:3])
+        "\n\n📎 Repeated Phrases:\n" +
+        phrases_formatted
     )
 
 def format_lyrics(lyrics: str) -> str:
@@ -234,50 +245,77 @@ def get_detailed_song_analysis(lyrics: str) -> Dict:
 
 def format_detailed_analysis(analysis: Dict) -> str:
     """Format detailed song analysis into a readable message."""
-
-    # Format rhyme analysis
-    rhyme_info = (
-        f"🎭 Rhyme Analysis:\n"
-        f"• Rhyming Lines: {analysis['rhyme_analysis']['rhyming_lines']}/{analysis['rhyme_analysis']['total_lines']}\n"
-        f"• Rhyme Density: {analysis['rhyme_analysis']['rhyme_density']}%\n"
-    )
-
-    # Format mood intensity
-    mood_intensities = analysis['mood']['mood_intensity']
-    dominant_intensity = max(mood_intensities.items(), key=lambda x: x[1])
-    mood_info = (
-        f"🎭 Mood Analysis:\n"
-        f"• Primary Mood: {analysis['mood']['primary_mood'].title()}\n"
-        f"• Emotional Keywords:\n"
-        f"  - Happy: {mood_intensities['happy']} mentions\n"
-        f"  - Sad: {mood_intensities['sad']} mentions\n"
-        f"  - Energetic: {mood_intensities['energetic']} mentions\n"
-    )
-
-    # Format structure information
+    stats = analysis['statistics']
+    rhyme = analysis['rhyme_analysis']
+    mood_data = analysis['mood']
     structure = analysis['structure']
-    structure_info = "🎼 Song Structure:\n"
+
+    richness = stats['vocabulary_richness']
+    if richness >= 80:
+        vocab_note = "Highly diverse vocabulary — poetic or storytelling style"
+    elif richness >= 60:
+        vocab_note = "Good word variety — balanced between hooks and narrative"
+    elif richness >= 40:
+        vocab_note = "Moderate repetition — typical pop/chorus-heavy structure"
+    else:
+        vocab_note = "Very repetitive — hook-driven or chant-style lyrics"
+
+    rhyme_density = rhyme['rhyme_density']
+    if rhyme_density >= 60:
+        rhyme_note = "Strong rhyme patterns throughout"
+    elif rhyme_density >= 30:
+        rhyme_note = "Moderate rhyming — mix of rhymed and free lines"
+    else:
+        rhyme_note = "Mostly free-form or conversational style"
+
+    mood_emoji = {
+        'happy': '😊', 'sad': '😢', 'romantic': '💖',
+        'energetic': '⚡', 'relaxed': '😌'
+    }.get(mood_data['primary_mood'], '🎵')
+
+    mood_intensities = mood_data['mood_intensity']
+    mood_bars = []
+    max_intensity = max(mood_intensities.values()) if mood_intensities.values() else 1
+    for label, count in mood_intensities.items():
+        bar_len = int((count / max(max_intensity, 1)) * 8) if count > 0 else 0
+        bar = '█' * bar_len + '░' * (8 - bar_len)
+        mood_bars.append(f"  {label.title():10} {bar} ({count})")
+
+    structure_parts = []
     for part, count in structure.items():
         if count > 0:
-            structure_info += f"• {part.title()}: {count} sections\n"
+            structure_parts.append(f"{part.title()} x{count}")
 
-    # Format statistics
-    stats = analysis['statistics']
-    stats_info = (
-        f"📊 Lyrical Statistics:\n"
-        f"• Lines: {stats['total_lines']}\n"
-        f"• Words: {stats['total_words']}\n"
-        f"• Unique Words: {stats['unique_words']}\n"
-        f"• Vocabulary Richness: {stats['vocabulary_richness']}%\n"
+    result = (
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📝 Structure\n"
+        f"  {stats['total_lines']} lines  •  {stats['total_words']} words\n"
+        f"  {stats['unique_words']} unique words ({stats['vocabulary_richness']}%)\n"
+        f"  → {vocab_note}\n"
     )
 
-    return (
-        f"{stats_info}\n"
-        f"{rhyme_info}\n"
-        f"{mood_info}\n"
-        f"{structure_info}\n"
-        "Want to explore more? Try these commands:\n"
-        "• /lyrics - Get full lyrics\n"
-        "• /recommend - Find similar songs\n"
-        "• /quiz - Test your knowledge"
+    if structure_parts:
+        result += f"  Sections: {', '.join(structure_parts)}\n"
+
+    result += (
+        f"\n🎭 Mood: {mood_emoji} {mood_data['primary_mood'].title()}\n"
+        + '\n'.join(mood_bars) + '\n'
+        f"\n🎶 Rhyme Pattern\n"
+        f"  {rhyme['rhyming_lines']}/{rhyme['total_lines']} lines rhyme ({rhyme_density}%)\n"
+        f"  → {rhyme_note}\n"
     )
+
+    if stats['top_words']:
+        top_words = ', '.join(f"{w} ({c}x)" for w, c in stats['top_words'][:5])
+        result += f"\n🔑 Key Words: {top_words}\n"
+
+    if stats['repeated_phrases']:
+        phrases = ' | '.join(f'"{p}"' for p in stats['repeated_phrases'][:3])
+        result += f"\n📎 Repeated: {phrases}\n"
+
+    result += (
+        "\n━━━━━━━━━━━━━━━━━━━━━\n"
+        "🎤 /lyrics for full text  •  🎵 /recommend for similar songs"
+    )
+
+    return result

@@ -1,84 +1,132 @@
 import logging
-import re
+import requests
 from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
 
-def get_person_info(name: str) -> Optional[Dict[str, str]]:
-    """
-    Generate a personalized artist information response.
+session = requests.Session()
+session.headers.update({
+    'User-Agent': 'LyricsMasterBot/1.0 (Telegram music bot; educational project)'
+})
 
-    Args:
-        name (str): Name of the person to search for
 
-    Returns:
-        Optional[Dict[str, str]]: Dictionary containing title and information if found
-    """
+def _search_wikipedia(query: str) -> Optional[Dict]:
     try:
-        # Clean up the name
+        sr = session.get('https://en.wikipedia.org/w/api.php', params={
+            'action': 'query', 'list': 'search', 'srsearch': query,
+            'srlimit': 3, 'format': 'json'
+        }, timeout=8)
+
+        if sr.status_code != 200:
+            return None
+
+        results = sr.json().get('query', {}).get('search', [])
+        if not results:
+            return None
+
+        music_keywords = ['singer', 'musician', 'rapper', 'band', 'artist', 'songwriter',
+                         'album', 'song', 'music', 'record', 'hip hop', 'pop', 'rock',
+                         'r&b', 'genre', 'grammy', 'chart', 'single', 'vocalist']
+
+        best = results[0]
+        for r in results:
+            snippet_lower = r.get('snippet', '').lower()
+            if any(k in snippet_lower for k in music_keywords):
+                best = r
+                break
+
+        return best
+
+    except Exception as e:
+        logger.debug(f"Wikipedia search error: {e}")
+        return None
+
+
+def _get_wikipedia_extract(title: str) -> Optional[str]:
+    try:
+        r = session.get('https://en.wikipedia.org/w/api.php', params={
+            'action': 'query', 'titles': title, 'prop': 'extracts',
+            'exintro': True, 'explaintext': True, 'format': 'json'
+        }, timeout=8)
+
+        if r.status_code != 200:
+            return None
+
+        pages = r.json().get('query', {}).get('pages', {})
+        for pid, page in pages.items():
+            if pid == '-1':
+                return None
+            extract = page.get('extract', '')
+            if extract:
+                return extract
+
+        return None
+
+    except Exception as e:
+        logger.debug(f"Wikipedia extract error: {e}")
+        return None
+
+
+def _get_wikipedia_url(title: str) -> str:
+    return f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}"
+
+
+def _format_extract(extract: str, max_length: int = 1500) -> str:
+    if len(extract) <= max_length:
+        return extract
+
+    sentences = extract.split('. ')
+    result = []
+    current_length = 0
+
+    for sentence in sentences:
+        if current_length + len(sentence) > max_length:
+            break
+        result.append(sentence)
+        current_length += len(sentence) + 2
+
+    text = '. '.join(result)
+    if not text.endswith('.'):
+        text += '.'
+    return text
+
+
+def get_person_info(name: str) -> Optional[Dict[str, str]]:
+    try:
         name = name.strip()
         if not name:
             return None
 
-        # Enhanced gender detection with popular artists
-        first_name = name.split()[0].lower()
-        # Expanded list of known artists with proper pronouns and genres
-        known_artists = {
-            'taylor': {'name': 'Taylor Swift', 'gender': 'f', 'genre': 'pop', 'style': 'pop crossover'},
-            'adele': {'name': 'Adele', 'gender': 'f', 'genre': 'pop', 'style': 'soul-pop'},
-            'beyonce': {'name': 'Beyoncé', 'gender': 'f', 'genre': 'r&b', 'style': 'r&b/pop'},
-            'lady': {'name': 'Lady Gaga', 'gender': 'f', 'genre': 'pop', 'style': 'dance-pop'},
-            'ariana': {'name': 'Ariana Grande', 'gender': 'f', 'genre': 'pop', 'style': 'pop/r&b'},
-            'justin': {'name': 'Justin Bieber', 'gender': 'm', 'genre': 'pop', 'style': 'pop/r&b'},
-            'ed': {'name': 'Ed Sheeran', 'gender': 'm', 'genre': 'pop', 'style': 'pop/folk'},
-            'drake': {'name': 'Drake', 'gender': 'm', 'genre': 'hip-hop', 'style': 'rap/r&b'},
-            'weeknd': {'name': 'The Weeknd', 'gender': 'm', 'genre': 'r&b', 'style': 'alternative r&b'},
-            'eminem': {'name': 'Eminem', 'gender': 'm', 'genre': 'hip-hop', 'style': 'rap'},
-            'bruno': {'name': 'Bruno Mars', 'gender': 'm', 'genre': 'pop', 'style': 'funk/pop'},
-            'rihanna': {'name': 'Rihanna', 'gender': 'f', 'genre': 'pop', 'style': 'pop/r&b'},
-            'dua': {'name': 'Dua Lipa', 'gender': 'f', 'genre': 'pop', 'style': 'dance-pop'},
-            'post': {'name': 'Post Malone', 'gender': 'm', 'genre': 'hip-hop', 'style': 'rap/pop'},
-            'kendrick': {'name': 'Kendrick Lamar', 'gender': 'm', 'genre': 'hip-hop', 'style': 'conscious rap'}
-        }
+        search_result = _search_wikipedia(f"{name} musician singer")
+        if not search_result:
+            search_result = _search_wikipedia(name)
 
-        # Get artist info if known, otherwise use generic pronouns
-        artist_info = known_artists.get(first_name, {'gender': 'n', 'genre': 'music', 'style': 'contemporary'})
-        pronoun = 'she' if artist_info['gender'] == 'f' else 'he' if artist_info['gender'] == 'm' else 'they'
-        possessive = 'her' if artist_info['gender'] == 'f' else 'his' if artist_info['gender'] == 'm' else 'their'
+        if not search_result:
+            return None
 
-        # Genre-specific achievements
-        genre_achievements = {
-            'pop': "• Multiple platinum records and chart-topping singles\n• Successful worldwide tours and performances\n• Influential presence in mainstream music",
-            'hip-hop': "• Critically acclaimed albums and mixtapes\n• Groundbreaking collaborations and features\n• Influential contributions to hip-hop culture",
-            'r&b': "• Soulful performances and vocal excellence\n• Genre-defining musical productions\n• Emotional storytelling through music"
-        }.get(artist_info['genre'], "• Notable releases and performances\n• Strong artistic vision and execution\n• Dedicated following in the music industry")
+        title = search_result['title']
+        extract = _get_wikipedia_extract(title)
 
-        # Generate a personalized, structured response
+        if not extract:
+            return None
+
+        formatted = _format_extract(extract)
+        wiki_url = _get_wikipedia_url(title)
+
+        paragraphs = formatted.split('\n')
+        clean_paragraphs = [p.strip() for p in paragraphs if p.strip()]
+        formatted = '\n\n'.join(clean_paragraphs)
+
         info = (
-            f"🎵 Career Overview:\n"
-            f"{name} has made an extraordinary impact in {artist_info['genre']} music with {possessive} distinctive "
-            f"{artist_info['style']} style. As a leading voice in contemporary music, {pronoun} continues to inspire "
-            f"audiences worldwide through powerful performances and innovative artistry.\n\n"
-
-            f"🎸 Musical Style & Expression:\n"
-            f"• Known for {possessive} unique {artist_info['style']} sound and artistic vision\n"
-            f"• Creates music that pushes boundaries and sets new trends\n"
-            f"• Masterful at connecting with audiences through authentic expression\n\n"
-
-            f"🏆 Achievements & Impact:\n"
-            f"{genre_achievements}\n\n"
-
-            f"💫 Artistic Legacy:\n"
-            f"• {name} continues to evolve and innovate in the {artist_info['genre']} scene\n"
-            f"• Influences new generations of artists with {possessive} distinctive approach\n"
-            f"• Sets new standards for excellence in modern music"
+            f"{formatted}\n\n"
+            f"🔗 Read more: {wiki_url}"
         )
 
         return {
-            "title": name,
+            "title": title,
             "info": info
         }
 
     except Exception as e:
-        logger.error(f"Error generating info: {str(e)}")
+        logger.error(f"Error getting person info: {e}")
         return None
