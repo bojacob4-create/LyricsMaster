@@ -4,8 +4,8 @@ modules = ["python-3.11", "python3", "postgresql-16"]
 channel = "stable-24_05"
 
 [deployment]
-deploymentTarget = "gce"
-run = ["sh", "-c", "python bot.py"]
+deploymentTarget = "vm"
+run = ["python", "bot.py"]
 ignorePorts = true
 
 [workflows]
