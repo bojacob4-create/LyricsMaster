@@ -68,7 +68,7 @@ def _get_spotify_recommendations(artist: str, song: str) -> Optional[List[Dict]]
         track_id = seed_track['id']
         seed_artist_id = seed_track['artists'][0]['id'] if seed_track.get('artists') else None
 
-        rec_params = {'seed_tracks': track_id, 'limit': 8}
+        rec_params = {'seed_tracks': track_id, 'limit': 15}
         if seed_artist_id:
             rec_params['seed_artists'] = seed_artist_id
 
@@ -92,7 +92,9 @@ def _get_spotify_recommendations(artist: str, song: str) -> Optional[List[Dict]]
                 'popularity': t.get('popularity', 0)
             })
 
-        return recommendations[:5] if recommendations else None
+        if len(recommendations) > 5:
+            recommendations = random.sample(recommendations, 5)
+        return recommendations if recommendations else None
 
     except Exception as e:
         logger.debug(f"Spotify recommendations error: {e}")
@@ -107,7 +109,7 @@ def _get_lastfm_recommendations(artist: str, song: str) -> Optional[List[Dict]]:
     try:
         r = requests.get('https://ws.audioscrobbler.com/2.0/', params={
             'method': 'track.getsimilar', 'artist': artist, 'track': song,
-            'api_key': api_key, 'format': 'json', 'limit': 8
+            'api_key': api_key, 'format': 'json', 'limit': 15
         }, timeout=8)
 
         if r.status_code != 200:
@@ -125,7 +127,9 @@ def _get_lastfm_recommendations(artist: str, song: str) -> Optional[List[Dict]]:
                 'match': round(float(t.get('match', 0)) * 100)
             })
 
-        return recommendations[:5] if recommendations else None
+        if len(recommendations) > 5:
+            recommendations = random.sample(recommendations, 5)
+        return recommendations if recommendations else None
 
     except Exception as e:
         logger.debug(f"Last.fm recommendations error: {e}")

@@ -4,6 +4,7 @@ import sys
 import time
 import signal
 from datetime import datetime
+from apscheduler.schedulers.background import BackgroundScheduler
 from telegram import Update, BotCommand
 from telegram.ext import (
     CallbackContext,
@@ -29,6 +30,7 @@ from handlers import (
     song_command, top_command, random_command,
     natural_language_handler, callback_query_handler
 )
+from services.daily_song_service import send_daily_song
 
 # Configure logging with both console and file handlers
 logging.basicConfig(
@@ -52,6 +54,7 @@ class TelegramBotWorker:
         self.keepalive_interval = 300  # seconds
         self.running = True
         self.lock_file = "/tmp/telegram_bot.lock"
+        self.scheduler = None
         
         # Check if another instance is running
         if self._is_another_instance_running():
@@ -99,10 +102,14 @@ class TelegramBotWorker:
         """Handle termination signals gracefully."""
         logger.info(f"Received signal {signum}. Shutting down gracefully...")
         self.running = False
+        if self.scheduler:
+            try:
+                self.scheduler.shutdown(wait=False)
+            except Exception:
+                pass
         if self.updater:
             self.updater.stop()
         
-        # Clean up lock file
         self._cleanup()
     
     def _cleanup(self):
@@ -243,12 +250,48 @@ class TelegramBotWorker:
             # Set up commands menu
             self.setup_commands()
 
+            self._setup_daily_scheduler()
+
             logger.info("Bot initialized successfully")
             return True
 
         except Exception as e:
             logger.error(f"Failed to initialize bot: {str(e)}")
             return False
+
+    def _setup_daily_scheduler(self):
+        try:
+            if self.scheduler:
+                try:
+                    self.scheduler.shutdown(wait=False)
+                except Exception:
+                    pass
+            import pytz
+            utc = pytz.UTC
+            self.scheduler = BackgroundScheduler(timezone=utc)
+            self.scheduler.add_job(
+                self._send_daily_wrapper,
+                'cron',
+                hour=9,
+                minute=0,
+                id='daily_song',
+                replace_existing=True,
+                misfire_grace_time=3600
+            )
+            self.scheduler.start()
+            logger.info("Daily song scheduler started (09:00 UTC)")
+        except Exception as e:
+            logger.error(f"Failed to set up daily scheduler: {e}")
+
+    def _send_daily_wrapper(self):
+        try:
+            if self.updater and self.updater.bot:
+                class BotContext:
+                    def __init__(self, bot):
+                        self.bot = bot
+                send_daily_song(BotContext(self.updater.bot))
+        except Exception as e:
+            logger.error(f"Error in daily song delivery: {e}")
 
     def run(self):
         """Run the bot with automatic reconnection and keepalive."""

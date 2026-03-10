@@ -328,10 +328,17 @@ def format_detailed_analysis(analysis: Dict) -> str:
     mood_intensities = mood_data['mood_intensity']
     mood_bars = []
     max_intensity = max(mood_intensities.values()) if mood_intensities.values() else 1
-    for label, count in mood_intensities.items():
-        bar_len = int((count / max(max_intensity, 1)) * 8) if count > 0 else 0
-        bar = '█' * bar_len + '░' * (8 - bar_len)
-        mood_bars.append(f"  {label.title():10} {bar} ({count})")
+    mood_order = ['happy', 'sad', 'romantic', 'energetic', 'relaxed']
+    mood_emojis = {'happy': '😊', 'sad': '😢', 'romantic': '💖', 'energetic': '⚡', 'relaxed': '😌'}
+    for label in mood_order:
+        count = mood_intensities.get(label, 0)
+        if max_intensity > 0 and count > 0:
+            bar_len = max(1, round((count / max_intensity) * 10))
+        else:
+            bar_len = 0
+        bar = '▓' * bar_len + '░' * (10 - bar_len)
+        emoji = mood_emojis.get(label, '🎵')
+        mood_bars.append(f"  {emoji} {label.title():10} {bar}  {count}")
 
     structure_parts = []
     for part, count in structure.items():

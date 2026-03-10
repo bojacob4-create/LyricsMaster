@@ -1,0 +1,357 @@
+We found a new batch of issues after the latest testing. Please fix them carefully and surgically without breaking any working functionality.
+
+Critical scope rule
+
+Do not refactor unrelated code.
+
+Do not change working command behavior unless it is directly required for the fixes below.
+
+The following are already working and must remain working:
+	•	/start
+	•	/help
+	•	/lyrics
+	•	/song
+	•	/analyze
+	•	/translate
+	•	/artist
+	•	/recommend
+	•	/stats
+	•	/wiki
+	•	/youtube
+	•	/trending
+	•	/random
+	•	/quiz
+	•	/endquiz
+	•	/top
+	•	/subscribe
+	•	/unsubscribe
+	•	natural-language routing
+	•	ambiguity buttons
+	•	existing callback/button system
+
+Also preserve these working natural inputs:
+	•	lyrics water by tyla
+	•	give me the lyrics for water by tyla
+	•	analyze hello by adele
+	•	translate hello by adele to spanish
+	•	show the video for water by tyla
+	•	songs like calm down
+	•	recommend music like water by tyla
+	•	tell me about drake
+	•	what songs are hot right now
+	•	top pop
+	•	best afrobeats songs
+	•	convert this to mp3 
+	•	download this 
+
+Do not weaken quiz priority.
+Do not break callback handling.
+Do not break existing analyze buttons.
+
+⸻
+
+Issue 1 — Remove “Tyla Water” from /song help text
+
+When user sends only:
+
+/song
+
+the usage/help block still shows:
+	•	/song Tyla Water
+
+Please replace Tyla/Water with neutral examples.
+
+Suggested replacement examples:
+	•	/song Counting Stars
+	•	/song Shape of You
+	•	/song Adele - Hello
+
+Only update the examples. Do not change /song functionality.
+
+⸻
+
+Issue 2 — Ambiguity buttons for “Tyla water song” route incorrectly
+
+When user sends:
+
+Tyla water song
+
+the bot shows the ambiguity buttons. That part is fine.
+
+But when pressing the Lyrics button, the bot does not return the correct lyrics for Tyla - Water. It returns unrelated lyrics for “water song”.
+
+Important note:
+	•	/lyrics tyla water works correctly
+	•	Lyrics of water by tyla works correctly
+	•	the Lyrics button under analyze works correctly
+
+So the issue appears to be specifically in the ambiguity-button routing / callback query payload for this query.
+
+Required fix
+
+Make sure the ambiguity buttons preserve the correct intended song query.
+
+For inputs like:
+	•	Tyla water song
+	•	<artist> <song> song
+
+the button callback should resolve to the same clean query the working lyrics command would use, not a polluted query like “tyla - water song”.
+
+The button should produce the same result as a correct direct lyrics lookup.
+
+Do not change working analyze-button behavior.
+
+⸻
+
+Issue 3 — /analyze mood bar scale still looks wrong
+
+We fixed the all-zero bug, but the scale/visual output still looks off.
+
+Example shown:
+	•	Happy (0)
+	•	Sad (7)
+	•	Romantic (3)
+	•	Energetic (1)
+	•	Relaxed (0)
+
+but the visual bars do not appear properly normalized/proportional in a clean way.
+
+Please review the bar rendering logic and make it visually consistent and professional.
+
+Required behavior
+	•	the highest mood should show the strongest bar
+	•	lower values should scale proportionally
+	•	zero should show an empty bar
+	•	formatting should be clean and readable across Telegram clients
+
+Do not change the analysis structure itself.
+Only improve the mood-bar rendering/scaling.
+
+⸻
+
+Issue 4 — /recommend results are too static and need verification
+
+For:
+	•	similar button
+	•	Recommend tyla water
+	•	/recommend tyla water
+
+the recommendations always seem to be the same set.
+
+Please review the recommendation logic.
+
+Required checks
+	1.	Confirm that the recommended songs are genuinely reasonable/similar for the source song.
+	2.	Improve variety if the current behavior is overly static.
+	3.	If randomness is introduced, keep it controlled and still relevant.
+	4.	Do not make recommendations unstable or low quality.
+
+Example concern:
+For Tyla - Water, the same list repeats every time.
+
+Need a better balance between:
+	•	consistency
+	•	relevance
+	•	some variety
+
+Also please verify whether the current output for:
+	•	Tyla - Water
+	•	Taylor Swift - Love Story
+
+is actually musically reasonable.
+
+⸻
+
+Issue 5 — /stats output needs polish and buttons
+
+Current /stats tyla water output is generally okay, but the ending line is weak:
+
+Want to see the lyrics? Try /lyrics with this song!
+
+This feels unprofessional.
+
+Required fix
+
+Replace the plain text CTA with inline buttons.
+
+Suggested buttons under /stats:
+	•	Lyrics
+	•	Analyze
+	•	Video
+	•	Similar Songs
+
+If artist/song metadata is available, wire buttons to the existing working handlers.
+
+If button creation fails, still send the stats result normally.
+
+Do not break /stats formatting or calculation.
+
+Also please double-check whether the statistics values themselves are correct and consistent:
+	•	lines
+	•	words
+	•	unique meaningful words
+	•	vocabulary richness
+	•	repeated phrases
+
+⸻
+
+Issue 6 — Verify recommendation quality for Taylor Swift - Love Story
+
+These two inputs produce different recommendation ordering/sets:
+	•	Recommend taylor swift love story
+	•	/recommend taylor swift love story
+
+Please verify:
+	1.	both command and natural-language routing are passing the correct normalized query
+	2.	both outputs are genuinely reasonable for Love Story
+	3.	recommendation quality is good for this type of song
+	4.	if there is a command/NL mismatch, fix it
+
+The output should remain relevant and coherent.
+
+⸻
+
+Issue 7 — Remove Tyla from /artist help text
+
+When user sends only:
+
+/artist
+
+the usage/help block still includes:
+	•	/artist Tyla
+
+Please replace Tyla with another neutral artist.
+
+Suggested examples:
+	•	/artist Taylor Swift
+	•	/artist Drake
+	•	/artist Adele
+
+Only update examples. Do not change /artist functionality.
+
+⸻
+
+Issue 8 — /top Soul should not map to RNB
+
+When user sends only /top, the usage/help block is fine.
+
+But when user sends:
+
+/top Soul
+
+the bot returns:
+
+Top RNB
+
+with RNB songs.
+
+This is not correct.
+
+Required fix
+
+Add proper Soul handling as its own genre/category, instead of collapsing it into RNB.
+
+Requirements:
+	1.	/top soul should produce a Soul output, not RNB
+	2.	natural-language forms like:
+	•	top soul
+	•	best soul songs
+should also map correctly
+	3.	choose songs that are actually related to Soul
+	4.	keep genre mapping accurate
+	5.	do not break current working genres:
+	•	afrobeats
+	•	pop
+	•	rap
+	•	rnb
+	•	rock
+	•	latin
+	•	country
+	•	kpop
+
+Important:
+Use the same philosophy as /trending: prefer current/relevant songs where possible, not stale or arbitrary picks.
+
+If live genre-specific chart data is not available, use the best safe fallback, but label/output the genre correctly.
+
+⸻
+
+Issue 9 — Double-check /subscribe and /unsubscribe mechanism
+
+The outputs look fine, but we need verification of the actual mechanism.
+
+Please audit the subscription flow and confirm whether it is truly working end-to-end.
+
+Required checks
+	1.	/subscribe actually stores the user correctly
+	2.	/unsubscribe actually removes the user correctly
+	3.	persistence survives restart/deploy if that is intended
+	4.	scheduled daily delivery actually runs
+	5.	no silent bugs in the scheduler/task loop
+	6.	no duplicate delivery risk
+	7.	no crash if subscriber file/data is missing or corrupted
+
+If the mechanism is already correct, report that clearly.
+If there are bugs, fix them.
+
+Do not redesign the feature unless necessary. First verify correctness.
+
+⸻
+
+Issue 10 — Re-test /download and /mp3
+
+Please re-test both because download is currently failing for both of them.
+
+Required:
+	1.	test /download with at least one valid YouTube URL
+	2.	test /mp3 with at least one valid YouTube URL
+	3.	confirm whether failures are:
+	•	code issues
+	•	yt-dlp extraction issues
+	•	YouTube blocking/cookies/rate-limit issues
+	4.	if there is a code/config fix available, apply it carefully
+	5.	if the limitation is external, improve the error message so it is honest and professional
+
+Do not let /download or /mp3 changes break unrelated commands.
+
+⸻
+
+Testing required before reporting success
+
+Please test all of the following:
+	1.	/song
+	2.	/artist
+	3.	Tyla water song then press ambiguity buttons, especially Lyrics
+	4.	/analyze adele hello
+	5.	/stats tyla water
+	6.	/recommend tyla water
+	7.	Recommend tyla water
+	8.	/recommend taylor swift love story
+	9.	Recommend taylor swift love story
+	10.	/top soul
+	11.	best soul songs
+	12.	/subscribe
+	13.	/unsubscribe
+	14.	/download <youtube url>
+	15.	/mp3 <youtube url>
+
+And also run regression checks for:
+	•	/lyrics tyla water
+	•	Lyrics of water by tyla
+	•	/analyze tyla water
+	•	analyze button lyrics/video/artist/similar
+	•	/trending
+	•	/top pop
+	•	/wiki ariana grande
+
+⸻
+
+Report back with
+	1.	Exactly which files were changed
+	2.	Root cause for each issue fixed
+	3.	Confirmation of what was intentionally left unchanged
+	4.	Whether /subscribe is actually working end-to-end
+	5.	Whether /download and /mp3 were fixed or are limited externally
+	6.	Any remaining edge cases
+
+Do not broaden the scope beyond the issues above.

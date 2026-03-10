@@ -37,6 +37,7 @@ DOWNLOAD_KEYWORDS = [
 MP3_KEYWORDS = [
     'mp3', 'audio', 'convert to mp3', 'convert to audio',
     'extract audio', 'just the audio', 'as mp3',
+    'convert.*mp3', 'convert.*audio',
 ]
 
 TRENDING_KEYWORDS = [
@@ -295,6 +296,10 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
         query = _clean_query(text, ['lyrics', 'lyric', 'words', 'text', 'sing',
                                      'how does', 'go'])
         return 'lyrics', query
+
+    if _match_keywords(text, MP3_KEYWORDS):
+        query = _clean_query(text, ['convert', 'extract', 'just', 'the', 'as', 'mp3', 'audio'])
+        return 'mp3', query
 
     if _match_keywords(text, DOWNLOAD_KEYWORDS):
         query = _clean_query(text, ['download', 'save', 'get'])

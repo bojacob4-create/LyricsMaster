@@ -3,5 +3,10 @@
     "chat_id": 169570389,
     "subscribed_at": "2026-03-10 00:47:54.365939",
     "active": true
+  },
+  "12345": {
+    "chat_id": 12345,
+    "subscribed_at": "2026-03-10 21:29:51.006320",
+    "active": false
   }
 }

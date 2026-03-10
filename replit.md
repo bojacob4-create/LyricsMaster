@@ -38,7 +38,7 @@
 
 ## Subscribe System
 - Persists to `subscribers.json` — survives bot restart
-- APScheduler runs daily song delivery
+- APScheduler (BackgroundScheduler) runs daily song delivery at 09:00 UTC
 - 30 curated songs in daily pool
 
 ## Quiz
@@ -51,7 +51,7 @@
 - "X by Y" patterns are normalized to "Y - X" format for correct song+artist matching
 - Trailing filler words (on, in, at, for, please) are stripped from cleaned queries
 - Quiz answers (A/B/C/D) take priority over NL routing when a quiz is active
-- Ambiguous 1–3 word messages show clarification buttons (Artist Profile, Song Dashboard, Lyrics, YouTube, Similar)
+- Ambiguous 1–3 word messages show clarification buttons (Artist Profile, Song Dashboard, Lyrics, YouTube, Similar); noise words (song, music, track) are stripped before passing to buttons
 - Messages starting with `/` bypass the router entirely
 - Supported intents: lyrics, recommend, artist, youtube, download, mp3, trending, translate, analyze, stats, song, top, random, quiz, subscribe, unsubscribe
 
@@ -60,6 +60,7 @@
 - Lyrics results: Analyze, Translate, Video, Similar
 - Song dashboard: Full Lyrics, Analyze, Translate, Video, Similar
 - Artist profile: Top Song, Video, Wiki, Similar
+- Stats results: Lyrics, Analyze, Video, Similar Songs
 - Recommendations: Lyrics, Analyze, Video
 - Trending/Top results: Lyrics, Song Dashboard (for #1 song)
 - **callback_query_handler** in handlers.py routes button presses to existing command handlers
@@ -69,7 +70,7 @@
 
 ### New Commands
 - **/song** — Full song dashboard (lyrics preview, YouTube, stats, mood, themes, 3 recommendations)
-- **/top** — Top songs by genre (afrobeats, pop, rap, rnb, rock, latin, country, kpop + aliases)
+- **/top** — Top songs by genre (afrobeats, pop, rap, rnb, rock, latin, country, kpop, soul + aliases)
 - **/random** — Random song pick with lyrics preview, YouTube link, and similar songs
 - **/artist** — Enhanced artist profile card with Wikipedia + YouTube links
 

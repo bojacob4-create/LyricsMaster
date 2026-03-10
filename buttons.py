@@ -86,6 +86,19 @@ def analyze_buttons(query):
     ])
 
 
+def stats_buttons(query):
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🎵 Lyrics", callback_data=_cb("lyrics", query)),
+            InlineKeyboardButton("📊 Analyze", callback_data=_cb("analyze", query)),
+        ],
+        [
+            InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", query)),
+            InlineKeyboardButton("🎧 Similar Songs", callback_data=_cb("recommend", query)),
+        ],
+    ])
+
+
 def ambiguous_buttons(query):
     return InlineKeyboardMarkup([
         [

@@ -165,6 +165,18 @@ GENRE_TOP_SONGS = {
         {'artist': 'Beyonce', 'song': 'Texas Hold Em', 'note': 'Country genre crossover'},
         {'artist': 'Post Malone', 'song': 'I Had Some Help', 'note': 'Country-pop fusion'},
     ],
+    'soul': [
+        {'artist': 'Adele', 'song': 'Rolling in the Deep', 'note': 'Soulful powerhouse vocal'},
+        {'artist': 'Sam Cooke', 'song': 'A Change Is Gonna Come', 'note': 'Timeless soul classic'},
+        {'artist': 'Aretha Franklin', 'song': 'Respect', 'note': 'Iconic soul anthem'},
+        {'artist': 'Alicia Keys', 'song': 'If I Ain\'t Got You', 'note': 'Modern soul ballad'},
+        {'artist': 'John Legend', 'song': 'All of Me', 'note': 'Soulful love song'},
+        {'artist': 'Leon Bridges', 'song': 'Coming Home', 'note': 'Retro-soul revival'},
+        {'artist': 'H.E.R.', 'song': 'Best Part', 'note': 'Contemporary neo-soul'},
+        {'artist': 'Teddy Swims', 'song': 'Lose Control', 'note': 'Modern soul vocal power'},
+        {'artist': 'Amy Winehouse', 'song': 'Back to Black', 'note': 'Soul-jazz masterpiece'},
+        {'artist': 'Hozier', 'song': 'Take Me to Church', 'note': 'Soul-rock crossover'},
+    ],
     'kpop': [
         {'artist': 'BTS', 'song': 'Dynamite', 'note': 'Global K-pop phenomenon'},
         {'artist': 'BLACKPINK', 'song': 'How You Like That', 'note': 'K-pop powerhouse'},
@@ -178,7 +190,7 @@ GENRE_TOP_SONGS = {
 
 GENRE_ALIASES = {
     'hiphop': 'rap', 'hip-hop': 'rap', 'hip hop': 'rap', 'trap': 'rap',
-    'r&b': 'rnb', 'r and b': 'rnb', 'soul': 'rnb',
+    'r&b': 'rnb', 'r and b': 'rnb',
     'afro': 'afrobeats', 'amapiano': 'afrobeats', 'afropop': 'afrobeats',
     'reggaeton': 'latin', 'spanish': 'latin', 'latino': 'latin',
     'k-pop': 'kpop', 'korean': 'kpop',
@@ -237,6 +249,7 @@ def format_top_songs(genre: str, songs: List[Dict]) -> str:
     genre_emojis = {
         'afrobeats': '🌍', 'pop': '🎤', 'rap': '🎙️', 'rnb': '💜',
         'rock': '🎸', 'latin': '💃', 'country': '🤠', 'kpop': '🇰🇷',
+        'soul': '🎷',
     }
     emoji = genre_emojis.get(genre, '🎵')
     display_genre = genre.upper() if genre in ('rnb', 'kpop') else genre.title()

@@ -6,7 +6,7 @@ from telegram.error import TelegramError
 from buttons import (
     lyrics_buttons, song_dashboard_buttons, artist_buttons,
     recommend_buttons, trending_buttons, ambiguous_buttons,
-    analyze_buttons
+    analyze_buttons, stats_buttons
 )
 from services.lyrics_service import get_song_lyrics
 from services.translator_service import (
@@ -205,6 +205,19 @@ def quiz_answer(update: Update, context: CallbackContext):
         )
 
 
+_AMBIGUOUS_NOISE = {'song', 'songs', 'music', 'track', 'tracks', 'video', 'audio', 'clip'}
+
+def _clean_ambiguous_query(text: str) -> str:
+    import re
+    words = text.strip().split()
+    cleaned = [w for w in words if w.lower() not in _AMBIGUOUS_NOISE]
+    if not cleaned:
+        return text.strip()
+    result = ' '.join(cleaned)
+    result = re.sub(r'\s+', ' ', result).strip()
+    return result
+
+
 def natural_language_handler(update: Update, context: CallbackContext):
     """Handle non-command text messages via intent detection."""
     user_id = update.effective_user.id
@@ -225,10 +238,11 @@ def natural_language_handler(update: Update, context: CallbackContext):
 
         if not intent:
             if len(text.split()) <= 3 and not text.startswith('/'):
-                logger.info(f"Ambiguous input from user {user_id}: '{text}'")
+                clean = _clean_ambiguous_query(text)
+                logger.info(f"Ambiguous input from user {user_id}: '{text}' -> clean='{clean}'")
                 update.message.reply_text(
-                    f"What would you like for \"{text}\"?",
-                    reply_markup=ambiguous_buttons(text)
+                    f"What would you like for \"{clean}\"?",
+                    reply_markup=ambiguous_buttons(clean)
                 )
             return
 
@@ -475,11 +489,15 @@ def stats_command(update: Update, context: CallbackContext):
 
         response = (
             f"🎵 {display_title}\n\n"
-            f"{formatted_stats}\n\n"
-            "Want to see the lyrics? Try /lyrics with this song! 🎤"
+            f"{formatted_stats}"
         )
 
-        processing_msg.edit_text(response)
+        try:
+            btn_query = display_title if display_title else query
+            markup = stats_buttons(btn_query)
+        except Exception:
+            markup = None
+        processing_msg.edit_text(response, reply_markup=markup)
         logger.info(f"Successfully sent stats to user {user_id}")
 
     except Exception as e:
@@ -1065,9 +1083,9 @@ def artist_command(update: Update, context: CallbackContext):
                 "━━━━━━━━━━━━━━━━━━━━━\n\n"
                 "Usage: /artist [name]\n\n"
                 "Examples:\n"
-                "• /artist Tyla\n"
                 "• /artist Taylor Swift\n"
-                "• /artist Drake"
+                "• /artist Drake\n"
+                "• /artist Adele"
             )
             return
 
@@ -1167,7 +1185,7 @@ def song_command(update: Update, context: CallbackContext):
                 "Get a full overview of any song!\n\n"
                 "Usage: /song [artist and/or song]\n\n"
                 "Examples:\n"
-                "• /song Tyla Water\n"
+                "• /song Counting Stars\n"
                 "• /song Shape of You\n"
                 "• /song Adele - Hello"
             )
