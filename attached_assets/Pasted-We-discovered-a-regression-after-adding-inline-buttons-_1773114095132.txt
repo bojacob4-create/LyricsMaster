@@ -1,0 +1,91 @@
+We discovered a regression after adding inline buttons.
+
+Before the button update, the following commands were working correctly:
+	•	/trending
+	•	/top
+	•	natural language: “Trending now”
+	•	natural language: “Top pop”
+	•	natural language: “Best afrobeats songs”
+
+After the button integration, these commands now fail and return:
+
+“Couldn’t fetch trending songs right now. Please try again!”
+or
+“Couldn’t fetch top songs right now. Please try again!”
+
+Important observation
+
+Buttons are working correctly for other commands:
+	•	/lyrics
+	•	/song
+	•	/artist
+	•	/recommend
+
+So the global button system and callback handler are working.
+
+This means the regression is very likely inside the button integration specifically for /trending and /top.
+
+Critical rule
+
+Do NOT modify any working command logic.
+
+Do NOT refactor handlers that are already working.
+
+Do NOT change:
+	•	/lyrics
+	•	/song
+	•	/artist
+	•	/recommend
+	•	the router
+	•	the callback system
+	•	the existing command implementations
+
+Only investigate and fix the handlers for:
+	•	/trending
+	•	/top
+
+What likely caused the issue
+
+The problem probably appeared when buttons were added under the trending/top responses, specifically where the code tries to extract the first song (#1) to build button actions like:
+	•	Lyrics
+	•	Song Dashboard
+
+Possible causes to check:
+	•	incorrect extraction of the first song from chart results
+	•	wrong data structure passed to the button builder
+	•	reply_markup generation throwing an exception
+	•	button callback data being malformed
+	•	button creation running before results are validated
+
+Required behavior
+
+The command should always send the chart results first.
+
+Buttons should be added only if they can be safely created.
+
+If button creation fails, the command must still send the result without buttons, instead of failing the entire command.
+
+Scope limitation
+
+Only edit the code related to:
+	•	the /trending handler
+	•	the /top handler
+	•	the button creation attached to those two handlers
+
+No other parts of the bot should be touched.
+
+After fixing, test these cases:
+	1.	/trending
+	2.	Trending now
+	3.	/top afrobeats
+	4.	Top pop
+
+Confirm that:
+	•	the chart results appear again
+	•	buttons appear underneath if available
+	•	no other commands were modified or affected
+
+At the end, report:
+	1.	what caused the regression
+	2.	what exact change fixed it
+	3.	confirmation that no other commands were modified

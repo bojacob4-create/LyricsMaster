@@ -1056,8 +1056,11 @@ def trending_command(update: Update, context: CallbackContext):
         logger.info(f"User {user_id} requested trending songs")
         update.message.chat.send_action(action="typing")
         songs, is_live = get_trending_songs()
-        first_song_q = f"{songs[0]['artist']} - {songs[0]['name']}" if songs else ""
-        markup = trending_buttons(first_song_q) if first_song_q else None
+        try:
+            first_song_q = f"{songs[0]['artist']} - {songs[0]['song']}" if songs else ""
+            markup = trending_buttons(first_song_q) if first_song_q else None
+        except Exception:
+            markup = None
         update.message.reply_text(format_trending(songs, is_live), reply_markup=markup)
 
     except Exception as e:
@@ -1248,8 +1251,11 @@ def top_command(update: Update, context: CallbackContext):
         result = get_top_by_genre(query)
         if result:
             genre, songs = result
-            first_song_q = f"{songs[0]['artist']} - {songs[0]['name']}" if songs else ""
-            markup = trending_buttons(first_song_q) if first_song_q else None
+            try:
+                first_song_q = f"{songs[0]['artist']} - {songs[0]['song']}" if songs else ""
+                markup = trending_buttons(first_song_q) if first_song_q else None
+            except Exception:
+                markup = None
             update.message.reply_text(format_top_songs(genre, songs), reply_markup=markup)
         else:
             genres = get_available_genres()
