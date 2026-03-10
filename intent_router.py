@@ -73,18 +73,18 @@ RANDOM_KEYWORDS = [
     'anything', 'something random',
 ]
 
-TOP_KEYWORDS = [
-    'top afrobeats', 'top pop', 'top rap', 'top rock', 'top rnb',
-    'top latin', 'top country', 'top kpop', 'best afrobeats',
-    'best pop', 'best rap', 'genre',
-]
-
 SUBSCRIBE_KEYWORDS = [
     'subscribe', 'daily songs', 'send me daily', 'daily picks',
 ]
 
 UNSUBSCRIBE_KEYWORDS = [
     'unsubscribe', 'stop daily', 'no more daily',
+]
+
+FILLER_WORDS = [
+    'show', 'me', 'find', 'get', 'can', 'you', 'please', 'i', 'want',
+    'a', 'this', 'that', 'is', 'give', 'do', 'could', 'would',
+    'some', 'the', 'right', 'now', 'songs', 'song', 'music',
 ]
 
 
@@ -107,10 +107,33 @@ def _extract_query_after(text: str, patterns: list) -> str:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
             remainder = text[match.end():].strip()
-            remainder = re.sub(r'^(for|of|to|the|song|by)\s+', '', remainder, flags=re.IGNORECASE).strip()
+            remainder = re.sub(r'^(for|of|to|the|song)\s+', '', remainder, flags=re.IGNORECASE).strip()
             if remainder:
                 return remainder
     return ''
+
+
+def _normalize_song_query(raw: str) -> str:
+    by_match = re.match(r'^(.+?)\s+by\s+(.+)$', raw.strip(), re.IGNORECASE)
+    if by_match:
+        song_part = by_match.group(1).strip()
+        artist_part = by_match.group(2).strip()
+        if song_part and artist_part:
+            return f"{artist_part} - {song_part}"
+    return raw.strip()
+
+
+def _strip_filler_prefix(text: str) -> str:
+    result = text
+    while True:
+        cleaned = re.sub(
+            r'^(for|of|to|the|me|show|find|get|can|you|please|i|want|a|this|that|is|give|do|some|right|now)\s+',
+            '', result, flags=re.IGNORECASE
+        ).strip()
+        if cleaned == result:
+            break
+        result = cleaned
+    return result
 
 
 def _clean_query(text: str, keywords_to_remove: list) -> str:
@@ -118,12 +141,38 @@ def _clean_query(text: str, keywords_to_remove: list) -> str:
     for kw in keywords_to_remove:
         result = re.sub(r'\b' + kw + r'\b', '', result, flags=re.IGNORECASE)
     result = re.sub(r'\s+', ' ', result).strip()
-    while True:
-        cleaned = re.sub(r'^(for|of|to|the|me|show|find|get|can|you|please|i|want|a|this|that|is)\s+', '', result, flags=re.IGNORECASE).strip()
-        if cleaned == result:
-            break
-        result = cleaned
+    result = _strip_filler_prefix(result)
+    result = _normalize_song_query(result)
     return result
+
+
+def _extract_top_genre(text: str) -> Optional[str]:
+    patterns = [
+        r'\btop\s+(\w+)',
+        r'\bbest\s+(\w+)',
+    ]
+    for pat in patterns:
+        match = re.search(pat, text, re.IGNORECASE)
+        if match:
+            genre = match.group(1).lower()
+            if genre in ('songs', 'song', 'music', 'tracks'):
+                continue
+            return genre
+
+    patterns_with_suffix = [
+        r'\btop\s+(\w+)\s+(?:songs?|music|tracks?)',
+        r'\bbest\s+(\w+)\s+(?:songs?|music|tracks?)',
+        r'(?:show|give)\s+(?:me\s+)?top\s+(\w+)',
+        r'(?:show|give)\s+(?:me\s+)?best\s+(\w+)',
+    ]
+    for pat in patterns_with_suffix:
+        match = re.search(pat, text, re.IGNORECASE)
+        if match:
+            genre = match.group(1).lower()
+            if genre not in ('songs', 'song', 'music', 'tracks', 'the', 'me', 'some'):
+                return genre
+
+    return None
 
 
 def detect_intent(text: str) -> Tuple[Optional[str], str]:
@@ -151,7 +200,14 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
         return 'random', ''
 
     if _match_keywords(text, TRENDING_KEYWORDS):
+        genre = _extract_top_genre(text)
+        if genre:
+            return 'top', genre
         return 'trending', ''
+
+    genre = _extract_top_genre(text)
+    if genre:
+        return 'top', genre
 
     if _match_keywords(text, TRANSLATE_KEYWORDS):
         query = _clean_query(text, ['translate', 'translation', 'arabic', 'in arabic', 'to arabic'])
@@ -187,17 +243,6 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
         query = _clean_query(text, ['song dashboard', 'full info', 'everything about',
                                      'overview', 'all about', 'tell', 'everything'])
         return 'song', query
-
-    for kw in TOP_KEYWORDS:
-        match = re.search(r'\btop\s+(\w+)', text, re.IGNORECASE)
-        if match:
-            genre = match.group(1)
-            return 'top', genre
-        match2 = re.search(r'\bbest\s+(\w+)', text, re.IGNORECASE)
-        if match2:
-            genre = match2.group(1)
-            return 'top', genre
-        break
 
     if _match_keywords(text, LYRICS_KEYWORDS):
         query = _clean_query(text, ['lyrics', 'lyric', 'words', 'text', 'sing',

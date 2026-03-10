@@ -1,0 +1,156 @@
+Important: the existing slash commands are working flawlessly.
+
+Do not modify, refactor, or retune any of the existing command handlers or command logic.
+
+The following slash commands are already working correctly and must remain unchanged:
+
+/start
+/help
+/song
+/lyrics
+/stats
+/recommend
+/analyze
+/translate
+/artist
+/top
+/random
+/youtube
+/download
+/mp3
+/quiz
+/endquiz
+/wiki
+/trending
+/subscribe
+/unsubscribe
+
+The issues I found happen only when using natural-language messages, not when using /commands.
+
+Your task is to improve only the natural-language routing/parsing layer.
+
+Main problem
+
+The natural-language router is not correctly parsing requests in the format:
+
+” by ”
+
+This causes bad routing and wrong results, even though the underlying slash commands work perfectly.
+
+Findings from testing
+
+1. Natural-language lyrics request failed
+
+Input:
+Lyrics water by tyla
+
+Problem:
+The bot treated the query incorrectly and returned the wrong lyrics result.
+
+Important:
+The normal slash command for lyrics works correctly.
+So this is a natural-language parsing issue only, not a lyrics-command issue.
+
+Expected behavior:
+	•	detect intent = lyrics
+	•	extract song = water
+	•	extract artist = tyla
+	•	route cleanly to the existing lyrics handler without changing that handler
+
+2. Natural-language recommendation request failed
+
+Input:
+Recommend music like water by Tyla
+
+Problem:
+The bot returned recommendations that do not match Tyla - Water.
+
+Important:
+The slash command recommendation flow is already working correctly.
+So this is again a natural-language query extraction/routing issue, not a recommendation-engine issue.
+
+Expected behavior:
+	•	detect intent = recommend
+	•	extract song = water
+	•	extract artist = tyla
+	•	route to the existing recommendation handler with the correct clean query
+
+3. Natural-language translation request failed
+
+Input:
+Translate hello by adele
+
+Problem:
+The bot returned the wrong “Hello” song instead of Adele - Hello.
+
+Important:
+The slash translation command works correctly.
+This means the problem is the natural-language parser is not using the artist constraint strongly enough.
+
+Expected behavior:
+	•	detect intent = translate
+	•	extract song = hello
+	•	extract artist = adele
+	•	route to the existing translation handler cleanly
+
+4. Natural-language /top style support is only partially proven
+
+Tested:
+Top Pop
+
+This worked.
+
+But the more important issue is that natural-language support for this area may still be narrow.
+
+Please make sure the router can also understand variations like:
+	•	show me top pop songs
+	•	best pop songs
+	•	give me top afrobeats
+	•	best rap songs right now
+
+This should still route to the existing /top command logic without changing that command itself.
+
+What is already working well in natural language and should stay working
+
+These natural-language requests are already good and should remain unchanged:
+	•	who is tyla
+	•	tell me about drake
+	•	show the video for water by tyla
+	•	download this 
+	•	what is trending
+
+Do not break these.
+
+Required fix
+
+Improve only the natural-language parsing and normalization layer so that:
+	1.	Phrases using:
+” by ”
+are parsed correctly.
+	2.	The word “by” is treated as a separator between song and artist, not left inside the final search string.
+	3.	Filler phrases are removed before routing, such as:
+
+	•	show me
+	•	give me
+	•	recommend music like
+	•	translate
+	•	lyrics
+	•	tell me about
+
+	4.	When both song and artist are present, the router should preserve both strongly and pass a clean query to the existing command handler.
+	5.	Do not change any slash-command behavior.
+
+Safety requirement
+
+Only the natural-language router should be edited.
+Do not change command handlers that already work.
+
+Test these exact natural-language cases before reporting success
+	•	Lyrics water by tyla
+	•	Recommend music like water by Tyla
+	•	Translate hello by adele
+	•	Show the video for water by tyla
+	•	Top Pop
+	•	show me top pop songs
+
+At the end, tell me exactly what changed in the natural-language parsing logic and confirm that no slash-command handlers were modified.
