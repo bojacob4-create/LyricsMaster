@@ -935,6 +935,47 @@ def trending_command(update: Update, context: CallbackContext):
         )
 
 
+def _is_artist_only_query(query: str) -> bool:
+    clean = clean_input(query)
+    if '-' in clean:
+        return False
+    info = get_artist_info(clean)
+    if not info:
+        return False
+    query_words = clean.lower().split()
+    name_words = info['name'].lower().split()
+    if set(query_words) == set(name_words):
+        return True
+    if set(query_words) < set(name_words):
+        return True
+    return False
+
+
+def _artist_summary_for_song(query: str, update, processing_msg):
+    info = get_artist_info(query)
+    if not info:
+        processing_msg.edit_text(
+            f"😕 I'm not sure if \"{query}\" is a song or an artist.\n\n"
+            "Try being more specific:\n"
+            f"• /song {query} [song name]\n"
+            f"• /artist {query}\n\n"
+            "Example: /song Tyla Water"
+        )
+        return
+
+    songs_list = '\n'.join(f"  • /song {info['name']} {s}" for s in info['top_songs'][:5])
+    response = (
+        f"🎤 {info['name']}\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎵 Genre: {info['genre']}\n"
+        f"🌍 From: {info['country']}\n\n"
+        f"Which song? Pick one:\n{songs_list}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎤 /artist {info['name']} — full artist profile"
+    )
+    processing_msg.edit_text(response, disable_web_page_preview=True)
+
+
 def song_command(update: Update, context: CallbackContext):
     """Handle the /song command — full song dashboard."""
     user_id = update.effective_user.id
@@ -961,6 +1002,10 @@ def song_command(update: Update, context: CallbackContext):
             "🎵 Building your song dashboard...\n"
             "Just a moment! ✨"
         )
+
+        if _is_artist_only_query(query):
+            _artist_summary_for_song(query, update, processing_msg)
+            return
 
         artist, song, lyrics, status = search_lyrics_with_fallback(query)
 
@@ -1013,7 +1058,7 @@ def song_command(update: Update, context: CallbackContext):
             vocab_label = "Repetitive"
 
         themes = analysis.get('themes', [])
-        themes_text = ', '.join(themes[:3]) if themes else 'General'
+        themes_text = ', '.join(t.title() for t in themes[:3]) if themes else 'General'
 
         response = (
             f"🎵 {display_title}\n"

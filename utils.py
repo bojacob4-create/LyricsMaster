@@ -223,7 +223,6 @@ def get_detailed_song_analysis(lyrics: str) -> Dict:
         'outro': len(re.findall(r'\[outro\]', lyrics.lower()))
     }
 
-    # Enhanced mood analysis
     mood_intensity = {
         'happy': sum(1 for word in re.findall(r'\b\w+\b', lyrics.lower()) 
                     if word in ['happy', 'joy', 'smile', 'laugh', 'fun', 'love']),
@@ -233,6 +232,8 @@ def get_detailed_song_analysis(lyrics: str) -> Dict:
                         if word in ['jump', 'dance', 'run', 'fire', 'burn', 'alive'])
     }
 
+    themes = detect_themes(lyrics)
+
     return {
         'statistics': basic_stats,
         'rhyme_analysis': rhyme_analysis,
@@ -240,8 +241,53 @@ def get_detailed_song_analysis(lyrics: str) -> Dict:
             'primary_mood': mood,
             'mood_intensity': mood_intensity
         },
-        'structure': structure_markers
+        'structure': structure_markers,
+        'themes': themes,
     }
+
+
+def detect_themes(lyrics: str) -> List[str]:
+    lyrics_lower = lyrics.lower()
+    words = set(re.findall(r'\b\w+\b', lyrics_lower))
+
+    theme_keywords = {
+        'romantic': {'love', 'kiss', 'heart', 'darling', 'baby', 'honey', 'sweetheart', 'lover', 'romance', 'adore', 'devotion', 'embrace', 'tender'},
+        'sensual': {'body', 'touch', 'skin', 'lips', 'desire', 'heat', 'sweat', 'close', 'taste', 'breathe', 'feeling', 'hot', 'wet'},
+        'heartbreak': {'broke', 'broken', 'goodbye', 'leave', 'left', 'gone', 'miss', 'regret', 'apart', 'over', 'end', 'letting'},
+        'longing': {'miss', 'wish', 'remember', 'memories', 'again', 'return', 'waiting', 'distance', 'far', 'someday', 'hope'},
+        'confidence': {'boss', 'queen', 'king', 'power', 'strong', 'unstoppable', 'fearless', 'own', 'shine', 'crown', 'flex', 'win', 'best'},
+        'celebration': {'party', 'dance', 'tonight', 'celebrate', 'cheers', 'vibe', 'festival', 'drink', 'club', 'turn', 'lit'},
+        'introspective': {'think', 'wonder', 'question', 'soul', 'meaning', 'inside', 'reflect', 'truth', 'searching', 'understand', 'mind', 'thought'},
+        'motivational': {'rise', 'fight', 'believe', 'dream', 'strength', 'never', 'give', 'stand', 'keep', 'brave', 'overcome', 'forward'},
+        'nostalgic': {'remember', 'young', 'childhood', 'past', 'used', 'days', 'old', 'time', 'memories', 'back', 'years', 'ago'},
+        'rebellious': {'break', 'rules', 'rebel', 'free', 'wild', 'chaos', 'destroy', 'system', 'fight', 'resist', 'against'},
+        'melancholic': {'rain', 'tears', 'dark', 'shadow', 'cold', 'empty', 'fading', 'drown', 'hollow', 'numb', 'grey', 'silence'},
+        'empowerment': {'woman', 'man', 'independent', 'myself', 'enough', 'worth', 'proud', 'beautiful', 'real', 'authentic', 'unapologetic'},
+        'spiritual': {'god', 'heaven', 'pray', 'faith', 'angel', 'blessed', 'divine', 'sacred', 'spirit', 'grace', 'miracle'},
+        'street': {'money', 'hustle', 'grind', 'hood', 'block', 'real', 'trap', 'gang', 'ride', 'stack', 'drip'},
+    }
+
+    theme_scores = {}
+    for theme, keywords in theme_keywords.items():
+        overlap = words & keywords
+        if overlap:
+            score = 0
+            for kw in overlap:
+                score += len(re.findall(r'\b' + kw + r'\b', lyrics_lower))
+            theme_scores[theme] = score
+
+    if not theme_scores:
+        return ['general']
+
+    sorted_themes = sorted(theme_scores.items(), key=lambda x: x[1], reverse=True)
+    result = []
+    for theme, score in sorted_themes:
+        if score >= 2 or (not result and score >= 1):
+            result.append(theme)
+        if len(result) >= 3:
+            break
+
+    return result if result else ['general']
 
 def format_detailed_analysis(analysis: Dict) -> str:
     """Format detailed song analysis into a readable message."""

@@ -1,0 +1,100 @@
+The new commands are promising, but there is now a regression in the YouTube matching logic that needs to be fixed carefully.
+
+Important: do not touch commands that are already working well unless necessary. The main issue right now is the YouTube result selection and how /song depends on it.
+
+Problems found
+
+1. /youtube is returning wrong results
+
+Example tested:
+/youtube tyla water
+
+Expected:
+	•	the correct Tyla - Water video or the best direct match
+
+Actual result:
+	•	unrelated / incorrect content was returned
+
+This means the YouTube search/matching logic is now selecting poor results.
+
+Please fix the result ranking and matching quality.
+
+2. /song is affected by the same YouTube problem
+
+Example tested:
+/song tyla water
+
+The dashboard structure is good, but the attached YouTube link/result is not reliable enough because it depends on the broken YouTube resolver.
+
+Please make /song use the corrected YouTube matching logic.
+
+3. /song tyla should not confidently assume the wrong track
+
+Example tested:
+/song tyla
+
+It returned a specific Tyla song automatically.
+
+For artist-only queries like this, improve behavior:
+	•	either ask for clarification
+	•	or show likely song options / top songs
+	•	or provide an artist-oriented quick summary instead of assuming one track
+
+Only auto-select a song when confidence is high.
+
+4. Theme labeling in /song is too generic
+
+Example:
+Themes: General
+
+This is too weak for a premium bot.
+
+Improve theme extraction so it returns more meaningful labels such as:
+	•	sensual
+	•	romantic
+	•	longing
+	•	heartbreak
+	•	confidence
+	•	celebration
+	•	introspective
+	•	motivational
+	•	nostalgic
+
+Requirements for the fix
+	1.	Improve YouTube result selection:
+
+	•	rank exact title matches higher
+	•	rank artist + title matches higher
+	•	prefer official music videos / official audio / lyric videos in that order when relevant
+	•	reject unrelated commercial/platform videos
+	•	do not attach a result if confidence is weak
+
+	2.	Make links clean and direct:
+
+	•	return the actual direct YouTube watch link
+	•	avoid noisy scraped metadata or unrelated preview content
+
+	3.	Improve /song intent handling:
+
+	•	/song artist + title → full song dashboard
+	•	/song artist only → ask for clarification or show likely songs/top songs
+	•	do not auto-pick a random track unless confidence is strong
+
+	4.	Improve theme classification quality:
+
+	•	replace generic labels like “General” with more meaningful themes
+
+Very important
+	•	Do not break the commands that are already working well
+	•	Fix this as a targeted improvement
+	•	Test these exact cases before reporting success:
+
+/youtube tyla water
+/song tyla water
+/song tyla
+
+At the end, tell me:
+	1.	what changed in the YouTube matching logic
+	2.	how result confidence is handled
+	3.	how /song decides whether the input is a song query or artist-only query
+	4.	which of the above test cases passed
