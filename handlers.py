@@ -5,10 +5,14 @@ from telegram.ext import CallbackContext, MessageHandler, Filters, CommandHandle
 from telegram.error import TelegramError
 from buttons import (
     lyrics_buttons, song_dashboard_buttons, artist_buttons,
-    recommend_buttons, trending_buttons, ambiguous_buttons
+    recommend_buttons, trending_buttons, ambiguous_buttons,
+    analyze_buttons
 )
 from services.lyrics_service import get_song_lyrics
-from services.translator_service import translate_to_arabic
+from services.translator_service import (
+    translate_to_arabic, translate_text, get_language_code,
+    get_language_display, get_supported_languages_text
+)
 from services.recommendation_service import get_similar_songs, format_recommendations
 from services.quiz_service import (
     start_quiz, check_answer, get_quiz_stats, end_quiz,
@@ -541,6 +545,17 @@ def recommend_command(update: Update, context: CallbackContext):
         )
 
 
+def _parse_translate_language(query: str):
+    import re
+    match = re.search(r'\s+(?:to|into|in)\s+(\w+)\s*$', query, re.IGNORECASE)
+    if match:
+        lang_name = match.group(1).strip()
+        lang_code = get_language_code(lang_name)
+        song_query = query[:match.start()].strip()
+        return song_query, lang_code, lang_name
+    return query, None, None
+
+
 def translate_lyrics_command(update: Update, context: CallbackContext):
     """Handle the /translate command."""
     user_id = update.effective_user.id
@@ -549,22 +564,43 @@ def translate_lyrics_command(update: Update, context: CallbackContext):
         logger.info(f"User {user_id} raw translate input: '{query}'")
 
         if not query:
+            supported = get_supported_languages_text()
             update.message.reply_text(
                 "⚠️ Please tell me what song to translate!\n\n"
                 "Examples:\n"
                 "• /translate Adele - Hello\n"
-                "• /translate Hello Adele\n"
-                "• /translate Hello\n\n"
+                "• /translate Hello Adele to spanish\n"
+                "• /translate Blinding Lights to french\n\n"
+                f"Supported languages: {supported}\n\n"
                 "Let's try again! 🎵"
             )
             return
 
+        song_query, lang_code, lang_name = _parse_translate_language(query)
+
+        if lang_name and not lang_code:
+            supported = get_supported_languages_text()
+            update.message.reply_text(
+                f"😕 Sorry, I don't support \"{lang_name}\" as a language.\n\n"
+                f"Supported languages: {supported}\n\n"
+                "Examples:\n"
+                "• /translate Hello Adele to spanish\n"
+                "• /translate Blinding Lights to french\n"
+                "• /translate Counting Stars to arabic"
+            )
+            return
+
+        if not lang_code:
+            lang_code = 'ar'
+
+        lang_display = get_language_display(lang_code)
+
         update.message.chat.send_action(action="typing")
 
-        artist, song, lyrics, status = search_lyrics_with_fallback(query)
+        artist, song, lyrics, status = search_lyrics_with_fallback(song_query)
 
         if not lyrics:
-            logger.info(f"No lyrics found for translation, query: '{query}'")
+            logger.info(f"No lyrics found for translation, query: '{song_query}'")
             update.message.reply_text(
                 "😕 I couldn't find the lyrics for this song, so I can't translate it.\n\n"
                 "Try different formats:\n"
@@ -578,25 +614,25 @@ def translate_lyrics_command(update: Update, context: CallbackContext):
 
         processing_msg = update.message.reply_text(
             f"✅ Found lyrics for {display_title}!\n"
-            "🔄 Translating to Arabic... Please wait! ✨"
+            f"🔄 Translating to {lang_display}... Please wait! ✨"
         )
 
-        translated_lyrics = translate_to_arabic(lyrics)
+        translated_lyrics = translate_text(lyrics, lang_code)
         if translated_lyrics:
             formatted_lyrics = format_lyrics(translated_lyrics)
             response = (
                 f"🎵 {display_title}\n"
-                f"🌍 Arabic Translation:\n\n"
+                f"🌍 {lang_display} Translation:\n\n"
                 f"{formatted_lyrics}"
             )
             processing_msg.edit_text(response)
-            logger.info(f"Successfully sent translated lyrics to user {user_id}")
+            logger.info(f"Successfully sent {lang_display} translated lyrics to user {user_id}")
         else:
             logger.warning(f"Translation failed for user {user_id}")
             processing_msg.edit_text(
                 "😓 I found the lyrics but the translation service is unavailable right now.\n"
                 "Please try again in a few moments! 🧞‍♂️\n\n"
-                f"In the meantime, try /lyrics {query} to see the original lyrics!"
+                f"In the meantime, try /lyrics {song_query} to see the original lyrics!"
             )
 
     except Exception as e:
@@ -803,7 +839,12 @@ def analyze_command(update: Update, context: CallbackContext):
             f"{formatted_analysis}"
         )
 
-        update.message.reply_text(response)
+        try:
+            btn_query = display_title if display_title else query
+            markup = analyze_buttons(btn_query)
+        except Exception:
+            markup = None
+        update.message.reply_text(response, reply_markup=markup)
         logger.info(f"Successfully sent analysis to user {user_id}")
 
     except Exception as e:

@@ -45,16 +45,75 @@ def translate_chunk(text: str, dest_lang: str = 'ar') -> Optional[str]:
         logger.error(f"Error translating chunk: {e}")
         return None
 
+SUPPORTED_LANGUAGES = {
+    'arabic': 'ar', 'ar': 'ar',
+    'spanish': 'es', 'es': 'es',
+    'french': 'fr', 'fr': 'fr',
+    'german': 'de', 'de': 'de',
+    'italian': 'it', 'it': 'it',
+    'portuguese': 'pt', 'pt': 'pt',
+    'turkish': 'tr', 'tr': 'tr',
+    'russian': 'ru', 'ru': 'ru',
+    'japanese': 'ja', 'ja': 'ja',
+    'korean': 'ko', 'ko': 'ko',
+    'chinese': 'zh-cn', 'zh': 'zh-cn',
+    'hindi': 'hi', 'hi': 'hi',
+    'dutch': 'nl', 'nl': 'nl',
+    'polish': 'pl', 'pl': 'pl',
+    'swedish': 'sv', 'sv': 'sv',
+    'indonesian': 'id', 'id': 'id',
+    'thai': 'th', 'th': 'th',
+    'vietnamese': 'vi', 'vi': 'vi',
+    'greek': 'el', 'el': 'el',
+    'hebrew': 'he', 'he': 'he',
+    'urdu': 'ur', 'ur': 'ur',
+    'persian': 'fa', 'fa': 'fa',
+    'malay': 'ms', 'ms': 'ms',
+    'filipino': 'tl', 'tl': 'tl',
+    'swahili': 'sw', 'sw': 'sw',
+    'romanian': 'ro', 'ro': 'ro',
+    'czech': 'cs', 'cs': 'cs',
+    'hungarian': 'hu', 'hu': 'hu',
+    'danish': 'da', 'da': 'da',
+    'finnish': 'fi', 'fi': 'fi',
+    'norwegian': 'no', 'no': 'no',
+    'ukrainian': 'uk', 'uk': 'uk',
+    'bengali': 'bn', 'bn': 'bn',
+}
+
+LANGUAGE_DISPLAY_NAMES = {
+    'ar': 'Arabic', 'es': 'Spanish', 'fr': 'French', 'de': 'German',
+    'it': 'Italian', 'pt': 'Portuguese', 'tr': 'Turkish', 'ru': 'Russian',
+    'ja': 'Japanese', 'ko': 'Korean', 'zh-cn': 'Chinese', 'hi': 'Hindi',
+    'nl': 'Dutch', 'pl': 'Polish', 'sv': 'Swedish', 'id': 'Indonesian',
+    'th': 'Thai', 'vi': 'Vietnamese', 'el': 'Greek', 'he': 'Hebrew',
+    'ur': 'Urdu', 'fa': 'Persian', 'ms': 'Malay', 'tl': 'Filipino',
+    'sw': 'Swahili', 'ro': 'Romanian', 'cs': 'Czech', 'hu': 'Hungarian',
+    'da': 'Danish', 'fi': 'Finnish', 'no': 'Norwegian', 'uk': 'Ukrainian',
+    'bn': 'Bengali',
+}
+
+
+def get_language_code(lang_name: str) -> Optional[str]:
+    return SUPPORTED_LANGUAGES.get(lang_name.lower().strip())
+
+
+def get_language_display(lang_code: str) -> str:
+    return LANGUAGE_DISPLAY_NAMES.get(lang_code, lang_code.upper())
+
+
+def get_supported_languages_text() -> str:
+    main_langs = ['Arabic', 'Spanish', 'French', 'German', 'Italian',
+                  'Portuguese', 'Turkish', 'Russian', 'Japanese', 'Korean',
+                  'Chinese', 'Hindi', 'Dutch', 'Polish', 'Swedish']
+    return ', '.join(main_langs) + ', and more'
+
+
 def translate_to_arabic(text: str) -> Optional[str]:
-    """
-    Translate text to Arabic.
+    return translate_text(text, 'ar')
 
-    Args:
-        text (str): Text to translate
 
-    Returns:
-        Optional[str]: Translated text if successful, None otherwise
-    """
+def translate_text(text: str, dest_lang: str = 'ar') -> Optional[str]:
     try:
         if not translator:
             logger.error("Translator not initialized")
@@ -64,13 +123,11 @@ def translate_to_arabic(text: str) -> Optional[str]:
             logger.warning("Empty text provided for translation")
             return None
 
-        # Split text into smaller chunks to avoid length limitations
-        # and to leverage caching effectively
         chunks = [text[i:i+1000] for i in range(0, len(text), 1000)]
         translated_chunks = []
 
         for chunk in chunks:
-            translated_chunk = translate_chunk(chunk)
+            translated_chunk = translate_chunk(chunk, dest_lang)
             if translated_chunk:
                 translated_chunks.append(translated_chunk)
             else:

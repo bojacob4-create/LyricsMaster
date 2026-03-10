@@ -1,0 +1,207 @@
+We are ready for the next upgrade, but this must be done very carefully.
+
+The bot is now stable and deployed. I do NOT want any regressions.
+
+IMPORTANT:
+Do NOT modify unrelated commands.
+Do NOT refactor working handlers.
+Do NOT change existing behavior unless it is directly required for the two improvements below.
+
+The following commands and flows are already working and must remain intact:
+
+/start
+/help
+/song
+/lyrics
+/stats
+/recommend
+/analyze
+/artist
+/top
+/random
+/youtube
+/download
+/mp3
+/quiz
+/endquiz
+/wiki
+/trending
+/subscribe
+/unsubscribe
+
+Also preserve the current natural-language behavior that is already working, including examples like:
+- lyrics water by tyla
+- give me the lyrics for water by tyla
+- recommend music like water by tyla
+- songs like calm down
+- who is tyla
+- tell me about drake
+- show the video for water by tyla
+- play water by tyla
+- show trending songs
+- what songs are hot right now
+- top pop
+- best afrobeats songs
+- show me top rap songs
+- download this <youtube url>
+- convert this to mp3 <youtube url>
+
+Do NOT break any of the above.
+
+==================================================
+UPGRADE 1 — GLOBAL TRANSLATION
+==================================================
+
+Current behavior:
+The bot translates lyrics to Arabic only.
+
+Goal:
+Allow the user to choose the target language in a clean and easy way, both through the /translate command and through natural-language input.
+
+Requirements:
+
+1. Keep the current /translate command working.
+2. Extend it so users can specify the target language naturally.
+
+Supported examples should include:
+- /translate hello adele to spanish
+- /translate blinding lights to french
+- /translate counting stars to arabic
+- /translate someone like you to turkish
+
+Natural-language examples that should work:
+- translate hello by adele to spanish
+- can you translate blinding lights to french
+- translate counting stars into arabic
+- i want someone like you translated to italian
+
+3. If the user does NOT specify a target language, keep the current default behavior exactly as it is now.
+   In other words:
+   - /translate hello adele
+   should still work the same way it currently works.
+
+4. The target-language syntax should be simple and forgiving:
+   - “to spanish”
+   - “into spanish”
+   - “in spanish”
+   should all be understood.
+
+5. The output should clearly show the selected target language.
+   Example:
+   Adele - Hello
+   Translation: Spanish
+
+6. If the requested language is unsupported or invalid, return a clean friendly error message and suggest supported examples.
+
+7. Do not make the translation flow hard or complicated.
+   Keep it easy for normal users.
+
+Important scope rule:
+Only touch the code necessary for translation command parsing, natural-language translation parsing, and the translation handler/service.
+Do NOT alter unrelated commands.
+
+==================================================
+UPGRADE 2 — INLINE BUTTONS UNDER /analyze
+==================================================
+
+Add inline action buttons under analysis results to improve usability.
+
+After an /analyze result, add buttons like:
+- 🎵 Lyrics
+- 📺 Video
+- 👤 Artist
+- 🎧 Similar Songs
+
+These buttons must reuse existing working handlers/callback patterns.
+Do NOT duplicate logic.
+
+Expected button behavior:
+- Lyrics → open the existing lyrics result for the same song
+- Video → open the existing YouTube result for the same song
+- Artist → open the artist profile for the song’s artist
+- Similar Songs → open the recommendation flow for the same song
+
+Important:
+This improvement applies to /analyze and natural-language analysis requests too.
+Examples:
+- /analyze adele hello
+- analyze hello by adele
+- analyze blinding lights
+The buttons should appear under the analysis response in all these cases.
+
+If artist metadata is missing for a given analysis result, handle it gracefully:
+- still show the buttons that can be supported
+- do not let button creation break the whole response
+
+Robustness rule:
+If button creation fails for any reason, the analysis result must still be sent without buttons.
+Buttons must never be able to break the command output.
+
+==================================================
+DO NOT BREAK EXISTING NATURAL INPUTS
+==================================================
+
+The natural-language layer is now a major strength of the bot.
+Do NOT weaken it while adding translation-language parsing or analysis buttons.
+
+Especially preserve:
+- “translate hello by adele” still works
+- “analyze hello by adele” still works
+- “show the video for water by tyla” still works
+- “songs like calm down” still works
+- ambiguous one-word handling still works
+- quiz answers still keep priority over natural-language routing
+
+Do NOT break quiz behavior.
+Do NOT break callback handling.
+Do NOT break current button behavior on other commands.
+
+==================================================
+TEST BEFORE REPORTING SUCCESS
+==================================================
+
+Please test all of these before reporting success:
+
+Translation command:
+1. /translate hello adele
+2. /translate hello adele to spanish
+3. /translate blinding lights to french
+4. /translate counting stars to arabic
+
+Natural-language translation:
+5. translate hello by adele to spanish
+6. can you translate blinding lights to french
+7. translate counting stars into arabic
+
+Analyze buttons:
+8. /analyze adele hello
+9. analyze hello by adele
+10. analyze blinding lights
+
+For the analyze tests above, verify:
+- analysis still renders normally
+- buttons appear underneath
+- each button works
+- if artist metadata is unavailable, response still works safely
+
+Regression checks:
+11. /lyrics blinding lights
+12. /song counting stars
+13. /recommend songs like calm down
+14. /youtube water by tyla
+15. /trending
+16. /top pop
+17. /mp3 <youtube link>
+18. /download <youtube link>
+19. /quiz then answer A/B/C/D
+20. single-word ambiguity still behaves properly
+
+==================================================
+REPORT BACK WITH:
+==================================================
+
+1. Exactly which files were changed
+2. What was added for target-language translation
+3. What was added for /analyze buttons
+4. Confirmation that unrelated commands were not modified
+5. Any limitations or edge cases still remaining

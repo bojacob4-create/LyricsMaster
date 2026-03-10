@@ -73,6 +73,19 @@ def trending_buttons(first_song_query):
     ])
 
 
+def analyze_buttons(query):
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🎵 Lyrics", callback_data=_cb("lyrics", query)),
+            InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", query)),
+        ],
+        [
+            InlineKeyboardButton("👤 Artist", callback_data=_cb("artist", query)),
+            InlineKeyboardButton("🎧 Similar Songs", callback_data=_cb("recommend", query)),
+        ],
+    ])
+
+
 def ambiguous_buttons(query):
     return InlineKeyboardMarkup([
         [

@@ -10,6 +10,12 @@
 - **utils.py**: Lyrics analysis, mood detection, rhyme analysis, formatting.
 - **services/**: External service integrations.
 
+## Translation
+- **Multi-language support**: 30+ target languages (Arabic, Spanish, French, German, Italian, Turkish, Russian, Japanese, Korean, Chinese, Hindi, etc.)
+- Target language parsed from "to/into/in [language]" suffix in both `/translate` command and NL
+- Default language: Arabic (when no target specified)
+- Uses googletrans library with chunked translation and caching
+
 ## Lyrics Provider Chain
 1. **lrclib.net** (primary) — free, no API key, direct lookup + search
 2. **lyrics.ovh** (fallback) — free, no API key, direct lookup only

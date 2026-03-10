@@ -46,7 +46,19 @@ TRENDING_KEYWORDS = [
 ]
 
 TRANSLATE_KEYWORDS = [
-    'translate', 'arabic', 'in arabic', 'translation',
+    'translate', 'translated', 'translation',
+    'arabic', 'in arabic', 'to arabic',
+    'spanish', 'to spanish', 'in spanish',
+    'french', 'to french', 'in french',
+    'german', 'to german', 'in german',
+    'italian', 'to italian', 'in italian',
+    'portuguese', 'to portuguese',
+    'turkish', 'to turkish',
+    'russian', 'to russian',
+    'japanese', 'to japanese',
+    'korean', 'to korean',
+    'chinese', 'to chinese',
+    'hindi', 'to hindi',
 ]
 
 ANALYZE_KEYWORDS = [
@@ -160,6 +172,27 @@ def _clean_query(text: str, keywords_to_remove: list) -> str:
     return result
 
 
+def _clean_query_translate(text: str) -> str:
+    import re as _re
+    lang_suffix = ''
+    lang_match = _re.search(r'\s+(?:to|into|in)\s+(\w+)\s*$', text, _re.IGNORECASE)
+    if lang_match:
+        lang_suffix = lang_match.group(0).strip()
+        text = text[:lang_match.start()].strip()
+
+    result = text
+    for kw in ['translate', 'translated', 'translation', 'can you', 'please', 'i want']:
+        result = _re.sub(r'\b' + kw + r'\b', '', result, flags=_re.IGNORECASE)
+    result = _re.sub(r'\s+', ' ', result).strip()
+    result = _strip_filler_prefix(result)
+    result = _strip_filler_suffix(result)
+    result = _normalize_song_query(result)
+
+    if lang_suffix:
+        result = f"{result} {lang_suffix}"
+    return result
+
+
 def _extract_top_genre(text: str) -> Optional[str]:
     patterns = [
         r'\btop\s+(\w+)',
@@ -224,7 +257,7 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
         return 'top', genre
 
     if _match_keywords(text, TRANSLATE_KEYWORDS):
-        query = _clean_query(text, ['translate', 'translation', 'arabic', 'in arabic', 'to arabic'])
+        query = _clean_query_translate(text)
         return 'translate', query
 
     if _match_keywords(text, ANALYZE_KEYWORDS):
