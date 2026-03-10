@@ -128,24 +128,56 @@ def format_lyrics(lyrics: str) -> str:
 
     return '\n'.join(formatted)
 
+MOOD_KEYWORDS = {
+    'happy': [
+        'happy', 'joy', 'smile', 'laugh', 'fun', 'dance', 'party', 'sunshine',
+        'celebrate', 'cheer', 'bright', 'glad', 'wonderful', 'amazing', 'good',
+        'great', 'beautiful day', 'feeling good', 'blessed', 'alive', 'yeah',
+        'exciting', 'hooray', 'woo', 'yay',
+    ],
+    'sad': [
+        'sad', 'cry', 'tears', 'pain', 'hurt', 'alone', 'lost', 'sorry', 'missing',
+        'gone', 'broken', 'break', 'goodbye', 'leave', 'left', 'empty', 'dark',
+        'hollow', 'miss', 'regret', 'suffer', 'wound', 'drown', 'fall', 'fade',
+        'cold', 'rain', 'shadow', 'numb', 'helpless', 'sorrow', 'grief', 'dying',
+        'apart', 'over', 'end', 'wrong',
+    ],
+    'romantic': [
+        'love', 'heart', 'kiss', 'beautiful', 'forever', 'darling', 'romance',
+        'baby', 'honey', 'sweetheart', 'hold', 'touch', 'feel', 'close',
+        'desire', 'passion', 'tender', 'embrace', 'adore', 'devotion', 'lover',
+        'mine', 'yours', 'together', 'need you', 'want you', 'arms', 'eyes',
+        'lips', 'skin', 'body', 'breathe',
+    ],
+    'energetic': [
+        'jump', 'run', 'fire', 'burn', 'wild', 'free', 'tonight',
+        'fight', 'power', 'strong', 'fast', 'loud', 'scream', 'shout',
+        'bang', 'blast', 'explode', 'rage', 'rush', 'move', 'go',
+        'let\'s go', 'come on', 'turn up', 'rise', 'unstoppable', 'harder',
+        'faster', 'push', 'break free',
+    ],
+    'relaxed': [
+        'peace', 'calm', 'quiet', 'dream', 'sleep', 'gentle', 'slow',
+        'easy', 'breathe', 'soft', 'still', 'float', 'drift', 'rest',
+        'serene', 'breeze', 'ocean', 'sky', 'clouds', 'light', 'warm',
+        'home', 'safe', 'soothe', 'lullaby', 'whisper',
+    ],
+}
+
+
+def _count_mood_hits(lyrics_lower: str) -> Dict:
+    counts = {}
+    for mood, keywords in MOOD_KEYWORDS.items():
+        total = 0
+        for kw in keywords:
+            total += len(re.findall(r'\b' + re.escape(kw) + r'\b', lyrics_lower))
+        counts[mood] = total
+    return counts
+
+
 def detect_song_mood(lyrics: str) -> str:
     """Detect the mood of a song based on its lyrics."""
-    lyrics_lower = lyrics.lower()
-
-    mood_keywords = {
-        'happy': ['happy', 'joy', 'smile', 'laugh', 'fun', 'dance', 'party', 'sunshine'],
-        'sad': ['sad', 'cry', 'tears', 'pain', 'hurt', 'alone', 'lost', 'sorry', 'missing'],
-        'romantic': ['love', 'heart', 'kiss', 'beautiful', 'forever', 'darling', 'romance'],
-        'energetic': ['jump', 'run', 'fire', 'burn', 'alive', 'wild', 'free', 'tonight'],
-        'relaxed': ['peace', 'calm', 'quiet', 'dream', 'sleep', 'gentle', 'slow']
-    }
-
-    mood_counts = {mood: 0 for mood in mood_keywords}
-
-    for mood, keywords in mood_keywords.items():
-        for keyword in keywords:
-            mood_counts[mood] += len(re.findall(r'\b' + keyword + r'\b', lyrics_lower))
-
+    mood_counts = _count_mood_hits(lyrics.lower())
     dominant_mood = max(mood_counts.items(), key=lambda x: x[1])[0]
     return dominant_mood if mood_counts[dominant_mood] > 0 else 'energetic'
 
@@ -223,20 +255,21 @@ def get_detailed_song_analysis(lyrics: str) -> Dict:
         'outro': len(re.findall(r'\[outro\]', lyrics.lower()))
     }
 
-    mood_keywords_full = {
-        'happy': ['happy', 'joy', 'smile', 'laugh', 'fun', 'dance', 'party', 'sunshine'],
-        'sad': ['sad', 'cry', 'tears', 'pain', 'hurt', 'alone', 'lost', 'sorry', 'missing'],
-        'romantic': ['love', 'heart', 'kiss', 'beautiful', 'forever', 'darling', 'romance'],
-        'energetic': ['jump', 'run', 'fire', 'burn', 'alive', 'wild', 'free', 'tonight'],
-        'relaxed': ['peace', 'calm', 'quiet', 'dream', 'sleep', 'gentle', 'slow'],
-    }
     lyrics_lower = lyrics.lower()
+    raw_counts = _count_mood_hits(lyrics_lower)
+
+    total_words = max(len(re.findall(r'\b\w+\b', lyrics_lower)), 1)
     mood_intensity = {}
-    for m, kws in mood_keywords_full.items():
-        total = 0
-        for kw in kws:
-            total += len(re.findall(r'\b' + kw + r'\b', lyrics_lower))
-        mood_intensity[m] = total
+    for m, raw in raw_counts.items():
+        density = raw / total_words
+        score = min(10, round(density * 200))
+        mood_intensity[m] = score
+
+    max_score = max(mood_intensity.values()) if mood_intensity else 0
+    if max_score > 0 and max_score < 5:
+        scale = 7 / max(max_score, 1)
+        for m in mood_intensity:
+            mood_intensity[m] = min(10, round(mood_intensity[m] * scale))
 
     themes = detect_themes(lyrics)
 
@@ -325,20 +358,15 @@ def format_detailed_analysis(analysis: Dict) -> str:
         'energetic': '⚡', 'relaxed': '😌'
     }.get(mood_data['primary_mood'], '🎵')
 
-    mood_intensities = mood_data['mood_intensity']
+    mood_scores = mood_data['mood_intensity']
     mood_bars = []
-    max_intensity = max(mood_intensities.values()) if mood_intensities.values() else 1
     mood_order = ['happy', 'sad', 'romantic', 'energetic', 'relaxed']
     mood_emojis = {'happy': '😊', 'sad': '😢', 'romantic': '💖', 'energetic': '⚡', 'relaxed': '😌'}
     for label in mood_order:
-        count = mood_intensities.get(label, 0)
-        if max_intensity > 0 and count > 0:
-            bar_len = max(1, round((count / max_intensity) * 10))
-        else:
-            bar_len = 0
-        bar = '▓' * bar_len + '░' * (10 - bar_len)
+        score = mood_scores.get(label, 0)
+        bar = '█' * score + '░' * (10 - score)
         emoji = mood_emojis.get(label, '🎵')
-        mood_bars.append(f"  {emoji} {label.title():10} {bar}  {count}")
+        mood_bars.append(f"  {emoji} {label.title():10} {bar}  {score}/10")
 
     structure_parts = []
     for part, count in structure.items():

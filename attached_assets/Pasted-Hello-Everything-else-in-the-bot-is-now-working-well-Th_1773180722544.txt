@@ -1,0 +1,206 @@
+Hello. Everything else in the bot is now working well. Thank you.
+
+There is only ONE remaining issue, and I want this fix to be handled very carefully.
+
+==================================================
+CRITICAL SCOPE RULE
+==================================================
+
+Please fix ONLY the `/analyze` system and the natural-language analyze flow.
+
+Do NOT modify, refactor, or touch any other command, service, callback, routing logic, or output formatting unless it is directly required for the analyze mood scoring/bar rendering.
+
+The following commands and flows are already working and must NOT be touched:
+
+/start
+/help
+/song
+/lyrics
+/stats
+/recommend
+/artist
+/top
+/random
+/youtube
+/download
+/mp3
+/quiz
+/endquiz
+/wiki
+/trending
+/translate
+/subscribe
+/unsubscribe
+
+Also do NOT touch these existing working systems:
+- natural-language routing for non-analyze intents
+- ambiguity buttons
+- callback query system
+- existing button logic for commands other than analyze
+- recommendation system
+- translation system
+- YouTube lookup
+- download/mp3 logic
+- trending/top logic
+- subscribe/unsubscribe logic
+- quiz flow
+- stats flow
+- artist flow
+- song dashboard flow
+- lyrics flow
+
+Preserve all currently working natural-language inputs such as:
+- lyrics water by tyla
+- give me the lyrics for water by tyla
+- recommend music like water by tyla
+- songs like calm down
+- who is tyla
+- tell me about drake
+- show the video for water by tyla
+- play water by tyla
+- what is trending
+- show trending songs
+- what songs are hot right now
+- top pop
+- best afrobeats songs
+- show me top rap songs
+- translate hello by adele to spanish
+- can you translate blinding lights to french
+- download this <youtube url>
+- convert this to mp3 <youtube url>
+
+Do NOT break any of the above.
+
+==================================================
+ONLY ISSUE TO FIX
+==================================================
+
+The only remaining problem is with `/analyze` and natural-language analyze requests.
+
+Affected scope only:
+- /analyze [query]
+- natural-language analyze requests like:
+  - analyze adele hello
+  - analyze sza saturn
+  - analyze teddy swims lose control
+
+The issue is the mood scoring / mood bar rendering.
+
+==================================================
+PROBLEM DESCRIPTION
+==================================================
+
+The mood scale visualization is inconsistent and sometimes unrealistic.
+
+Each mood category currently shows 10 boxes, but:
+
+1. sometimes the filled bar does NOT correctly reflect the numeric score
+2. sometimes a low score looks visually too full
+3. sometimes the mood selection itself feels unreasonable
+4. sometimes the headline mood and the scale feel weakly aligned
+
+Example observed:
+For Teddy Swims - Lose Control:
+- Romantic: 4
+- Sad: 1
+
+But the romantic bar looked almost fully filled, which is incorrect.
+
+The bar must visually reflect the real score out of 10.
+
+==================================================
+REQUIRED BEHAVIOR
+==================================================
+
+1. Mood scoring must be deterministic and based on the lyrics content.
+   It must not feel random.
+
+2. Every mood bar must always have exactly 10 boxes.
+
+3. The number of filled boxes must match the score proportionally and clearly.
+
+Examples:
+
+score 0:
+░░░░░░░░░░
+
+score 3:
+███░░░░░░░
+
+score 7:
+███████░░░
+
+score 10:
+██████████
+
+4. The bar must NEVER appear fully filled unless the score is actually 10.
+
+5. The headline mood must match the strongest score.
+   Example:
+   if the output says:
+   Mood: Sad
+   then Sad must be the highest mood score.
+
+6. The analyze result should be emotionally reasonable for the song.
+   Example expectations:
+   - Adele - Hello → Sad dominant
+   - SZA - Saturn → Sad / reflective dominant
+   - Teddy Swims - Lose Control → Romantic / emotional dominant
+   - clearly energetic songs → Energetic dominant
+
+7. The output format structure of /analyze should remain the same.
+   Only improve:
+   - mood scoring logic
+   - mood bar rendering/scaling
+
+==================================================
+IMPORTANT IMPLEMENTATION LIMIT
+==================================================
+
+Please only modify the code directly responsible for:
+- analyze mood scoring
+- analyze mood bar rendering
+- any analyze-only helper logic required for this fix
+
+Likely files:
+- utils.py
+- analyze-specific helpers/services if necessary
+
+Do NOT broaden scope.
+Do NOT refactor unrelated code.
+
+==================================================
+TESTING REQUIRED BEFORE REPORTING SUCCESS
+==================================================
+
+Please test all of these after the fix:
+
+/analyze adele hello
+/analyze sza saturn
+/analyze teddy swims lose control
+
+Also test natural-language analyze:
+/ analyze adele hello equivalent through natural input
+analyze adele hello
+analyze sza saturn
+analyze teddy swims lose control
+
+For each result, verify:
+- bars match scores
+- exactly 10 boxes per bar
+- strongest mood matches the headline mood
+- bars scale correctly
+- output remains stable
+- analyze buttons still work
+- no other command behavior changes
+
+==================================================
+REPORT BACK WITH
+==================================================
+
+1. Exactly which files were changed
+2. Root cause of the analyze mood issue
+3. What was changed in mood scoring
+4. What was changed in bar rendering
+5. Confirmation that NO other commands or systems were modified
+6. Any remaining edge cases, if any
