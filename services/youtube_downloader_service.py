@@ -5,22 +5,18 @@ import re
 import yt_dlp
 import unicodedata
 import string
+import glob as globmod
 
 logger = logging.getLogger(__name__)
 
 def sanitize_filename(filename: str) -> str:
-    """Sanitize filename to only use ASCII characters."""
-    # Convert to ASCII, removing non-ASCII characters
     filename = unicodedata.normalize('NFKD', filename).encode('ASCII', 'ignore').decode()
-    # Keep only alphanumeric characters, dashes, and underscores
     valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
     filename = ''.join(c for c in filename if c in valid_chars)
-    # Remove spaces
     filename = filename.replace(' ', '_')
-    return filename or 'video'  # Return 'video' if filename becomes empty
+    return filename or 'video'
 
 def extract_video_id(url: str) -> Optional[str]:
-    """Extract video ID from various YouTube URL formats."""
     patterns = [
         r'(?:v=|/v/|youtu\.be/|/embed/)([^&?/]+)',
         r'youtube.com/shorts/([^&?/]+)'
@@ -31,69 +27,87 @@ def extract_video_id(url: str) -> Optional[str]:
     return None
 
 def validate_youtube_url(url: str) -> bool:
-    """Validate if the URL is a valid YouTube video URL."""
-    video_id = extract_video_id(url)
-    if not video_id:
-        return False
-    return True
+    return extract_video_id(url) is not None
 
 def download_youtube_video(url: str) -> Tuple[bool, str]:
-    """Download a YouTube video and return a status message."""
     try:
         logger.info(f"Starting download process for URL: {url}")
 
-        # Validate URL first
         if not validate_youtube_url(url):
             return False, (
-                "❌ Invalid YouTube URL.\n"
-                "Please provide a valid YouTube video URL! 🎬\n"
-                "Example: https://youtube.com/watch?v=..."
+                "❌ Invalid YouTube URL\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Please provide a valid YouTube link:\n"
+                "• youtube.com/watch?v=...\n"
+                "• youtu.be/...\n"
+                "• youtube.com/shorts/..."
             )
 
-        # Generate a safe output template
         video_id = extract_video_id(url)
         output_template = f'youtube_{video_id}.%(ext)s'
 
-        # Configure yt-dlp options
         ydl_opts = {
-            'format': 'best[filesize<50M]',  # Best format under 50MB
-            'noplaylist': True,  # Single video only
+            'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/bestvideo+bestaudio/best',
+            'merge_output_format': 'mp4',
+            'noplaylist': True,
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
-            'outtmpl': output_template,  # Use safe output template
-            'restrictfilenames': True,  # Restrict filenames to ASCII
+            'outtmpl': output_template,
+            'restrictfilenames': True,
+            'socket_timeout': 30,
+            'retries': 3,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            },
+            'postprocessors': [{
+                'key': 'FFmpegVideoConvertor',
+                'preferedformat': 'mp4',
+            }],
         }
 
-        # Get video info first
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
                 info = ydl.extract_info(url, download=False)
-                if info.get('filesize', 0) > 50 * 1024 * 1024:  # 50MB
+                duration = info.get('duration', 0) or 0
+
+                if duration > 600:
                     return False, (
-                        "❌ Video is too large for Telegram (>50MB).\n"
-                        "Please try a shorter video! 🎬"
+                        "❌ Video Too Long\n"
+                        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                        "Max duration: 10 minutes.\n"
+                        "This video is {0}:{1:02d}.\n"
+                        "Try a shorter video.".format(duration // 60, duration % 60)
                     )
 
                 ydl.download([url])
 
-                import glob as globmod
                 matches = globmod.glob(os.path.join(os.getcwd(), f'youtube_{video_id}.*'))
+                matches = [m for m in matches if not m.endswith('.part')]
                 if not matches:
                     logger.error(f"No downloaded file found for video_id: {video_id}")
                     return False, (
                         "❌ Download Failed\n"
                         "━━━━━━━━━━━━━━━━━━━━━\n\n"
-                        "The video downloaded but the file couldn't be located.\n"
-                        "This usually means the format was incompatible.\n"
+                        "The file couldn't be saved.\n"
                         "Try a different video."
                     )
 
                 file_path = matches[0]
-                duration = info.get('duration', 0) or 0
-                views = info.get('view_count', 0) or 0
-                file_size_mb = round(os.path.getsize(file_path) / (1024 * 1024), 1)
+                file_size = os.path.getsize(file_path)
+                file_size_mb = round(file_size / (1024 * 1024), 1)
 
+                if file_size > 50 * 1024 * 1024:
+                    cleanup_video(file_path)
+                    return False, (
+                        "❌ File Too Large\n"
+                        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                        f"Downloaded file is {file_size_mb}MB.\n"
+                        "Telegram limit is 50MB.\n"
+                        "Try a shorter video."
+                    )
+
+                views = info.get('view_count', 0) or 0
                 success_msg = (
                     f"✅ Downloaded!\n"
                     f"━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -111,20 +125,22 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
                 error_msg = str(e).lower()
                 logger.error(f"yt-dlp DownloadError: {str(e)}")
 
-                if "private video" in error_msg:
-                    reason = "This video is private and can't be accessed."
-                elif "age restricted" in error_msg or "age-restricted" in error_msg:
-                    reason = "This video is age-restricted. The bot can't bypass age verification."
+                if "private video" in error_msg or "private" in error_msg:
+                    reason = "This video is private."
+                elif "age restricted" in error_msg or "age-restricted" in error_msg or "sign in to confirm" in error_msg:
+                    reason = "This video is age-restricted."
                 elif "copyright" in error_msg:
-                    reason = "This video is blocked due to copyright restrictions."
+                    reason = "Blocked due to copyright."
                 elif "not available" in error_msg or "unavailable" in error_msg:
-                    reason = "This video is not available (may be region-locked or deleted)."
+                    reason = "Video is not available (may be region-locked or deleted)."
                 elif "sign in" in error_msg or "login" in error_msg:
-                    reason = "This video requires authentication to access."
+                    reason = "Requires authentication to access."
                 elif "429" in error_msg or "too many" in error_msg:
-                    reason = "YouTube is rate-limiting requests. Please wait a few minutes."
+                    reason = "YouTube rate limit. Wait a few minutes."
+                elif "requested format" in error_msg:
+                    reason = "No compatible format available. This is a YouTube restriction."
                 else:
-                    reason = "YouTube blocked the download. This often happens with music videos due to DRM protection."
+                    reason = "YouTube blocked the download."
 
                 return False, (
                     f"❌ Download Failed\n"
@@ -132,7 +148,7 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
                     f"Reason: {reason}\n\n"
                     f"💡 Tips:\n"
                     f"• Try a different video\n"
-                    f"• Shorter videos work better\n"
+                    f"• Shorter/older videos work better\n"
                     f"• Unofficial uploads are easier to download"
                 )
 
@@ -141,18 +157,141 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
         return False, (
             "❌ Download Failed\n"
             "━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "An unexpected error occurred during download.\n\n"
+            "An unexpected error occurred.\n\n"
             "💡 Tips:\n"
             "• Check the URL is correct\n"
             "• Try a different video\n"
             "• Wait a minute and retry"
         )
 
+def download_youtube_audio(url: str) -> Tuple[bool, str]:
+    try:
+        logger.info(f"Starting MP3 download for URL: {url}")
+
+        if not validate_youtube_url(url):
+            return False, (
+                "❌ Invalid YouTube URL\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Please provide a valid YouTube link:\n"
+                "• youtube.com/watch?v=...\n"
+                "• youtu.be/...\n"
+                "• youtube.com/shorts/..."
+            )
+
+        video_id = extract_video_id(url)
+        output_template = f'audio_{video_id}.%(ext)s'
+
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'noplaylist': True,
+            'quiet': True,
+            'no_warnings': True,
+            'outtmpl': output_template,
+            'restrictfilenames': True,
+            'socket_timeout': 30,
+            'retries': 3,
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            },
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            try:
+                info = ydl.extract_info(url, download=False)
+                duration = info.get('duration', 0) or 0
+
+                if duration > 600:
+                    return False, (
+                        "❌ Audio Too Long\n"
+                        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                        "Max duration: 10 minutes.\n"
+                        "This is {0}:{1:02d}.\n"
+                        "Try a shorter video.".format(duration // 60, duration % 60)
+                    )
+
+                ydl.download([url])
+
+                mp3_path = os.path.join(os.getcwd(), f'audio_{video_id}.mp3')
+                if not os.path.exists(mp3_path):
+                    matches = globmod.glob(os.path.join(os.getcwd(), f'audio_{video_id}.*'))
+                    matches = [m for m in matches if not m.endswith('.part')]
+                    if matches:
+                        mp3_path = matches[0]
+                    else:
+                        logger.error(f"No audio file found for video_id: {video_id}")
+                        return False, (
+                            "❌ Conversion Failed\n"
+                            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                            "Audio extraction failed.\n"
+                            "Try a different video."
+                        )
+
+                file_size = os.path.getsize(mp3_path)
+                file_size_mb = round(file_size / (1024 * 1024), 1)
+
+                if file_size > 50 * 1024 * 1024:
+                    cleanup_video(mp3_path)
+                    return False, (
+                        "❌ File Too Large\n"
+                        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                        f"MP3 is {file_size_mb}MB (Telegram limit: 50MB).\n"
+                        "Try a shorter video."
+                    )
+
+                title = info.get('title', 'Audio')
+                uploader = info.get('uploader', 'Unknown')
+
+                success_msg = (
+                    f"🎵 MP3 Ready!\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"🎤 {title}\n"
+                    f"👤 {uploader}\n"
+                    f"⏱️ {duration//60}:{duration%60:02d}  •  📦 {file_size_mb}MB\n\n"
+                    f"🚀 Uploading..."
+                )
+
+                return True, (mp3_path, success_msg, title, uploader)
+
+            except yt_dlp.utils.DownloadError as e:
+                error_msg = str(e).lower()
+                logger.error(f"yt-dlp audio DownloadError: {str(e)}")
+
+                if "private" in error_msg:
+                    reason = "This video is private."
+                elif "age" in error_msg or "sign in to confirm" in error_msg:
+                    reason = "This video is age-restricted."
+                elif "not available" in error_msg or "unavailable" in error_msg:
+                    reason = "Video is not available."
+                elif "requested format" in error_msg:
+                    reason = "No audio format available."
+                else:
+                    reason = "YouTube blocked the download."
+
+                return False, (
+                    f"❌ MP3 Download Failed\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"Reason: {reason}\n\n"
+                    f"💡 Try a different video"
+                )
+
+    except Exception as e:
+        logger.error(f"Error downloading audio: {str(e)}")
+        return False, (
+            "❌ MP3 Download Failed\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "An unexpected error occurred.\n"
+            "Try a different video."
+        )
+
 def cleanup_video(file_path: str) -> None:
-    """Clean up downloaded video file."""
     try:
         if os.path.exists(file_path):
             os.remove(file_path)
-            logger.info(f"Cleaned up video file: {file_path}")
+            logger.info(f"Cleaned up file: {file_path}")
     except Exception as e:
-        logger.error(f"Error cleaning up video file: {str(e)}")
+        logger.error(f"Error cleaning up file: {str(e)}")

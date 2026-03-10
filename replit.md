@@ -13,34 +13,34 @@
 ## Lyrics Provider Chain
 1. **lrclib.net** (primary) — free, no API key, direct lookup + search
 2. **lyrics.ovh** (fallback) — free, no API key, direct lookup only
-3. **Genius API** (optional) — requires GENIUS_API_KEY secret to be set
+3. **Genius API** (optional) — requires GENIUS_API_KEY secret
 
 ## Recommendation Provider Chain
-1. **Spotify API** (if SPOTIFY_CLIENT_ID + SPOTIFY_CLIENT_SECRET are set) — proper OAuth client_credentials flow
-2. **Last.fm API** (if LASTFM_API_KEY is set) — similar tracks endpoint
+1. **Spotify API** (if SPOTIFY_CLIENT_ID + SPOTIFY_CLIENT_SECRET set) — proper OAuth client_credentials flow
+2. **Last.fm API** (if LASTFM_API_KEY set) — similar tracks endpoint
 3. **Curated genre-matched pool** (always available) — 7 genres, 50+ songs with reasons
 
-## Input Parsing
-All song-related commands accept flexible input formats:
-- `/lyrics Tyla - Water` (artist - song)
-- `/lyrics Water Tyla` (words, auto-split)
-- `/lyrics Water` (song only, searched)
-- Handles quotes, extra spaces, hyphens, em-dashes
-
-## YouTube Service
-- Scrapes YouTube search results to extract direct video IDs
-- Returns `youtube.com/watch?v=...` links instead of just search URLs
-- Falls back to search URL if scraping fails
+## YouTube Download
+- Uses yt-dlp with format `bestvideo[height<=720]+bestaudio/best`
+- ffmpeg merges video+audio streams, outputs MP4
+- MP3 extraction uses FFmpegExtractAudio postprocessor at 192kbps
+- Max duration: 10 minutes, max file size: 50MB (Telegram limit)
 
 ## Wiki Service
 - Uses MediaWiki API (`en.wikipedia.org/w/api.php`) for real data
 - Searches for music-related results, extracts intro text
-- Formats concisely with link to full article
+
+## Subscribe System
+- Persists to `subscribers.json` — survives bot restart
+- APScheduler runs daily song delivery
+- 30 curated songs in daily pool
 
 ## Quiz
 - 40-song pool across multiple genres and eras
 - Multiple choice (A/B/C/D) with streak tracking
-- Smart snippet extraction that skips section headers
+
+## Commands (17 total)
+/start, /help, /lyrics, /stats, /recommend, /analyze, /translate, /youtube, /download, /mp3, /quiz, /endquiz, /wiki, /artist, /trending, /subscribe, /unsubscribe
 
 ## Workflows
 - **Flask Server**: `gunicorn --bind 0.0.0.0:5000 --workers 1 --threads 2 --timeout 0 wsgi:app` — health checks only
@@ -56,9 +56,6 @@ All song-related commands accept flexible input formats:
 - NEVER run multiple bot instances (causes Telegram conflict errors)
 - Keep `--workers 1` in gunicorn to prevent duplicate Flask instances
 - Always clear webhook before starting polling (`delete_webhook`)
-
-## Commands
-/start, /help, /lyrics, /stats, /recommend, /quiz, /endquiz, /translate, /youtube, /analyze, /subscribe, /unsubscribe, /download, /wiki
 
 ## Environment Variables
 - TELEGRAM_TOKEN (required), DATABASE_URL

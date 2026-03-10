@@ -1,4 +1,5 @@
 import os
+import json
 import random
 import logging
 from typing import Dict, Optional, Tuple
@@ -8,8 +9,26 @@ from utils import detect_song_mood, get_song_statistics
 
 logger = logging.getLogger(__name__)
 
-# Store subscribed users and their preferences
-subscribed_users = {}
+SUBSCRIBERS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'subscribers.json')
+
+def _load_subscribers() -> Dict:
+    try:
+        if os.path.exists(SUBSCRIBERS_FILE):
+            with open(SUBSCRIBERS_FILE, 'r') as f:
+                data = json.load(f)
+                return {int(k): v for k, v in data.items()}
+    except Exception as e:
+        logger.error(f"Error loading subscribers: {e}")
+    return {}
+
+def _save_subscribers(data: Dict) -> None:
+    try:
+        with open(SUBSCRIBERS_FILE, 'w') as f:
+            json.dump({str(k): v for k, v in data.items()}, f, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Error saving subscribers: {e}")
+
+subscribed_users = _load_subscribers()
 
 # List of curated songs for daily recommendations
 DAILY_SONGS = [
@@ -75,9 +94,10 @@ def subscribe_user(user_id: int, chat_id: int) -> bool:
     try:
         subscribed_users[user_id] = {
             "chat_id": chat_id,
-            "subscribed_at": datetime.now(),
+            "subscribed_at": str(datetime.now()),
             "active": True
         }
+        _save_subscribers(subscribed_users)
         logger.info(f"User {user_id} subscribed to daily songs")
         return True
     except Exception as e:
@@ -89,6 +109,7 @@ def unsubscribe_user(user_id: int) -> bool:
     try:
         if user_id in subscribed_users:
             subscribed_users[user_id]["active"] = False
+            _save_subscribers(subscribed_users)
             logger.info(f"User {user_id} unsubscribed from daily songs")
         return True
     except Exception as e:

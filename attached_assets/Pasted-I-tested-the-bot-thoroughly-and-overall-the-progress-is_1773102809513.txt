@@ -1,0 +1,171 @@
+I tested the bot thoroughly and overall the progress is very good. Some commands are already working great and must not be modified, while a few others still need improvement so the bot can reach near 10/10 quality.
+
+First, do not change anything in these commands because they are working perfectly:
+
+/lyrics
+/translate
+/wiki
+/youtube
+/stats
+/analyze
+/start
+/help
+/quiz
+/endquiz
+
+Their outputs are clean, fast, and high quality. Leave them exactly as they are.
+
+⸻
+
+Now here are the improvements needed:
+
+1. Fix /recommend
+
+The recommendation logic still produces unrelated songs.
+
+Example tested:
+Input: /recommend Tyla Water
+
+The output suggested:
+AC/DC – Thunderstruck
+Eye of the Tiger
+Lose Yourself
+
+These are completely unrelated to Tyla’s genre.
+
+Recommendations should match genre, mood, and style.
+
+For example, Tyla – Water should return something closer to:
+Rema
+Ayra Starr
+Burna Boy
+Tems
+Fireboy DML
+
+Improve the recommendation logic so it uses:
+	•	genre matching
+	•	artist similarity
+	•	mood similarity
+
+The goal is musically reasonable recommendations, not random songs.
+
+⸻
+
+2. Fix /download
+
+The download command currently fails even for normal videos.
+
+Example error returned:
+“Video is not available (may be region locked)”
+
+But the videos tested are actually available.
+
+Please investigate the download pipeline and fix it completely.
+
+Possible causes to check:
+	•	yt-dlp installation
+	•	ffmpeg installation
+	•	incorrect yt-dlp options
+	•	YouTube restrictions handling
+	•	file detection after download
+
+After fixing it, test the command with:
+• normal YouTube videos
+• YouTube Shorts
+
+Make sure the file is actually sent successfully.
+
+⸻
+
+3. Add new command: /mp3
+
+Add a new command:
+
+/mp3 <youtube_link>
+
+This should download the video audio and convert it to MP3.
+
+Example:
+/mp3 https://youtube.com/watch?v=...
+
+Expected output:
+
+🎵 MP3 Ready
+Artist – Song
+[file.mp3]
+
+Use yt-dlp audio extraction with ffmpeg.
+
+The command should:
+• download audio only
+• convert to mp3
+• send the file to the user
+
+⸻
+
+4. Verify /subscribe system
+
+The subscribe feature must actually work reliably.
+
+Please verify that:
+
+• /subscribe correctly registers the user
+• a daily song message is actually sent automatically
+• /unsubscribe properly removes the user
+• the scheduler works even after bot restart
+
+Right now it is unclear if the daily delivery actually happens.
+
+⸻
+
+5. Fix Telegram command menu
+
+The Telegram command menu currently does not include all commands.
+
+Make sure every available command appears in the Telegram menu, including:
+
+/start
+/help
+/lyrics
+/stats
+/recommend
+/analyze
+/translate
+/youtube
+/download
+/mp3
+/quiz
+/endquiz
+/wiki
+/subscribe
+/unsubscribe
+
+The menu should reflect the full feature set.
+
+⸻
+
+6. Add two lightweight commands that improve the bot without affecting stability
+
+Add:
+
+/artist <artist_name>
+Returns quick artist info:
+• genre
+• top songs
+• debut year
+
+/trending
+Shows 5 currently popular songs.
+
+These commands should be lightweight and fast.
+
+⸻
+
+Final goal
+
+The bot is already strong.
+Now the goal is production-quality behavior and near 10/10 reliability.
+
+Important reminder:
+Do not modify commands that are already working well.
+Only improve the ones mentioned above.

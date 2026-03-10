@@ -26,8 +26,9 @@ from utils import (
     format_detailed_analysis
 )
 from services.youtube_service import get_youtube_link, format_youtube_response
-from services.youtube_downloader_service import download_youtube_video, cleanup_video
+from services.youtube_downloader_service import download_youtube_video, download_youtube_audio, cleanup_video
 from services.ai_info_service import get_person_info
+from services.artist_service import get_artist_info, format_artist_info, get_trending_songs, format_trending
 from input_parser import parse_song_query, search_lyrics_with_fallback, clean_input
 
 logger = logging.getLogger(__name__)
@@ -48,8 +49,11 @@ def start_command(update: Update, context: CallbackContext):
         "🌍 */translate* — Arabic translation\n"
         "🎬 */youtube* — Find the music video\n"
         "📥 */download* — Download YouTube videos\n"
+        "🎵 */mp3* — Download audio as MP3\n"
         "🎮 */quiz* — Lyrics guessing game\n"
-        "📚 */wiki* — Artist info from Wikipedia\n"
+        "📚 */wiki* — Artist Wikipedia info\n"
+        "🎤 */artist* — Quick artist info\n"
+        "📈 */trending* — Trending songs now\n"
         "🔔 */subscribe* — Daily song picks\n\n"
         "*Try it now:*\n"
         "• /lyrics Tyla - Water\n"
@@ -87,12 +91,15 @@ def help_command(update: Update, context: CallbackContext):
         "*🎵 Discovery*\n"
         "▫️ */recommend* — Find similar songs\n"
         "▫️ */youtube* — Find the music video\n"
-        "▫️ */wiki* — Artist info from Wikipedia\n\n"
+        "▫️ */wiki* — Artist Wikipedia info\n"
+        "▫️ */artist* — Quick artist info\n"
+        "▫️ */trending* — Trending songs now\n\n"
         "*🎮 Fun*\n"
         "▫️ */quiz* — Lyrics guessing game (40 songs!)\n"
         "▫️ */endquiz* — End current quiz\n\n"
         "*📥 Media*\n"
-        "▫️ */download* — Download YouTube videos\n\n"
+        "▫️ */download* — Download YouTube videos\n"
+        "▫️ */mp3* — Download audio as MP3\n\n"
         "*🔔 Daily Updates*\n"
         "▫️ */subscribe* — Get daily song picks\n"
         "▫️ */unsubscribe* — Stop daily updates\n\n"
@@ -808,6 +815,118 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
         else:
             update.message.reply_text(error_message)
 
+def mp3_command(update: Update, context: CallbackContext):
+    """Handle the /mp3 command to download audio as MP3."""
+    user_id = update.effective_user.id
+    try:
+        if not context.args:
+            update.message.reply_text(
+                "🎵 Download as MP3\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Usage: /mp3 [YouTube URL]\n\n"
+                "Supported formats:\n"
+                "• youtube.com/watch?v=...\n"
+                "• youtu.be/...\n"
+                "• youtube.com/shorts/...\n\n"
+                "I'll extract the audio and send it as MP3."
+            )
+            return
+
+        url = context.args[0]
+        logger.info(f"User {user_id} requested MP3 download: {url}")
+
+        processing_message = update.message.reply_text(
+            "🎵 Converting to MP3...\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "⏳ Extracting audio and converting.\n"
+            "This may take 30–60 seconds."
+        )
+
+        success, result = download_youtube_audio(url)
+
+        if success:
+            file_path, info_message, title, uploader = result
+            processing_message.edit_text(info_message)
+
+            try:
+                with open(file_path, 'rb') as audio_file:
+                    update.message.reply_audio(
+                        audio_file,
+                        caption=f"🎵 {title}",
+                        title=title,
+                        performer=uploader
+                    )
+            except Exception as send_err:
+                logger.error(f"Failed to send audio: {send_err}")
+                processing_message.edit_text(
+                    "❌ The MP3 was created but couldn't be sent.\n"
+                    "It may be too large for Telegram (50MB limit)."
+                )
+
+            cleanup_video(file_path)
+        else:
+            processing_message.edit_text(result)
+
+    except Exception as e:
+        logger.error(f"Error in mp3 command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong with the MP3 download.\n"
+            "Please try again later! 🔄"
+        )
+
+
+def artist_command(update: Update, context: CallbackContext):
+    """Handle the /artist command."""
+    user_id = update.effective_user.id
+    try:
+        query = " ".join(context.args)
+        if not query:
+            update.message.reply_text(
+                "🎤 Artist Quick Info\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Usage: /artist [name]\n\n"
+                "Examples:\n"
+                "• /artist Tyla\n"
+                "• /artist Taylor Swift\n"
+                "• /artist Drake"
+            )
+            return
+
+        logger.info(f"User {user_id} requested artist info: '{query}'")
+
+        info = get_artist_info(query)
+        if info:
+            update.message.reply_text(format_artist_info(info))
+        else:
+            update.message.reply_text(
+                f"😕 I don't have quick info for \"{query}\" yet.\n\n"
+                f"Try /wiki {query} for a Wikipedia lookup instead!"
+            )
+
+    except Exception as e:
+        logger.error(f"Error in artist command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong.\n"
+            "Please try again! 🔄"
+        )
+
+
+def trending_command(update: Update, context: CallbackContext):
+    """Handle the /trending command."""
+    user_id = update.effective_user.id
+    try:
+        logger.info(f"User {user_id} requested trending songs")
+        songs = get_trending_songs()
+        update.message.reply_text(format_trending(songs))
+
+    except Exception as e:
+        logger.error(f"Error in trending command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Couldn't fetch trending songs right now.\n"
+            "Please try again! 🔄"
+        )
+
+
 def main():
     """Initialize bot handlers and start the bot."""
     token = os.environ.get('TELEGRAM_TOKEN')
@@ -833,7 +952,10 @@ def main():
         dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
         dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
         dp.add_handler(CommandHandler("download", download_command))
+        dp.add_handler(CommandHandler("mp3", mp3_command))
         dp.add_handler(CommandHandler("wiki", wiki_command))
+        dp.add_handler(CommandHandler("artist", artist_command))
+        dp.add_handler(CommandHandler("trending", trending_command))
 
         # Add message handler for quiz answers
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
@@ -849,9 +971,12 @@ def main():
             BotCommand("translate", "🌍 Arabic translation"),
             BotCommand("youtube", "🎬 Find the music video"),
             BotCommand("download", "📥 Download YouTube video"),
+            BotCommand("mp3", "🎵 Download as MP3"),
             BotCommand("quiz", "🎮 Lyrics guessing game"),
             BotCommand("endquiz", "End current quiz"),
-            BotCommand("wiki", "📚 Artist info from Wikipedia"),
+            BotCommand("wiki", "📚 Artist Wikipedia info"),
+            BotCommand("artist", "🎤 Quick artist info"),
+            BotCommand("trending", "📈 Trending songs now"),
             BotCommand("subscribe", "🔔 Daily song picks"),
             BotCommand("unsubscribe", "Stop daily updates"),
         ]

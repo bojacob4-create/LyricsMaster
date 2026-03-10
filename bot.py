@@ -23,7 +23,8 @@ from handlers import (
     recommend_command, quiz_command, quiz_answer, end_quiz_command,
     translate_lyrics_command, youtube_command, analyze_command,
     subscribe_daily_command, unsubscribe_daily_command,
-    download_command, wiki_command
+    download_command, wiki_command, mp3_command,
+    artist_command, trending_command
 )
 
 # Configure logging with both console and file handlers
@@ -114,18 +115,23 @@ class TelegramBotWorker:
         """Set up bot commands menu."""
         try:
             commands = [
-                BotCommand("start", "Begin your musical journey 🎵"),
-                BotCommand("help", "Get detailed help and tips 💡"),
-                BotCommand("lyrics", "Get song lyrics with mood analysis 🎤"),
-                BotCommand("stats", "Get detailed song statistics 📊"),
-                BotCommand("recommend", "Discover similar songs 🎵"),
-                BotCommand("quiz", "Play an interactive lyrics quiz 🎮"),
-                BotCommand("translate", "Get Arabic lyrics translation 🌍"),
-                BotCommand("youtube", "Find songs on YouTube 🎬"),
-                BotCommand("analyze", "Get deep song analysis 📈"),
-                BotCommand("subscribe", "Get daily song discoveries 🔔"),
-                BotCommand("unsubscribe", "Stop daily updates 🔕"),
-                BotCommand("wiki", "Get Wikipedia info about artists 📚")
+                BotCommand("start", "Welcome & overview"),
+                BotCommand("help", "Full command guide"),
+                BotCommand("lyrics", "🎤 Get song lyrics"),
+                BotCommand("stats", "📊 Song word statistics"),
+                BotCommand("recommend", "🎵 Find similar songs"),
+                BotCommand("analyze", "🔍 Deep lyrical analysis"),
+                BotCommand("translate", "🌍 Arabic translation"),
+                BotCommand("youtube", "🎬 Find the music video"),
+                BotCommand("download", "📥 Download YouTube video"),
+                BotCommand("mp3", "🎵 Download as MP3"),
+                BotCommand("quiz", "🎮 Lyrics guessing game"),
+                BotCommand("endquiz", "End current quiz"),
+                BotCommand("wiki", "📚 Artist Wikipedia info"),
+                BotCommand("artist", "🎤 Quick artist info"),
+                BotCommand("trending", "📈 Trending songs now"),
+                BotCommand("subscribe", "🔔 Daily song picks"),
+                BotCommand("unsubscribe", "Stop daily updates"),
             ]
             self.updater.bot.set_my_commands(commands)
             logger.info("Bot commands menu set up successfully")
@@ -211,7 +217,10 @@ class TelegramBotWorker:
             dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
             dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
             dp.add_handler(CommandHandler("download", download_command))
+            dp.add_handler(CommandHandler("mp3", mp3_command))
             dp.add_handler(CommandHandler("wiki", wiki_command))
+            dp.add_handler(CommandHandler("artist", artist_command))
+            dp.add_handler(CommandHandler("trending", trending_command))
 
             # Add message handler for quiz answers
             dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
