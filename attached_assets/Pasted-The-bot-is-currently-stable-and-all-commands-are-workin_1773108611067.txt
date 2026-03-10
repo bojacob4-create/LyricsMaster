@@ -1,0 +1,85 @@
+The bot is currently stable and all commands are working correctly. I want to add Natural Language Music Requests, but this must be implemented safely without modifying existing command behavior.
+
+Critical requirement
+
+Do not modify, refactor, or change the logic of any existing commands.
+
+The following commands must remain exactly as they are:
+
+/start
+/help
+/song
+/lyrics
+/stats
+/recommend
+/analyze
+/translate
+/artist
+/top
+/random
+/youtube
+/download
+/mp3
+/quiz
+/endquiz
+/wiki
+/trending
+/subscribe
+/unsubscribe
+
+These commands are stable and must continue to behave exactly the same.
+
+New feature: Natural Language Requests
+
+Add a natural language routing layer that activates only when a message does NOT start with /.
+
+When users send normal text messages, the bot should detect the intent and internally route the request to the correct existing command handler.
+
+Examples of user messages:
+
+lyrics water by tyla
+show me the lyrics for water
+songs like calm down
+recommend music like water
+who is tyla
+tell me about drake
+show the video for water by tyla
+download this https://youtube.com/…
+convert this to mp3 https://youtube.com/…
+what songs are trending
+show trending music
+
+These should internally map to the existing commands:
+
+lyrics intent → /lyrics
+translation intent → /translate
+recommendation intent → /recommend
+artist info intent → /artist
+video intent → /youtube
+download intent → /download
+mp3 conversion intent → /mp3
+trending intent → /trending
+
+Implementation approach
+	1.	Create a lightweight routing module (for example intent_router.py or natural_language_service.py).
+	2.	This router should:
+
+	•	detect intent using keyword groups and synonyms
+	•	extract song titles, artist names, or URLs
+	•	map the request to the correct existing command handler
+
+	3.	Do not duplicate logic. The router should simply call the existing handlers internally.
+	4.	Support flexible wording, not exact phrase matching.
+	5.	If the user message is ambiguous (for example just “tyla”), ask a short clarification question rather than guessing.
+	6.	If a message contains a YouTube URL, detect whether the user wants:
+
+	•	/download
+	•	/mp3
+
+Safety rule
+
+If a message starts with /, skip the natural language router entirely and handle it exactly as the bot does now.
+
+Goal
+
+Users should be able to talk naturally to the bot, while the existing command system remains unchanged and stable.

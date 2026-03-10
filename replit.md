@@ -39,6 +39,14 @@
 - 40-song pool across multiple genres and eras
 - Multiple choice (A/B/C/D) with streak tracking
 
+## Natural Language Routing
+- **intent_router.py**: Keyword-based intent detection for non-command messages
+- Routes natural text like "lyrics water by tyla" or "who is drake" to existing command handlers
+- Quiz answers (A/B/C/D) take priority over NL routing when a quiz is active
+- Ambiguous single-word messages (e.g., "tyla") are silently ignored — no guessing
+- Messages starting with `/` bypass the router entirely
+- Supported intents: lyrics, recommend, artist, youtube, download, mp3, trending, translate, analyze, stats, song, top, random, quiz, subscribe, unsubscribe
+
 ## Commands (20 total)
 /start, /help, /song, /lyrics, /stats, /recommend, /analyze, /translate, /artist, /top, /random, /youtube, /download, /mp3, /quiz, /endquiz, /wiki, /trending, /subscribe, /unsubscribe
 

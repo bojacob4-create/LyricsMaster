@@ -25,7 +25,8 @@ from handlers import (
     subscribe_daily_command, unsubscribe_daily_command,
     download_command, wiki_command, mp3_command,
     artist_command, trending_command,
-    song_command, top_command, random_command
+    song_command, top_command, random_command,
+    natural_language_handler
 )
 
 # Configure logging with both console and file handlers
@@ -229,8 +230,8 @@ class TelegramBotWorker:
             dp.add_handler(CommandHandler("top", top_command))
             dp.add_handler(CommandHandler("random", random_command))
 
-            # Add message handler for quiz answers
-            dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
+            # Add message handler for natural language + quiz answers
+            dp.add_handler(MessageHandler(Filters.text & ~Filters.command, natural_language_handler))
 
             # Add error handler
             dp.add_error_handler(self.error_handler)

@@ -33,6 +33,7 @@ from services.artist_service import (
     get_top_by_genre, format_top_songs, get_available_genres, get_random_song
 )
 from input_parser import parse_song_query, search_lyrics_with_fallback, clean_input
+from intent_router import detect_intent
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +195,59 @@ def quiz_answer(update: Update, context: CallbackContext):
             "😓 Something went wrong processing your answer.\n"
             "Try /quiz to start a new game! 🔄"
         )
+
+
+def natural_language_handler(update: Update, context: CallbackContext):
+    """Handle non-command text messages via intent detection."""
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+
+    if not text:
+        return
+
+    quiz_data = active_quizzes.get(user_id)
+    if quiz_data and quiz_data.get("state") == "active":
+        answer = text.upper()
+        if len(answer) == 1 and answer in 'ABCD':
+            quiz_answer(update, context)
+            return
+
+    try:
+        intent, query = detect_intent(text)
+        if not intent:
+            return
+
+        logger.info(f"NL intent for user {user_id}: intent='{intent}', query='{query}', raw='{text}'")
+
+        context.args = query.split() if query else []
+
+        handler_map = {
+            'lyrics': lyrics_command,
+            'recommend': recommend_command,
+            'artist': artist_command,
+            'youtube': youtube_command,
+            'download': download_command,
+            'mp3': mp3_command,
+            'trending': trending_command,
+            'translate': translate_lyrics_command,
+            'analyze': analyze_command,
+            'stats': stats_command,
+            'song': song_command,
+            'top': top_command,
+            'random': random_command,
+            'quiz': quiz_command,
+            'subscribe': subscribe_daily_command,
+            'unsubscribe': unsubscribe_daily_command,
+        }
+
+        handler = handler_map.get(intent)
+        if handler:
+            handler(update, context)
+        else:
+            logger.debug(f"Unknown intent '{intent}' for user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error in NL handler for user {user_id}: {str(e)}")
 
 
 def end_quiz_command(update: Update, context: CallbackContext):
