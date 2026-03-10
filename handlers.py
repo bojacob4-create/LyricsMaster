@@ -924,8 +924,9 @@ def trending_command(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     try:
         logger.info(f"User {user_id} requested trending songs")
-        songs = get_trending_songs()
-        update.message.reply_text(format_trending(songs))
+        update.message.chat.send_action(action="typing")
+        songs, is_live = get_trending_songs()
+        update.message.reply_text(format_trending(songs, is_live))
 
     except Exception as e:
         logger.error(f"Error in trending command for user {user_id}: {str(e)}")

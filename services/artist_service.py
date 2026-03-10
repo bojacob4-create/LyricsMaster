@@ -308,27 +308,89 @@ def format_artist_info(info: Dict) -> str:
     )
 
 
-def get_trending_songs() -> List[Dict]:
+_trending_cache = {'songs': None, 'timestamp': 0}
+TRENDING_CACHE_TTL = 3600
+
+
+def _fetch_live_trending() -> Optional[List[Dict]]:
+    try:
+        r = session.get(
+            'https://rss.applemarketingtools.com/api/v2/us/music/most-played/25/songs.json',
+            timeout=10
+        )
+        if r.status_code != 200:
+            return None
+
+        results = r.json().get('feed', {}).get('results', [])
+        if not results:
+            return None
+
+        songs = []
+        seen_artists = set()
+        for item in results:
+            artist = item.get('artistName', '').strip()
+            name = item.get('name', '').strip()
+            if not artist or not name:
+                continue
+            if artist.lower() in seen_artists:
+                continue
+            seen_artists.add(artist.lower())
+            songs.append({'artist': artist, 'song': name})
+            if len(songs) >= 10:
+                break
+
+        return songs if len(songs) >= 5 else None
+
+    except Exception as e:
+        logger.debug(f"Live trending fetch error: {e}")
+        return None
+
+
+def get_trending_songs() -> tuple:
+    import time
+    now = time.time()
+
+    if _trending_cache['songs'] and (now - _trending_cache['timestamp']) < TRENDING_CACHE_TTL:
+        return _trending_cache['songs'], True
+
+    live = _fetch_live_trending()
+    if live:
+        _trending_cache['songs'] = live
+        _trending_cache['timestamp'] = now
+        return live, True
+
     import random
     pool = list(TRENDING_SONGS)
     random.shuffle(pool)
-    return pool[:5]
+    return pool[:8], False
 
 
-def format_trending(songs: List[Dict]) -> str:
+def format_trending(songs: List[Dict], is_live: bool = True) -> str:
     lines = []
-    emojis = ['🔥', '✨', '💫', '🎶', '⭐']
+    rank_emojis = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
     for i, song in enumerate(songs):
-        emoji = emojis[i] if i < len(emojis) else '🎵'
-        lines.append(f"{emoji} {song['artist']} — {song['song']}\n   ↳ {song['note']}")
+        rank = rank_emojis[i] if i < len(rank_emojis) else '🎵'
+        note = song.get('note', '')
+        if note:
+            lines.append(f"{rank} {song['artist']} — {song['song']}\n   ↳ {note}")
+        else:
+            lines.append(f"{rank} {song['artist']} — {song['song']}")
 
     body = '\n\n'.join(lines)
 
+    if is_live:
+        header = "📈 Trending Now\n"
+        sub = "Source: Apple Music Charts\n"
+    else:
+        header = "🌍 Popular Songs\n"
+        sub = ""
+
     return (
-        "📈 Trending Now\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{header}"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{sub}\n"
         f"{body}\n\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "🎤 /lyrics to see any song's lyrics\n"
-        "🎵 /recommend for similar songs"
+        "🎵 /song for a full song dashboard"
     )
