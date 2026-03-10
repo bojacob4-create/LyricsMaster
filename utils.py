@@ -223,14 +223,20 @@ def get_detailed_song_analysis(lyrics: str) -> Dict:
         'outro': len(re.findall(r'\[outro\]', lyrics.lower()))
     }
 
-    mood_intensity = {
-        'happy': sum(1 for word in re.findall(r'\b\w+\b', lyrics.lower()) 
-                    if word in ['happy', 'joy', 'smile', 'laugh', 'fun', 'love']),
-        'sad': sum(1 for word in re.findall(r'\b\w+\b', lyrics.lower())
-                  if word in ['sad', 'cry', 'tears', 'pain', 'hurt', 'alone']),
-        'energetic': sum(1 for word in re.findall(r'\b\w+\b', lyrics.lower())
-                        if word in ['jump', 'dance', 'run', 'fire', 'burn', 'alive'])
+    mood_keywords_full = {
+        'happy': ['happy', 'joy', 'smile', 'laugh', 'fun', 'dance', 'party', 'sunshine'],
+        'sad': ['sad', 'cry', 'tears', 'pain', 'hurt', 'alone', 'lost', 'sorry', 'missing'],
+        'romantic': ['love', 'heart', 'kiss', 'beautiful', 'forever', 'darling', 'romance'],
+        'energetic': ['jump', 'run', 'fire', 'burn', 'alive', 'wild', 'free', 'tonight'],
+        'relaxed': ['peace', 'calm', 'quiet', 'dream', 'sleep', 'gentle', 'slow'],
     }
+    lyrics_lower = lyrics.lower()
+    mood_intensity = {}
+    for m, kws in mood_keywords_full.items():
+        total = 0
+        for kw in kws:
+            total += len(re.findall(r'\b' + kw + r'\b', lyrics_lower))
+        mood_intensity[m] = total
 
     themes = detect_themes(lyrics)
 
