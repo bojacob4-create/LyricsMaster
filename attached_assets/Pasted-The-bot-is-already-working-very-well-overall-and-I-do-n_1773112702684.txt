@@ -1,0 +1,167 @@
+The bot is already working very well overall, and I do not want the existing command logic changed.
+
+Please do not modify or refactor the current slash commands or their core handlers unless absolutely necessary.
+
+The following commands are already working well and should remain unchanged:
+
+/start
+/help
+/song
+/lyrics
+/stats
+/recommend
+/analyze
+/translate
+/artist
+/top
+/random
+/youtube
+/download
+/mp3
+/quiz
+/endquiz
+/wiki
+/trending
+/subscribe
+/unsubscribe
+
+Your task is to improve the user experience layer only, especially for natural-language use.
+
+Part 1 — Add quick action buttons under results
+
+I want the bot to feel more like a premium music assistant and less like a command-only bot.
+
+Please add inline action buttons under relevant responses, reusing the existing handlers.
+
+Recommended button behavior
+
+After a lyrics result
+Show buttons like:
+	•	🎵 Full Lyrics
+	•	📊 Analyze
+	•	🌍 Translate
+	•	📺 Video
+	•	🎧 Similar
+
+After a song dashboard
+Show buttons like:
+	•	🎵 Full Lyrics
+	•	📊 Analyze
+	•	🌍 Translate
+	•	📺 Video
+	•	🎧 Similar
+
+After an artist profile
+Show buttons like:
+	•	🎵 Top Song
+	•	📺 Video
+	•	📚 Wiki
+	•	🎧 Similar songs
+
+After a recommendation result
+Show buttons like:
+	•	🎵 Lyrics
+	•	📊 Analyze
+	•	📺 Video
+
+After trending or top-song results
+Show buttons like:
+	•	🎵 Lyrics
+	•	🎶 Song Dashboard
+
+Use the existing command handlers behind the buttons. Do not duplicate logic.
+
+Part 2 — Improve single-word natural-language UX
+
+In the last round of testing, these one-word messages got no response:
+	•	Tyla
+	•	Water
+	•	Hello
+
+This is currently safe behavior, but not ideal UX.
+
+Please improve this carefully:
+when a user sends a single-word message that is ambiguous, the bot should not stay silent.
+
+Instead, respond with a short clarification message and action buttons.
+
+Examples:
+
+If user sends:
+Tyla
+
+Bot could reply:
+“Did you mean the artist Tyla or a song request?”
+
+Buttons:
+	•	🎤 Artist Profile
+	•	🎵 Song Dashboard
+	•	📺 YouTube
+
+If user sends:
+Water
+
+Bot could reply:
+“What would you like for ‘Water’?”
+
+Buttons:
+	•	🎵 Lyrics
+	•	📊 Analyze
+	•	📺 Video
+	•	🎧 Similar Songs
+
+If confidence is too low, ask a short clarification question instead of ignoring the message.
+
+Part 3 — Fix the natural-language parsing issue found in testing
+
+There was one clear parsing issue in the last test:
+
+Input:
+Show me water on youtube
+
+The bot interpreted it incorrectly as:
+water - on
+
+and returned the wrong result.
+
+This appears to be a natural-language cleaning issue only, not a command issue.
+
+Please fix the natural-language parser so filler words such as these are removed correctly when parsing:
+	•	on
+	•	in
+	•	at
+	•	for
+	•	please
+
+The phrase:
+show me water on youtube
+
+should resolve cleanly to:
+	•	intent = youtube
+	•	query = water
+
+and should not treat “on” as part of the song/artist query.
+
+Important implementation rules
+	1.	Do not change the existing slash-command behavior.
+	2.	Reuse the current handlers for buttons and natural-language follow-up actions.
+	3.	Keep the bot fast and lightweight.
+	4.	Only improve the UX / natural-language layer and add inline buttons.
+
+Test these exact cases before reporting success
+	•	Show me water on youtube
+	•	Tyla
+	•	Water
+	•	Hello
+
+Also test that the buttons work correctly when attached to:
+	•	lyrics results
+	•	song dashboard results
+	•	artist profile results
+	•	recommendation results
+
+At the end, tell me:
+	1.	what UX/button system you added
+	2.	how single-word ambiguity is now handled
+	3.	how the “water on youtube” parsing issue was fixed
+	4.	confirm that existing slash-command handlers were not modified

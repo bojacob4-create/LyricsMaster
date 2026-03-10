@@ -10,6 +10,7 @@ from telegram.ext import (
     Updater,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     Filters
 )
 from telegram.error import (
@@ -26,7 +27,7 @@ from handlers import (
     download_command, wiki_command, mp3_command,
     artist_command, trending_command,
     song_command, top_command, random_command,
-    natural_language_handler
+    natural_language_handler, callback_query_handler
 )
 
 # Configure logging with both console and file handlers
@@ -229,6 +230,9 @@ class TelegramBotWorker:
             dp.add_handler(CommandHandler("song", song_command))
             dp.add_handler(CommandHandler("top", top_command))
             dp.add_handler(CommandHandler("random", random_command))
+
+            # Add callback query handler for inline buttons
+            dp.add_handler(CallbackQueryHandler(callback_query_handler))
 
             # Add message handler for natural language + quiz answers
             dp.add_handler(MessageHandler(Filters.text & ~Filters.command, natural_language_handler))

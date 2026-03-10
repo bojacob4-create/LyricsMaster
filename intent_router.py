@@ -136,12 +136,26 @@ def _strip_filler_prefix(text: str) -> str:
     return result
 
 
+def _strip_filler_suffix(text: str) -> str:
+    result = text
+    while True:
+        cleaned = re.sub(
+            r'\s+(on|in|at|for|to|please|now|right now)$',
+            '', result, flags=re.IGNORECASE
+        ).strip()
+        if cleaned == result:
+            break
+        result = cleaned
+    return result
+
+
 def _clean_query(text: str, keywords_to_remove: list) -> str:
     result = text
     for kw in keywords_to_remove:
         result = re.sub(r'\b' + kw + r'\b', '', result, flags=re.IGNORECASE)
     result = re.sub(r'\s+', ' ', result).strip()
     result = _strip_filler_prefix(result)
+    result = _strip_filler_suffix(result)
     result = _normalize_song_query(result)
     return result
 

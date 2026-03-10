@@ -42,10 +42,21 @@
 ## Natural Language Routing
 - **intent_router.py**: Keyword-based intent detection for non-command messages
 - Routes natural text like "lyrics water by tyla" or "who is drake" to existing command handlers
+- "X by Y" patterns are normalized to "Y - X" format for correct song+artist matching
+- Trailing filler words (on, in, at, for, please) are stripped from cleaned queries
 - Quiz answers (A/B/C/D) take priority over NL routing when a quiz is active
-- Ambiguous single-word messages (e.g., "tyla") are silently ignored — no guessing
+- Ambiguous 1–3 word messages show clarification buttons (Artist Profile, Song Dashboard, Lyrics, YouTube, Similar)
 - Messages starting with `/` bypass the router entirely
 - Supported intents: lyrics, recommend, artist, youtube, download, mp3, trending, translate, analyze, stats, song, top, random, quiz, subscribe, unsubscribe
+
+## Inline Action Buttons
+- **buttons.py**: Builds InlineKeyboardMarkup for post-result quick actions
+- Lyrics results: Analyze, Translate, Video, Similar
+- Song dashboard: Full Lyrics, Analyze, Translate, Video, Similar
+- Artist profile: Top Song, Video, Wiki, Similar
+- Recommendations: Lyrics, Analyze, Video
+- Trending/Top results: Lyrics, Song Dashboard (for #1 song)
+- **callback_query_handler** in handlers.py routes button presses to existing command handlers
 
 ## Commands (20 total)
 /start, /help, /song, /lyrics, /stats, /recommend, /analyze, /translate, /artist, /top, /random, /youtube, /download, /mp3, /quiz, /endquiz, /wiki, /trending, /subscribe, /unsubscribe

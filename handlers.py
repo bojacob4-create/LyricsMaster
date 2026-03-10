@@ -3,6 +3,10 @@ import os
 from telegram import Update, BotCommand
 from telegram.ext import CallbackContext, MessageHandler, Filters, CommandHandler
 from telegram.error import TelegramError
+from buttons import (
+    lyrics_buttons, song_dashboard_buttons, artist_buttons,
+    recommend_buttons, trending_buttons, ambiguous_buttons
+)
 from services.lyrics_service import get_song_lyrics
 from services.translator_service import translate_to_arabic
 from services.recommendation_service import get_similar_songs, format_recommendations
@@ -214,7 +218,14 @@ def natural_language_handler(update: Update, context: CallbackContext):
 
     try:
         intent, query = detect_intent(text)
+
         if not intent:
+            if len(text.split()) <= 3 and not text.startswith('/'):
+                logger.info(f"Ambiguous input from user {user_id}: '{text}'")
+                update.message.reply_text(
+                    f"What would you like for \"{text}\"?",
+                    reply_markup=ambiguous_buttons(text)
+                )
             return
 
         logger.info(f"NL intent for user {user_id}: intent='{intent}', query='{query}', raw='{text}'")
@@ -248,6 +259,68 @@ def natural_language_handler(update: Update, context: CallbackContext):
 
     except Exception as e:
         logger.error(f"Error in NL handler for user {user_id}: {str(e)}")
+
+
+def callback_query_handler(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+
+    data = query.data
+    if ':' not in data:
+        return
+
+    action, param = data.split(':', 1)
+    user_id = update.effective_user.id
+    logger.info(f"Callback from user {user_id}: action='{action}', param='{param}'")
+
+    context.args = param.split() if param else []
+
+    handler_map = {
+        'lyrics': lyrics_command,
+        'recommend': recommend_command,
+        'artist': artist_command,
+        'youtube': youtube_command,
+        'download': download_command,
+        'mp3': mp3_command,
+        'trending': trending_command,
+        'translate': translate_lyrics_command,
+        'analyze': analyze_command,
+        'stats': stats_command,
+        'song': song_command,
+        'top': top_command,
+        'random': random_command,
+        'wiki': wiki_command,
+    }
+
+    handler = handler_map.get(action)
+    if handler:
+        class FakeMessage:
+            def __init__(self, real_message, chat):
+                self._msg = real_message
+                self.chat = chat
+                self.message_id = real_message.message_id
+
+            def reply_text(self, *args, **kwargs):
+                return self._msg.reply_text(*args, **kwargs)
+
+            def reply_video(self, *args, **kwargs):
+                return self._msg.reply_video(*args, **kwargs)
+
+            def reply_audio(self, *args, **kwargs):
+                return self._msg.reply_audio(*args, **kwargs)
+
+        fake_update = type('FakeUpdate', (), {
+            'effective_user': update.effective_user,
+            'effective_chat': update.effective_chat,
+            'message': FakeMessage(query.message, query.message.chat),
+            'effective_message': query.message,
+        })()
+
+        try:
+            handler(fake_update, context)
+        except Exception as e:
+            logger.error(f"Error in callback handler for action '{action}': {str(e)}")
+            query.message.reply_text("Something went wrong. Please try again!")
 
 
 def end_quiz_command(update: Update, context: CallbackContext):
@@ -330,16 +403,18 @@ def lyrics_command(update: Update, context: CallbackContext):
         chunks = [formatted_lyrics[i:i + max_chunk_size] for i in range(0, len(formatted_lyrics), max_chunk_size)]
 
         first_message = header + chunks[0]
-        update.message.reply_text(first_message)
+        btn_query = display_title if display_title else query
+        if len(chunks) == 1:
+            update.message.reply_text(first_message, reply_markup=lyrics_buttons(btn_query))
+        else:
+            update.message.reply_text(first_message)
 
         for i, chunk in enumerate(chunks[1:], 1):
             continuation_header = f"🎵 Continuation ({i+1}/{len(chunks)})...\n\n"
-            update.message.reply_text(continuation_header + chunk)
-
-        if len(chunks) > 1:
-            update.message.reply_text(
-                "Want more details? Try /stats with this song! 📊"
-            )
+            if i == len(chunks) - 1:
+                update.message.reply_text(continuation_header + chunk, reply_markup=lyrics_buttons(btn_query))
+            else:
+                update.message.reply_text(continuation_header + chunk)
 
         logger.info(f"Successfully sent lyrics to user {user_id}")
 
@@ -454,7 +529,8 @@ def recommend_command(update: Update, context: CallbackContext):
         recommendations = get_similar_songs(use_artist, use_song, mood)
         formatted_recommendations = format_recommendations(recommendations, display_title)
 
-        update.message.reply_text(formatted_recommendations)
+        btn_query = display_title if display_title else query
+        update.message.reply_text(formatted_recommendations, reply_markup=recommend_buttons(btn_query))
         logger.info(f"Successfully sent recommendations to user {user_id}")
 
     except Exception as e:
@@ -958,7 +1034,7 @@ def artist_command(update: Update, context: CallbackContext):
 
         info = get_artist_info(query)
         if info:
-            update.message.reply_text(format_artist_info(info))
+            update.message.reply_text(format_artist_info(info), reply_markup=artist_buttons(info['name']))
         else:
             update.message.reply_text(
                 f"😕 I don't have quick info for \"{query}\" yet.\n\n"
@@ -980,7 +1056,9 @@ def trending_command(update: Update, context: CallbackContext):
         logger.info(f"User {user_id} requested trending songs")
         update.message.chat.send_action(action="typing")
         songs, is_live = get_trending_songs()
-        update.message.reply_text(format_trending(songs, is_live))
+        first_song_q = f"{songs[0]['artist']} - {songs[0]['name']}" if songs else ""
+        markup = trending_buttons(first_song_q) if first_song_q else None
+        update.message.reply_text(format_trending(songs, is_live), reply_markup=markup)
 
     except Exception as e:
         logger.error(f"Error in trending command for user {user_id}: {str(e)}")
@@ -1131,7 +1209,8 @@ def song_command(update: Update, context: CallbackContext):
             f"🔍 /analyze {query} — deep analysis"
         )
 
-        processing_msg.edit_text(response, disable_web_page_preview=True)
+        btn_query = display_title if display_title else query
+        processing_msg.edit_text(response, disable_web_page_preview=True, reply_markup=song_dashboard_buttons(btn_query))
         logger.info(f"Successfully sent song dashboard to user {user_id}")
 
     except Exception as e:
@@ -1169,7 +1248,9 @@ def top_command(update: Update, context: CallbackContext):
         result = get_top_by_genre(query)
         if result:
             genre, songs = result
-            update.message.reply_text(format_top_songs(genre, songs))
+            first_song_q = f"{songs[0]['artist']} - {songs[0]['name']}" if songs else ""
+            markup = trending_buttons(first_song_q) if first_song_q else None
+            update.message.reply_text(format_top_songs(genre, songs), reply_markup=markup)
         else:
             genres = get_available_genres()
             genre_list = ', '.join(g.upper() if g in ('rnb', 'kpop') else g.title() for g in genres)
