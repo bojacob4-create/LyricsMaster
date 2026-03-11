@@ -533,6 +533,29 @@ def recommend_command(update: Update, context: CallbackContext):
 
         update.message.chat.send_action(action="typing")
 
+        if _is_artist_only_query(query):
+            clean = clean_input(query)
+            info = get_artist_info(clean)
+            artist_display = info['name'] if info else clean.title()
+            top_songs = _fetch_artist_top_songs(artist_display)
+            if top_songs:
+                first_song = top_songs[0]
+                first_query = f"{artist_display} - {first_song}"
+                _, _, first_lyrics, _ = search_lyrics_with_fallback(first_query)
+                mood = detect_song_mood(first_lyrics) if first_lyrics else 'energetic'
+                recommendations = get_similar_songs(artist_display, first_song, mood)
+                formatted_recommendations = format_recommendations(recommendations, artist_display)
+                btn_query = f"{artist_display} - {first_song}"
+                update.message.reply_text(formatted_recommendations, reply_markup=recommend_buttons(btn_query))
+                logger.info(f"Successfully sent artist-based recommendations to user {user_id}")
+                return
+            update.message.reply_text(
+                f"😕 I couldn't find enough info for \"{query}\" to recommend songs.\n\n"
+                "Try with a specific song:\n"
+                f"• /recommend {query} - [song name]"
+            )
+            return
+
         artist, song, lyrics, status = search_lyrics_with_fallback(query)
 
         if not lyrics:
