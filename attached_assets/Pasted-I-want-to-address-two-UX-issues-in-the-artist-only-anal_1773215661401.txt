@@ -1,0 +1,134 @@
+I want to address two UX issues in the artist-only analyze interface: the YouTube button and the Similar Songs button.
+
+Please read the instructions carefully and do not modify unrelated systems.
+
+⸻
+
+1️⃣ YouTube Button Issue
+
+Current behavior in artist-only analyze (example: analyze Rihanna) produces queries like:
+	•	Rihanna - Rihanna
+	•	Drake - Drake
+
+This happens because the YouTube logic assumes the query is Artist - Song, but in artist-only mode there is no song.
+
+The result technically works but the query and display are incorrect.
+
+Required Fix
+Detect artist-only context and adjust the YouTube query.
+
+If the query contains only an artist name, the YouTube search must use an artist-based query, for example:
+
+Rihanna official music video
+Drake official music video
+
+NOT:
+
+Rihanna - Rihanna
+
+This change should apply only to the artist-only analyze interface.
+
+When the query is already a song-specific query, such as:
+
+analyze Rihanna - Diamonds
+
+the current behavior must remain unchanged.
+
+⸻
+
+2️⃣ Similar Songs Button Issue
+
+Currently when the user presses Similar Songs after:
+
+analyze Rihanna
+
+the system tries to resolve recommendations by running:
+
+search_lyrics_with_fallback("Rihanna")
+
+This causes the parser to split the name incorrectly and the system selects a random song, which becomes the basis for recommendations.
+
+This creates confusing behavior because the user never selected that song.
+
+⸻
+
+Required Improvement
+
+When the Similar Songs button is pressed in artist-only context, the bot must ask the user which song to use for similarity instead of randomly choosing one.
+
+Example flow:
+
+User sends:
+analyze Rihanna
+
+User presses:
+Similar Songs
+
+Bot responds with a prompt such as:
+
+“Which Rihanna song should I use to find similar songs?”
+
+Then provide a short list of top songs (using the existing _fetch_artist_top_songs() function) as buttons, for example:
+	•	Umbrella
+	•	Diamonds
+	•	Stay
+	•	Work
+	•	Needed Me
+
+The user can either:
+• tap one of the provided songs
+• or type a different Rihanna song manually.
+
+After the user selects a song, the system should construct a proper query format:
+
+Rihanna - <selected song>
+
+Then run the existing recommendation logic.
+
+⸻
+
+Important Rules
+
+Do NOT change the behavior of Similar Songs when the query already contains a song.
+
+Example:
+
+analyze Rihanna - Diamonds
+
+In this case Similar Songs must continue working exactly as it does now without asking for a song.
+
+⸻
+
+Scope Control
+
+Only modify the logic related to:
+
+• the YouTube button behavior in artist-only analyze
+• the Similar Songs button behavior in artist-only analyze
+
+Do NOT modify:
+
+• analyze command logic
+• lyrics parsing
+• artist profile generation
+• song dashboard
+• recommendation engine logic
+• database artist handling
+
+⸻
+
+Before Reporting Completion
+
+Please test the following scenarios:
+	1.	analyze Drake → press YouTube → verify the query is artist-based and not Drake - Drake.
+	2.	analyze Rihanna → press Similar Songs → verify the bot asks the user to choose a song.
+	3.	Select one of the suggested songs → verify recommendations are based on Artist - Song.
+	4.	analyze Drake - Hotline Bling → press Similar Songs → verify the existing behavior remains unchanged.
+
+⸻
+
+Report Back With
+
+• exact file(s) modified
+• confirmation that no unrelated systems were changed
+• confirmation that analyze, artist profile, song dashboard, and lyrics outputs remain unchanged

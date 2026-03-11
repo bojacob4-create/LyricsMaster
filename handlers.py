@@ -6,7 +6,7 @@ from telegram.error import TelegramError
 from buttons import (
     lyrics_buttons, song_dashboard_buttons, artist_buttons, artist_summary_buttons,
     recommend_buttons, song_list_buttons, ambiguous_buttons,
-    analyze_buttons, stats_buttons, artist_analyze_buttons
+    analyze_buttons, stats_buttons, artist_analyze_buttons, recommend_pick_buttons
 )
 from services.lyrics_service import get_song_lyrics
 from services.translator_service import (
@@ -539,15 +539,12 @@ def recommend_command(update: Update, context: CallbackContext):
             artist_display = info['name'] if info else clean.title()
             top_songs = _fetch_artist_top_songs(artist_display)
             if top_songs:
-                first_song = top_songs[0]
-                first_query = f"{artist_display} - {first_song}"
-                _, _, first_lyrics, _ = search_lyrics_with_fallback(first_query)
-                mood = detect_song_mood(first_lyrics) if first_lyrics else 'energetic'
-                recommendations = get_similar_songs(artist_display, first_song, mood)
-                formatted_recommendations = format_recommendations(recommendations, artist_display)
-                btn_query = f"{artist_display} - {first_song}"
-                update.message.reply_text(formatted_recommendations, reply_markup=recommend_buttons(btn_query))
-                logger.info(f"Successfully sent artist-based recommendations to user {user_id}")
+                update.message.reply_text(
+                    f"🎧 Which {artist_display} song should I use to find similar songs?\n\n"
+                    "Pick one below or type:\n"
+                    f"• /recommend {artist_display} - [song name]",
+                    reply_markup=recommend_pick_buttons(artist_display, top_songs)
+                )
                 return
             update.message.reply_text(
                 f"😕 I couldn't find enough info for \"{query}\" to recommend songs.\n\n"
@@ -826,7 +823,7 @@ def youtube_command(update: Update, context: CallbackContext):
             return
 
         display_artist = used_artist
-        display_song = used_song if used_song else used_artist
+        display_song = used_song if used_song else ''
         response = format_youtube_response(display_artist, display_song, url)
         update.message.reply_text(response)
         logger.info(f"Successfully sent YouTube link to user {user_id}")

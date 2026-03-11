@@ -160,21 +160,23 @@ def get_youtube_link(artist: str, song: str) -> Optional[str]:
 
 def format_youtube_response(artist: str, song: str, url: str) -> str:
     is_direct = 'watch?v=' in url
+    title = f"{artist} — {song}" if song else artist
+    query_ref = f"{artist} - {song}" if song else artist
 
     if is_direct:
         return (
-            f"🎬 {artist} — {song}\n"
+            f"🎬 {title}\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"▶️ Watch now:\n{url}\n\n"
-            f"🎤 /lyrics {artist} - {song}\n"
-            f"📊 /analyze {artist} - {song}"
+            f"🎤 /lyrics {query_ref}\n"
+            f"📊 /analyze {query_ref}"
         )
     else:
         return (
-            f"🎬 {artist} — {song}\n"
+            f"🎬 {title}\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"🔍 Search results:\n{url}\n\n"
             f"Tip: The first result is usually the official video.\n\n"
-            f"🎤 /lyrics {artist} - {song}\n"
-            f"📊 /analyze {artist} - {song}"
+            f"🎤 /lyrics {query_ref}\n"
+            f"📊 /analyze {query_ref}"
         )
