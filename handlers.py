@@ -1464,7 +1464,7 @@ def main():
             BotCommand("stats", "📊 Song word statistics"),
             BotCommand("recommend", "🎵 Find similar songs"),
             BotCommand("analyze", "🔍 Deep lyrical analysis"),
-            BotCommand("translate", "🌍 Arabic translation"),
+            BotCommand("translate", "🌍 Translate lyrics to any language"),
             BotCommand("artist", "🎤 Quick artist profile"),
             BotCommand("top", "🔝 Top songs by genre"),
             BotCommand("random", "🎲 Random song discovery"),

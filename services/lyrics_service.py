@@ -43,6 +43,15 @@ def _fetch_from_lrclib_direct(artist: str, song: str) -> Optional[str]:
     return None
 
 
+def _track_relevance(query_lower: str, artist: str, track: str) -> int:
+    query_words = set(query_lower.split())
+    track_words = set(track.lower().split())
+    artist_words = set(artist.lower().split())
+    track_overlap = len(track_words & query_words)
+    artist_overlap = len(artist_words & query_words)
+    return artist_overlap * 10 + track_overlap * 20
+
+
 def _fetch_from_lrclib_search(query: str) -> Optional[Tuple[str, str, str]]:
     try:
         response = session.get(
@@ -53,13 +62,21 @@ def _fetch_from_lrclib_search(query: str) -> Optional[Tuple[str, str, str]]:
         if response.status_code == 200:
             data = response.json()
             if isinstance(data, list) and len(data) > 0:
+                query_lower = query.lower()
+                best = None
+                best_score = -1
                 for item in data:
                     lyrics = item.get('plainLyrics', '')
                     if lyrics and len(lyrics) > 30:
                         found_artist = item.get('artistName', '')
                         found_track = item.get('trackName', '')
-                        logger.info(f"lrclib search hit: '{found_artist} - {found_track}' for query '{query}'")
-                        return found_artist, found_track, _clean_lyrics(lyrics)
+                        score = _track_relevance(query_lower, found_artist, found_track)
+                        if score > best_score:
+                            best_score = score
+                            best = (found_artist, found_track, _clean_lyrics(lyrics))
+                if best:
+                    logger.info(f"lrclib search hit: '{best[0]} - {best[1]}' (score={best_score}) for query '{query}'")
+                    return best
     except Exception as e:
         logger.debug(f"lrclib search failed: {e}")
     return None

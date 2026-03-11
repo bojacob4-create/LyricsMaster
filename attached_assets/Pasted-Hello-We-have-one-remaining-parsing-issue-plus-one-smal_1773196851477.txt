@@ -1,0 +1,152 @@
+Hello.
+
+We have one remaining parsing issue plus one small description update.
+
+Please keep the scope narrow and do NOT modify unrelated commands or services.
+
+==================================================
+CRITICAL RULE — DO NOT BREAK WORKING FEATURES
+==================================================
+
+Do NOT modify or refactor these working commands:
+
+/start
+/help
+/song
+/analyze
+/stats
+/recommend
+/artist
+/top
+/random
+/youtube
+/download
+/mp3
+/quiz
+/endquiz
+/wiki
+/trending
+/translate
+/subscribe
+/unsubscribe
+
+Also do NOT break:
+- song dashboard
+- analyze
+- recommendation system
+- translation functionality
+- button system
+- callback system
+- wiki functionality
+- /song command behavior
+
+Preserve working examples such as:
+- /song taylor swift love story
+- /song Ariana grande - positions
+- /lyrics taylor swift love story
+- /analyze adele hello
+- /wiki drake
+- wiki drake
+- wiki ariana grande
+
+==================================================
+ISSUE 1 — LYRICS NL PARSING STILL NOT GENERAL ENOUGH
+==================================================
+
+Problem:
+Natural-language lyrics requests still fail in some multi-word artist/song cases.
+
+Example:
+Input:
+lyrics ariana grande positions
+
+Expected:
+Ariana Grande - positions
+
+Actual:
+The bot returns Ariana Grande - 34+35
+
+This shows the current fix is not general enough. It works for some cases (like Taylor Swift Love Story) but still fails for others.
+
+Important:
+Do NOT hardcode artist-specific fixes.
+We need a general parsing/matching improvement.
+
+Likely root cause:
+The parser finds a correct artist but then accepts the wrong song because fuzzy matching is too permissive.
+
+Required behavior:
+For natural-language lyrics requests, the final matched result must satisfy BOTH:
+1. artist matches strongly
+2. requested song title matches strongly
+
+Do NOT accept a result just because the artist is correct.
+
+If the artist matches but the song title does not match closely enough, do NOT silently return a wrong song.
+
+Preferred fallback behavior if still ambiguous:
+- either ask for clarification
+- or suggest a clearer format like:
+  lyrics positions by ariana grande
+  or
+  lyrics Ariana Grande - positions
+
+But do NOT return a wrong song.
+
+Important constraint:
+Do NOT broadly rewrite /song parsing again.
+Focus only on the lyrics NL matching/acceptance logic.
+
+==================================================
+ISSUE 2 — /translate MENU DESCRIPTION ONLY
+==================================================
+
+The /translate command already works correctly and supports multiple languages.
+
+Do NOT change the function or translation logic at all.
+
+Only update the Telegram menu/command description.
+
+Current description says:
+Arabic translation
+
+This is outdated.
+
+Please change it to something general such as:
+Translate lyrics to any language
+
+or similar wording.
+
+Again:
+Description only.
+No functional changes to /translate.
+
+==================================================
+TEST CASES REQUIRED
+==================================================
+
+Please test after the fix:
+
+1. lyrics ariana grande positions
+2. lyrics taylor swift love story
+3. lyrics adele hello
+4. /lyrics Ariana Grande - positions
+5. /song Ariana grande - positions
+6. /translate hello adele to spanish
+7. /translate blinding lights to french
+
+Regression:
+8. /analyze adele hello
+9. /wiki drake
+10. wiki ariana grande
+
+==================================================
+REPORT BACK WITH
+==================================================
+
+1. Exact files modified
+2. Root cause of the remaining lyrics NL mismatch
+3. What general rule was added to prevent wrong-song matches
+4. Confirmation that /translate functionality was NOT changed
+5. Confirmation that only the /translate description was updated
+6. Confirmation that no unrelated commands were modified
