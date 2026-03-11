@@ -205,6 +205,8 @@ def quiz_answer(update: Update, context: CallbackContext):
         )
 
 
+_pending_recommend_artist = {}
+
 _AMBIGUOUS_NOISE = {'song', 'songs', 'music', 'track', 'tracks', 'video', 'audio', 'clip', 'artist'}
 
 def _clean_ambiguous_query(text: str) -> str:
@@ -224,6 +226,13 @@ def natural_language_handler(update: Update, context: CallbackContext):
     text = update.message.text.strip()
 
     if not text:
+        return
+
+    if user_id in _pending_recommend_artist:
+        artist_name = _pending_recommend_artist.pop(user_id)
+        constructed_query = f"{artist_name} - {text}"
+        context.args = constructed_query.split()
+        recommend_command(update, context)
         return
 
     quiz_data = active_quizzes.get(user_id)
@@ -290,6 +299,7 @@ def callback_query_handler(update: Update, context: CallbackContext):
 
     action, param = data.split(':', 1)
     user_id = update.effective_user.id
+    _pending_recommend_artist.pop(user_id, None)
     logger.info(f"Callback from user {user_id}: action='{action}', param='{param}'")
 
     context.args = param.split() if param else []
@@ -539,10 +549,10 @@ def recommend_command(update: Update, context: CallbackContext):
             artist_display = info['name'] if info else clean.title()
             top_songs = _fetch_artist_top_songs(artist_display)
             if top_songs:
+                _pending_recommend_artist[user_id] = artist_display
                 update.message.reply_text(
                     f"🎧 Which {artist_display} song should I use to find similar songs?\n\n"
-                    "Pick one below or type:\n"
-                    f"• /recommend {artist_display} - [song name]",
+                    "Pick one below or type another song manually:",
                     reply_markup=recommend_pick_buttons(artist_display, top_songs)
                 )
                 return

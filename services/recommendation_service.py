@@ -231,10 +231,41 @@ MOOD_GENRE_WEIGHTS = {
 }
 
 
+_ITUNES_GENRE_MAP = {
+    'hip-hop/rap': 'hiphop', 'hip hop/rap': 'hiphop', 'hip-hop': 'hiphop',
+    'r&b/soul': 'rnb', 'r&b': 'rnb', 'soul': 'rnb',
+    'pop': 'pop', 'dance': 'pop', 'electronic': 'pop',
+    'rock': 'rock', 'alternative': 'rock', 'indie': 'rock',
+    'latin': 'latin', 'reggaeton': 'latin', 'latin urban': 'latin',
+    'country': 'pop', 'jazz': 'classic', 'classical': 'classic',
+    'k-pop': 'pop', 'afrobeats': 'afrobeats', 'reggae': 'afrobeats',
+    'metal': 'rock', 'punk': 'rock', 'blues': 'rnb', 'funk': 'rnb',
+}
+
+
 def _detect_genre(artist: str, song: str, mood: str) -> str:
     artist_lower = artist.lower().strip()
     if artist_lower in ARTIST_GENRE_MAP:
         return ARTIST_GENRE_MAP[artist_lower]
+
+    try:
+        search_term = f"{artist} {song}" if song else artist
+        r = requests.get(
+            'https://itunes.apple.com/search',
+            params={'term': search_term, 'media': 'music', 'entity': 'song', 'limit': 1},
+            timeout=5
+        )
+        if r.status_code == 200:
+            results = r.json().get('results', [])
+            if results:
+                itunes_genre = results[0].get('primaryGenreName', '').lower()
+                mapped = _ITUNES_GENRE_MAP.get(itunes_genre)
+                if mapped:
+                    logger.info(f"iTunes genre for '{artist} - {song}': {itunes_genre} -> {mapped}")
+                    ARTIST_GENRE_MAP[artist_lower] = mapped
+                    return mapped
+    except Exception:
+        pass
 
     mood_genres = MOOD_GENRE_WEIGHTS.get(mood, ['pop'])
     return mood_genres[0] if mood_genres else 'pop'

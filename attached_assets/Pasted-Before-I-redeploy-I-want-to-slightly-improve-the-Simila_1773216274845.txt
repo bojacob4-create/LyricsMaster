@@ -1,0 +1,139 @@
+Before I redeploy, I want to slightly improve the Similar Songs behavior in the artist-only analyze interface, and also add a small quality improvement for recommendation accuracy.
+
+Please read carefully and do not change any unrelated systems.
+
+⸻
+
+1️⃣ Current Behavior (Keep This)
+
+When the user sends an artist-only analyze query, for example:
+
+analyze Rihanna
+
+and presses:
+
+Similar Songs
+
+the bot correctly shows a song picker asking the user which song should be used as the basis for recommendations.
+
+Example prompt:
+
+“Which Rihanna song should I use to find similar songs?”
+
+Then the bot shows a list of top songs as buttons.
+
+This behavior is correct and must remain exactly the same.
+
+⸻
+
+2️⃣ Improvement #1 — Allow Manual Song Input
+
+In addition to selecting from the buttons, the user should also be able to type a song manually if the song they want is not in the suggested list.
+
+Example flow:
+
+User sends:
+analyze Rihanna
+
+User presses:
+Similar Songs
+
+Bot replies:
+
+“Which Rihanna song should I use to find similar songs?
+Pick one below or type another Rihanna song manually.”
+
+Buttons example:
+
+• Umbrella
+• Diamonds
+• Stay
+• Work
+• Needed Me
+
+If the user taps a button → proceed normally.
+
+If the user types a song title manually, for example:
+
+Love On The Brain
+
+the system should internally construct:
+
+Rihanna - Love On The Brain
+
+and then run the existing recommend flow exactly as it already works.
+
+⸻
+
+3️⃣ Important Rule
+
+Do NOT change the behavior when the analyze query already contains a song.
+
+Example:
+
+analyze Rihanna - Diamonds
+
+In this case the Similar Songs button must continue to work immediately without showing the picker.
+
+⸻
+
+4️⃣ Improvement #2 — Better Recommendation Quality (Genre Context)
+
+Currently the recommendation system works, but we can slightly improve the quality of similar songs.
+
+When building recommendations for:
+
+Artist - Song
+
+try to also consider the song’s genre when available.
+
+For example if:
+
+Rihanna - Diamonds
+
+has genre metadata like:
+
+Pop / R&B
+
+then recommendations should prioritize songs within similar genres rather than completely unrelated styles.
+
+This can be done using existing metadata sources already used in the project (such as iTunes / Apple metadata that contains primaryGenreName).
+
+This improvement should not change the overall recommendation engine, only refine the filtering so the results are musically closer.
+
+⸻
+
+5️⃣ Do NOT modify
+
+• analyze command logic
+• lyrics parser
+• recommendation engine core logic
+• artist profile system
+• song dashboard
+• YouTube button logic
+• trending/top commands
+• any unrelated systems
+
+Only extend the artist-only Similar Songs picker and slightly improve genre-aware recommendations.
+
+⸻
+
+6️⃣ Please Test Before Reporting Completion
+
+Test the following scenarios:
+
+1️⃣ analyze Rihanna → Similar Songs → choose a button → recommendations work.
+
+2️⃣ analyze Rihanna → Similar Songs → type a song manually → recommendations work.
+
+3️⃣ analyze Rihanna - Diamonds → Similar Songs → works immediately without picker.
+
+4️⃣ Verify recommendations still return normal results and no existing commands break.
+
+⸻
+
+7️⃣ When Done, Report
+
+• files modified
+• confirmation that no unrelated systems were changed
+• confirmation that analyze, artist profile, song dashboard, lyrics, and buttons remain unchanged
