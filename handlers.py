@@ -1239,10 +1239,9 @@ def _build_fallback_artist_profile(query: str):
                 break
 
         import re
-        born_match = re.search(r'born.*?(\d{4})', extract[:200])
-        if born_match:
-            birth_year = int(born_match.group(1))
-            debut = f"~{birth_year + 18}"
+        debut_match = re.search(r'(?:debut|career|started|began).{0,30}?(\d{4})', extract_lower[:500])
+        if debut_match:
+            debut = debut_match.group(1)
 
         name_slug = display_name.replace(' ', '+')
         wiki_url = f"https://en.wikipedia.org/wiki/{display_name.replace(' ', '_')}"
