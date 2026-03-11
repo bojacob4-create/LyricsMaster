@@ -39,17 +39,31 @@ def song_dashboard_buttons(query):
     ])
 
 
-def artist_buttons(artist_name):
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🎵 Top Song", callback_data=_cb("song", artist_name)),
-            InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", artist_name)),
-        ],
-        [
-            InlineKeyboardButton("📚 Wiki", callback_data=_cb("wiki", artist_name)),
-            InlineKeyboardButton("🎧 Similar", callback_data=_cb("recommend", artist_name)),
-        ],
+def artist_buttons(artist_name, top_songs=None):
+    rows = []
+    if top_songs:
+        for s in top_songs[:5]:
+            song_query = f"{artist_name} - {s}"
+            rows.append([InlineKeyboardButton(f"🎵 {s}", callback_data=_cb("song", song_query))])
+    rows.append([
+        InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", artist_name)),
+        InlineKeyboardButton("🎧 Similar", callback_data=_cb("recommend", artist_name)),
     ])
+    rows.append([
+        InlineKeyboardButton("📚 Wiki", callback_data=_cb("wiki", artist_name)),
+    ])
+    return InlineKeyboardMarkup(rows)
+
+
+def artist_summary_buttons(artist_name, top_songs):
+    rows = []
+    for s in top_songs[:5]:
+        song_query = f"{artist_name} - {s}"
+        rows.append([InlineKeyboardButton(f"🎵 {s}", callback_data=_cb("song", song_query))])
+    rows.append([
+        InlineKeyboardButton("👤 Full Artist Profile", callback_data=_cb("artist", artist_name)),
+    ])
+    return InlineKeyboardMarkup(rows)
 
 
 def recommend_buttons(query):

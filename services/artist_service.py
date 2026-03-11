@@ -300,7 +300,6 @@ def get_artist_info(name: str) -> Optional[Dict]:
 
 
 def format_artist_info(info: Dict) -> str:
-    songs_list = '\n'.join(f"  • {s}" for s in info['top_songs'][:5])
     name_slug = info['name'].replace(' ', '+')
     wiki_url = f"https://en.wikipedia.org/wiki/{info['name'].replace(' ', '_')}"
     yt_url = f"https://www.youtube.com/results?search_query={name_slug}+official"
@@ -311,13 +310,11 @@ def format_artist_info(info: Dict) -> str:
         f"🎵 Genre: {info['genre']}\n"
         f"📅 Debut: {info['debut']}\n"
         f"🌍 From: {info['country']}\n\n"
-        f"🔥 Top Songs:\n{songs_list}\n\n"
         f"🔗 Links:\n"
         f"  📚 {wiki_url}\n"
         f"  🎬 {yt_url}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🎤 /lyrics {info['top_songs'][0]} to see lyrics\n"
-        f"🎵 /song {info['name']} {info['top_songs'][0]} for full dashboard"
+        f"🔥 Pick a song below to explore:"
     )
 
 

@@ -4,7 +4,7 @@ from telegram import Update, BotCommand
 from telegram.ext import CallbackContext, MessageHandler, Filters, CommandHandler
 from telegram.error import TelegramError
 from buttons import (
-    lyrics_buttons, song_dashboard_buttons, artist_buttons,
+    lyrics_buttons, song_dashboard_buttons, artist_buttons, artist_summary_buttons,
     recommend_buttons, trending_buttons, ambiguous_buttons,
     analyze_buttons, stats_buttons
 )
@@ -103,7 +103,7 @@ def help_command(update: Update, context: CallbackContext):
         "▫️ */lyrics* — Get song lyrics\n"
         "▫️ */stats* — Word counts and patterns\n"
         "▫️ */analyze* — Full lyrical breakdown\n"
-        "▫️ */translate* — Arabic translation\n\n"
+        "▫️ */translate* — Translate lyrics to any language\n\n"
         "*🎵 Discovery*\n"
         "▫️ */recommend* — Find similar songs\n"
         "▫️ */top* — Top songs by genre\n"
@@ -121,7 +121,7 @@ def help_command(update: Update, context: CallbackContext):
         "▫️ */subscribe* — Get daily song picks\n"
         "▫️ */unsubscribe* — Stop daily updates\n\n"
         "*💡 How to use:*\n"
-        "• /song Hello Adele\n"
+        "• /song Adele - Hello\n"
         "• /lyrics Counting Stars\n"
         "• /top pop\n"
         "• /random\n\n"
@@ -1094,7 +1094,7 @@ def artist_command(update: Update, context: CallbackContext):
 
         info = get_artist_info(query)
         if info:
-            update.message.reply_text(format_artist_info(info), reply_markup=artist_buttons(info['name']))
+            update.message.reply_text(format_artist_info(info), reply_markup=artist_buttons(info['name'], info.get('top_songs', [])))
         else:
             update.message.reply_text(
                 f"😕 I don't have quick info for \"{query}\" yet.\n\n"
@@ -1159,17 +1159,15 @@ def _artist_summary_for_song(query: str, update, processing_msg):
         )
         return
 
-    songs_list = '\n'.join(f"  • /song {info['name']} {s}" for s in info['top_songs'][:5])
     response = (
         f"🎤 {info['name']}\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🎵 Genre: {info['genre']}\n"
         f"🌍 From: {info['country']}\n\n"
-        f"Which song? Pick one:\n{songs_list}\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🎤 /artist {info['name']} — full artist profile"
+        "🔥 Pick a song below to explore:"
     )
-    processing_msg.edit_text(response, disable_web_page_preview=True)
+    markup = artist_summary_buttons(info['name'], info['top_songs'][:5])
+    processing_msg.edit_text(response, disable_web_page_preview=True, reply_markup=markup)
 
 
 def song_command(update: Update, context: CallbackContext):
