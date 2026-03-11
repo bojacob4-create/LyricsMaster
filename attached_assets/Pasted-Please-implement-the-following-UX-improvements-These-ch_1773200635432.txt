@@ -1,0 +1,123 @@
+Please implement the following UX improvements. These changes should only affect the interaction design of /top and /trending. Do not modify unrelated systems.
+
+⸻
+
+1️⃣ Replace text song lists with inline buttons in /top
+
+Currently /top displays songs as plain text like:
+
+1️⃣ Artist — Song
+2️⃣ Artist — Song
+…
+
+and then provides two generic buttons:
+
+🎤 Lyrics
+🎵 Song Dashboard
+
+This approach is not ideal because the buttons only work for a single song and the user must manually type a command for other songs.
+
+Please change the behavior so that each song in the list becomes an inline button.
+
+Example structure:
+
+Top K-pop
+
+1️⃣ NewJeans — Super Shy
+2️⃣ BTS — Dynamite
+3️⃣ IVE — I AM
+4️⃣ Stray Kids — LALALALA
+5️⃣ BLACKPINK — How You Like That
+
+Buttons:
+
+🎵 Super Shy
+🎵 Dynamite
+🎵 I AM
+🎵 LALALALA
+🎵 How You Like That
+
+Each button must trigger the same behavior as:
+
+/song  - 
+
+⸻
+
+2️⃣ Apply the same change to /trending
+
+The /trending command currently shows:
+
+1 Artist — Song
+2 Artist — Song
+…
+
+with the same generic buttons:
+
+🎤 Lyrics
+🎵 Song Dashboard
+
+Please convert the entire list into clickable song buttons, exactly like the improvement requested for /top.
+
+Example:
+
+Trending Now
+
+1️⃣ Ella Langley — Choosin’ Texas
+2️⃣ Harry Styles — American Girls
+3️⃣ Don Toliver — E85
+
+Buttons:
+
+🎵 Choosin’ Texas
+🎵 American Girls
+🎵 E85
+
+Each button must open the full song dashboard using:
+
+/song  - 
+
+⸻
+
+3️⃣ Remove the generic buttons
+
+Since every song will now have its own button, please remove the existing generic buttons:
+
+🎤 Lyrics
+🎵 Song Dashboard
+
+They are no longer necessary because the Song Dashboard already includes:
+
+• Lyrics
+• Analyze
+• Translate
+• Video
+• Similar
+
+Opening the dashboard directly provides the complete experience.
+
+⸻
+
+4️⃣ Do not modify any other systems
+
+These changes must NOT affect:
+
+• lyrics parser
+• intent router
+• /artist command
+• /song dashboard
+• translation logic
+• wiki service
+• recommendation system
+• performance optimizations
+
+Only adjust the button layout and interaction for /top and /trending.
+
+⸻
+
+5️⃣ After completing the update
+
+Please provide a short report listing:
+
+• Files modified
+• Functions updated
+• Confirmation that no unrelated components were changed

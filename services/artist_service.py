@@ -267,8 +267,7 @@ def format_top_songs(genre: str, songs: List[Dict]) -> str:
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{body}\n\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        "🎤 /lyrics to see any song's lyrics\n"
-        "🎵 /song for a full song dashboard"
+        "🎵 Pick a song below to explore:"
     )
 
 
@@ -401,6 +400,5 @@ def format_trending(songs: List[Dict], is_live: bool = True) -> str:
         f"{sub}\n"
         f"{body}\n\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        "🎤 /lyrics to see any song's lyrics\n"
-        "🎵 /song for a full song dashboard"
+        "🎵 Pick a song below to explore:"
     )

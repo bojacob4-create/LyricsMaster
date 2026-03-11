@@ -66,6 +66,14 @@ def artist_summary_buttons(artist_name, top_songs):
     return InlineKeyboardMarkup(rows)
 
 
+def song_list_buttons(songs):
+    rows = []
+    for s in songs:
+        query = f"{s['artist']} - {s['song']}"
+        rows.append([InlineKeyboardButton(f"🎵 {s['song']}", callback_data=_cb("song", query))])
+    return InlineKeyboardMarkup(rows)
+
+
 def recommend_buttons(query):
     return InlineKeyboardMarkup([
         [

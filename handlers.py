@@ -5,7 +5,7 @@ from telegram.ext import CallbackContext, MessageHandler, Filters, CommandHandle
 from telegram.error import TelegramError
 from buttons import (
     lyrics_buttons, song_dashboard_buttons, artist_buttons, artist_summary_buttons,
-    recommend_buttons, trending_buttons, ambiguous_buttons,
+    recommend_buttons, song_list_buttons, ambiguous_buttons,
     analyze_buttons, stats_buttons
 )
 from services.lyrics_service import get_song_lyrics
@@ -1117,8 +1117,7 @@ def trending_command(update: Update, context: CallbackContext):
         update.message.chat.send_action(action="typing")
         songs, is_live = get_trending_songs()
         try:
-            first_song_q = f"{songs[0]['artist']} - {songs[0]['song']}" if songs else ""
-            markup = trending_buttons(first_song_q) if first_song_q else None
+            markup = song_list_buttons(songs) if songs else None
         except Exception:
             markup = None
         update.message.reply_text(format_trending(songs, is_live), reply_markup=markup)
@@ -1310,8 +1309,7 @@ def top_command(update: Update, context: CallbackContext):
         if result:
             genre, songs = result
             try:
-                first_song_q = f"{songs[0]['artist']} - {songs[0]['song']}" if songs else ""
-                markup = trending_buttons(first_song_q) if first_song_q else None
+                markup = song_list_buttons(songs) if songs else None
             except Exception:
                 markup = None
             update.message.reply_text(format_top_songs(genre, songs), reply_markup=markup)
