@@ -267,6 +267,7 @@ def natural_language_handler(update: Update, context: CallbackContext):
             'quiz': quiz_command,
             'subscribe': subscribe_daily_command,
             'unsubscribe': unsubscribe_daily_command,
+            'wiki': wiki_command,
         }
 
         handler = handler_map.get(intent)

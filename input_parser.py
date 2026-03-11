@@ -51,7 +51,7 @@ def parse_song_query(raw_input: str) -> List[Tuple[str, str]]:
     if not candidates:
         words = cleaned.split()
         if len(words) >= 2:
-            for i in range(1, len(words)):
+            for i in range(len(words) - 1, 0, -1):
                 part1 = ' '.join(words[:i])
                 part2 = ' '.join(words[i:])
                 candidates.append((part1, part2))
@@ -115,7 +115,7 @@ def search_lyrics_with_fallback(raw_input: str) -> Tuple[Optional[str], Optional
 
     words = cleaned.split()
     if len(words) >= 2:
-        for i in range(1, len(words)):
+        for i in range(len(words) - 1, 0, -1):
             part1 = ' '.join(words[:i])
             part2 = ' '.join(words[i:])
 

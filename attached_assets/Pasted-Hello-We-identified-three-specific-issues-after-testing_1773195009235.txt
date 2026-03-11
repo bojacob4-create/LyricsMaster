@@ -1,0 +1,246 @@
+Hello.
+
+We identified three specific issues after testing the bot. Please keep the scope extremely narrow and do NOT refactor working systems.
+
+==================================================
+CRITICAL RULE — DO NOT BREAK WORKING FEATURES
+==================================================
+
+Do NOT modify or refactor any working commands except what is absolutely required for the issues below.
+
+Do NOT touch these working commands and flows:
+
+/start
+/help
+/song
+/lyrics
+/analyze
+/stats
+/recommend
+/artist
+/top
+/random
+/youtube
+/download
+/mp3
+/quiz
+/endquiz
+/wiki
+/trending
+/translate
+/subscribe
+/unsubscribe
+
+Also do NOT break:
+
+• song dashboard
+• lyrics retrieval
+• analyze feature
+• recommendation system
+• translation system
+• button system
+• callback system
+• YouTube integration
+• download/mp3 system
+
+Preserve working examples such as:
+
+/song taylor swift love story
+/song Ariana grande - positions
+/lyrics taylor swift love story
+/analyze adele hello
+recommend music like water by tyla
+show the video for water by tyla
+translate hello by adele to spanish
+top pop
+/wiki drake
+
+Do NOT break any of the above.
+
+==================================================
+ISSUE 1 — NATURAL LANGUAGE WIKI NOT ROUTING
+==================================================
+
+Natural language queries like:
+
+wiki drake
+wiki ariana grande
+wikipedia adele
+
+do NOT route to the wiki system correctly.
+
+However the slash command works:
+
+/wiki drake
+/wiki ariana grande
+
+Required behavior:
+
+If the FIRST WORD of the query is:
+
+wiki
+or
+wikipedia
+
+then ALWAYS route it to the wiki command.
+
+Examples:
+
+wiki drake
+→ same behavior as /wiki drake
+
+wiki ariana grande
+→ same behavior as /wiki ariana grande
+
+wikipedia adele
+→ same behavior as /wiki adele
+
+Important simplification:
+
+If supporting the rapper named "Wiki" conflicts with this behavior, we are OK with removing that edge case.
+
+Priority:
+
+first-word "wiki" must always trigger wiki intent.
+
+==================================================
+ISSUE 2 — TRANSLATE BUTTON BUILDS WRONG SONG QUERY
+==================================================
+
+The /song command itself works correctly.
+
+Example:
+
+/song Ariana grande - positions
+
+returns the correct dashboard.
+
+However pressing the Translate button produces an incorrect query like:
+
+grande position - Ariana
+
+instead of preserving:
+
+Ariana Grande - positions
+
+Root cause is likely inside:
+
+buttons.py
+or
+the callback payload builder for the Translate button.
+
+Required fix:
+
+The Translate button must send the EXACT same artist/song identity that the current dashboard represents.
+
+Do NOT reorder artist and song words.
+
+==================================================
+ISSUE 3 — LYRICS NATURAL LANGUAGE PARSER BREAKS ARTIST ORDER
+==================================================
+
+Natural language lyrics queries are breaking the artist/song order.
+
+Example input:
+
+Lyrics ariana grande position
+
+Bot output shows:
+
+grande position - ariana
+
+which is incorrect.
+
+Correct interpretation should be:
+
+artist: Ariana Grande
+song: positions
+
+This indicates the parser is rearranging tokens incorrectly.
+
+Important constraint:
+
+Do NOT modify the /song command parsing if it is currently working.
+
+Focus only on the lyrics NL parsing logic that builds the query.
+
+==================================================
+ISSUE 4 — BOT PERFORMANCE HAS BECOME SLOWER
+==================================================
+
+After recent modifications the bot feels noticeably slower.
+
+Please investigate potential causes such as:
+
+• unnecessary API calls
+• extra Wikipedia lookup attempts
+• excessive fallback loops in input_parser
+• heavy routing logic in intent_router
+• repeated requests for the same query
+
+Goal:
+
+Restore the previous fast response time.
+
+Do NOT add extra API requests or expensive loops.
+
+==================================================
+IMPLEMENTATION SCOPE
+==================================================
+
+Keep this fix minimal.
+
+Likely files involved:
+
+intent_router.py
+buttons.py
+input_parser.py
+lyrics_service or related handler
+
+Do NOT refactor unrelated services.
+
+==================================================
+REQUIRED TEST CASES
+==================================================
+
+Please test these after the fix.
+
+Wiki NL:
+
+wiki drake
+wiki ariana grande
+wikipedia adele
+
+Slash wiki:
+
+/wiki drake
+/wiki ariana grande
+
+Lyrics NL:
+
+lyrics ariana grande positions
+lyrics taylor swift love story
+
+Song dashboard:
+
+/song Ariana grande - positions
+→ press Translate
+→ must preserve artist/song order
+
+Regression tests:
+
+/song taylor swift love story
+/song Ariana grande - positions
+/lyrics taylor swift love story
+/analyze adele hello
+
+==================================================
+REPORT BACK WITH
+==================================================
+
+1. Exact files modified
+2. Root cause of wiki NL routing failure
+3. Root cause of Translate button query corruption
+4. Root cause of lyrics parser reversing artist order
+5. Performance changes made to restore speed
+6. Confirmation that no unrelated commands were modified
