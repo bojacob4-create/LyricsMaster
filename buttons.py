@@ -73,14 +73,15 @@ def trending_buttons(first_song_query):
     ])
 
 
-def analyze_buttons(query):
+def analyze_buttons(query, artist=None):
+    artist_param = artist if artist else query
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("🎵 Lyrics", callback_data=_cb("lyrics", query)),
             InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", query)),
         ],
         [
-            InlineKeyboardButton("👤 Artist", callback_data=_cb("artist", query)),
+            InlineKeyboardButton("👤 Artist", callback_data=_cb("artist", artist_param)),
             InlineKeyboardButton("🎧 Similar Songs", callback_data=_cb("recommend", query)),
         ],
     ])

@@ -1,0 +1,209 @@
+Hello.
+
+The bot is working very well overall after the last fixes, but during extended testing I discovered a few issues related to artist/song parsing and button context.
+
+IMPORTANT:  
+Please read carefully. These fixes must be very targeted.
+
+Do NOT modify any command behavior except what is required to fix the specific parsing/context issues described below.
+
+--------------------------------------------------
+CRITICAL RULE
+--------------------------------------------------
+
+Do NOT change or refactor any of the following working commands:
+
+/start
+/help
+/song
+/lyrics
+/analyze
+/stats
+/recommend
+/artist
+/top
+/random
+/youtube
+/download
+/mp3
+/quiz
+/endquiz
+/wiki
+/trending
+/translate
+/subscribe
+/unsubscribe
+
+Also do NOT change:
+
+- the button system
+- NL routing patterns
+- recommendation system
+- download/mp3 logic
+- quiz logic
+- subscription system
+- trending logic
+- translation logic
+
+Everything above must remain exactly as it currently works.
+
+--------------------------------------------------
+ISSUE 1 – Artist Button Returns Wrong Artist
+--------------------------------------------------
+
+Example:
+
+I analyzed the song:
+
+Ashlee – Alone with You
+
+Then I pressed the "Artist" button.
+
+The bot returned:
+
+Post Malone
+
+This is incorrect.
+
+The Artist button must always use the artist associated with the current song context.
+
+It should not reuse cached data or previous artist results.
+
+Please ensure that the callback data for the Artist button always carries the correct artist extracted from the current song result.
+
+Example expected behavior:
+
+Song analyzed:
+Ashlee – Alone with You
+
+Press Artist → shows Ashlee artist profile.
+
+--------------------------------------------------
+ISSUE 2 – Incorrect Parsing of "Wiki Ashlee"
+--------------------------------------------------
+
+When I typed:
+
+Wiki Ashlee
+
+The bot interpreted it incorrectly and ended up returning results for the rapper "Wiki".
+
+The system appears to parse it like:
+
+artist = Wiki  
+song = Ashlee
+
+Instead of recognizing it as:
+
+wiki lookup query = Ashlee
+
+Expected behavior:
+
+"Wiki Ashlee"  
+should trigger the wiki intent with query:
+
+Ashlee
+
+Similar to:
+
+/wiki Ashlee
+
+Please fix the natural-language parser so that patterns like:
+
+Wiki [artist]
+
+are interpreted correctly.
+
+--------------------------------------------------
+ISSUE 3 – Multi-Word Artist / Song Parsing
+--------------------------------------------------
+
+When the artist or song contains multiple words, the parser sometimes splits them incorrectly.
+
+Example:
+
+Input:
+
+ariana grande position
+
+Sometimes becomes internally interpreted like:
+
+Ariana – Grande Position
+
+Instead of:
+
+Ariana Grande – Position
+
+However, when I write:
+
+Ariana Grande - Position
+
+(with a dash separator)
+
+the result is correct.
+
+This indicates the parser is incorrectly guessing boundaries between artist and song.
+
+Please improve the parsing logic so that multi-word artists and songs are handled correctly.
+
+Examples that must work properly:
+
+Ariana Grande positions  
+Taylor Swift love story  
+Teddy Swims lose control  
+Post Malone circles  
+Sam Smith stay with me
+
+The parser should preserve multi-word artist names instead of splitting them incorrectly.
+
+--------------------------------------------------
+IMPLEMENTATION CONSTRAINTS
+--------------------------------------------------
+
+These fixes should focus ONLY on:
+
+- query parsing
+- artist/song extraction logic
+- button callback context for Artist
+
+Likely locations:
+- intent_router.py
+- handlers related to artist button
+- parsing helpers
+
+But again:
+
+Do NOT modify command behaviors outside what is necessary for these fixes.
+
+--------------------------------------------------
+TEST CASES
+--------------------------------------------------
+
+Please test after the fix:
+
+/analyze ashlee alone with you
+→ press Artist button
+→ must show Ashlee
+
+Wiki Ashlee
+→ must return Ashlee information
+
+ariana grande positions
+→ must interpret artist correctly
+
+teddy swims lose control
+→ must interpret artist correctly
+
+Taylor Swift love story
+→ must interpret artist correctly
+
+Also confirm that all existing commands listed earlier still work exactly as before.
+
+--------------------------------------------------
+REPORT BACK WITH
+--------------------------------------------------
+
+1. Files modified
+2. Root cause of the parsing/context issues
+3. What logic was updated
+4. Confirmation that no other commands were modified
