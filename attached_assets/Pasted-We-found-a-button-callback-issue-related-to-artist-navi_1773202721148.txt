@@ -1,0 +1,126 @@
+We found a button callback issue related to artist navigation. Please keep the fix very narrow.
+
+Do NOT modify unrelated commands or parsers.
+
+⸻
+
+Problem 1 — Artist button under /analyze sends the wrong value
+
+Example:
+
+I ran:
+
+/analyze Kehlani folded
+
+Then I pressed the Artist button under the analysis.
+
+Expected:
+It should open the artist profile for:
+
+Kehlani
+
+Actual:
+The bot behaves like it is trying to look up:
+
+Kehlani - Folded
+
+and returns:
+
+I don't have quick info for "Kehlani - Folded" yet.
+
+This means the Artist button under the analyze view is passing the full song title instead of the artist name only.
+
+Please fix the analyze Artist button so it always passes artist only.
+
+⸻
+
+Problem 2 — Artist Profile button in the ambiguous prompt sends the wrong value
+
+Example:
+
+When the bot shows:
+
+What would you like for "artist kehlani"?
+
+and I press:
+
+Artist Profile
+
+Expected:
+It should open the artist profile for:
+
+kehlani
+
+Actual:
+It behaves like it is trying to look up:
+
+artist kehlani
+
+and returns:
+
+I don't have quick info for "artist kehlani" yet.
+
+This means the button is passing the full ambiguous text instead of the cleaned query.
+
+Please fix the Artist Profile button in ambiguous/clarification prompts so it sends only the cleaned artist query, not the original phrase with the word “artist”.
+
+⸻
+
+Important constraints
+
+Do NOT modify or refactor these working commands/features:
+	•	/start
+	•	/help
+	•	/song
+	•	/lyrics
+	•	/analyze
+	•	/stats
+	•	/recommend
+	•	/artist
+	•	/top
+	•	/random
+	•	/youtube
+	•	/download
+	•	/mp3
+	•	/quiz
+	•	/endquiz
+	•	/wiki
+	•	/trending
+	•	/translate
+	•	/subscribe
+	•	/unsubscribe
+
+Also do NOT change:
+	•	lyrics parser
+	•	song matching
+	•	wiki routing
+	•	top/trending buttons
+	•	translate functionality
+	•	recommendation system
+	•	artist data source
+
+This should be a button callback payload fix only.
+
+⸻
+
+Please test after the fix
+	1.	/analyze Kehlani folded
+-> press Artist
+-> must open Kehlani artist profile
+	2.	Type:
+artist kehlani
+-> when the clarification prompt appears, press Artist Profile
+-> must open Kehlani artist profile
+	3.	Regression check:
+	•	/artist Ariana Grande
+	•	/analyze Adele hello
+	•	/top pop
+	•	/trending
+
+⸻
+
+Report back with
+	1.	Exact files modified
+	2.	Root cause of the incorrect Artist button payload
+	3.	Root cause of the incorrect ambiguous Artist Profile payload
+	4.	Confirmation that no unrelated commands were modified

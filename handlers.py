@@ -205,7 +205,7 @@ def quiz_answer(update: Update, context: CallbackContext):
         )
 
 
-_AMBIGUOUS_NOISE = {'song', 'songs', 'music', 'track', 'tracks', 'video', 'audio', 'clip'}
+_AMBIGUOUS_NOISE = {'song', 'songs', 'music', 'track', 'tracks', 'video', 'audio', 'clip', 'artist'}
 
 def _clean_ambiguous_query(text: str) -> str:
     import re
@@ -860,7 +860,7 @@ def analyze_command(update: Update, context: CallbackContext):
 
         try:
             btn_query = display_title if display_title else query
-            markup = analyze_buttons(btn_query)
+            markup = analyze_buttons(btn_query, artist_name=artist)
         except Exception:
             markup = None
         update.message.reply_text(response, reply_markup=markup)
