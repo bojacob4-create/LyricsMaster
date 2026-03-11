@@ -20,6 +20,10 @@ RECOMMEND_KEYWORDS = [
     'what else', 'similar songs', 'similar music',
 ]
 
+WIKI_KEYWORDS = [
+    'wiki', 'wikipedia',
+]
+
 ARTIST_KEYWORDS = [
     'who is', 'who are', 'tell me about', 'about the artist',
     'artist info', 'info on', 'biography', 'bio of', 'about .* artist',
@@ -274,6 +278,12 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
                                      'suggestion', 'something like', 'more like', 'like this',
                                      'what else', 'similar songs', 'similar music', 'like'])
         return 'recommend', query
+
+    if _match_keywords(text, WIKI_KEYWORDS):
+        words = text.strip().split()
+        if len(words) >= 2 and words[0].lower() in ('wiki', 'wikipedia'):
+            query = ' '.join(words[1:])
+            return 'wiki', query
 
     if _match_keywords(text, ARTIST_KEYWORDS):
         query = _extract_query_after(text, [r'who is\s*', r'who are\s*', r'tell me about\s*',

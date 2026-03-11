@@ -91,6 +91,20 @@ def _format_extract(extract: str, max_length: int = 1500) -> str:
     return text
 
 
+_DISAMBIGUATION_MARKERS = [
+    'may refer to:', 'can refer to:', 'may also refer to:',
+    'commonly refers to:', 'is a disambiguation',
+    'most commonly refers to',
+]
+
+
+def _is_disambiguation(extract: str) -> bool:
+    if not extract:
+        return False
+    first_lines = extract[:500].lower()
+    return any(marker in first_lines for marker in _DISAMBIGUATION_MARKERS)
+
+
 def _try_exact_page(query: str) -> Optional[str]:
     try:
         r = session.get('https://en.wikipedia.org/w/api.php', params={
@@ -101,13 +115,12 @@ def _try_exact_page(query: str) -> Optional[str]:
         if r.status_code != 200:
             return None
         data = r.json().get('query', {})
-        normalized = {n['from']: n['to'] for n in data.get('normalized', [])}
-        redirects = {rd['from']: rd['to'] for rd in data.get('redirects', [])}
         pages = data.get('pages', {})
         for pid, page in pages.items():
             if pid == '-1':
                 return None
-            if page.get('extract', '').strip():
+            extract = page.get('extract', '').strip()
+            if extract and not _is_disambiguation(extract):
                 return page['title']
         return None
     except Exception:
@@ -120,20 +133,27 @@ def get_person_info(name: str) -> Optional[Dict[str, str]]:
         if not name:
             return None
 
+        title = None
+        extract = None
+
         exact_title = _try_exact_page(name)
         if exact_title:
             title = exact_title
-        else:
+            extract = _get_wikipedia_extract(title)
+            if extract and _is_disambiguation(extract):
+                title = None
+                extract = None
+
+        if not title:
             search_result = _search_wikipedia(f"{name} musician singer")
             if not search_result:
                 search_result = _search_wikipedia(name)
             if not search_result:
                 return None
             title = search_result['title']
+            extract = _get_wikipedia_extract(title)
 
-        extract = _get_wikipedia_extract(title)
-
-        if not extract:
+        if not extract or _is_disambiguation(extract):
             return None
 
         formatted = _format_extract(extract)

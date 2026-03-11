@@ -1,0 +1,225 @@
+Hello.
+
+We need one focused fix related to the Wiki feature and artist/song parsing conflicts.
+
+Please read carefully and keep the scope narrow.
+
+==================================================
+CRITICAL RULE — DO NOT BREAK WORKING FEATURES
+==================================================
+
+Do NOT modify or refactor any of the following working commands unless it is absolutely required for the specific wiki/parsing fixes below:
+
+/start
+/help
+/song
+/lyrics
+/analyze
+/stats
+/recommend
+/artist
+/top
+/random
+/youtube
+/download
+/mp3
+/quiz
+/endquiz
+/wiki
+/trending
+/translate
+/subscribe
+/unsubscribe
+
+Also do NOT break or alter:
+- callback query handling
+- analyze buttons
+- song buttons
+- artist buttons
+- stats buttons
+- ambiguity buttons
+- natural-language routing for working intents
+- recommendation system
+- translation system
+- download/mp3 logic
+- quiz flow
+- subscription flow
+- trending/top behavior
+
+Preserve all working natural-language inputs such as:
+- lyrics water by tyla
+- give me the lyrics for water by tyla
+- analyze adele hello
+- analyze sza saturn
+- analyze teddy swims lose control
+- recommend music like water by tyla
+- songs like calm down
+- tell me about drake
+- show the video for water by tyla
+- play water by tyla
+- translate hello by adele to spanish
+- top pop
+- best afrobeats songs
+- show trending songs
+- what songs are hot right now
+- convert this to mp3 <youtube url>
+- download this <youtube url>
+
+Do NOT weaken any of the above.
+
+==================================================
+ACTUAL PROBLEM TO FIX
+==================================================
+
+The Wiki feature is still conflicting with the existence of an actual artist named "Wiki".
+
+This causes problems in:
+1. /wiki command
+2. Wiki button under artist profile
+3. natural-language inputs like:
+   - Wiki drake
+   - wiki ashlee
+   - wiki ariana grande
+
+We need the system to clearly distinguish between:
+- "wiki" as a command/intent
+- "Wiki" as an artist name in music search contexts
+
+==================================================
+OBSERVED PROBLEMS
+==================================================
+
+Problem A:
+When using:
+/wiki drake
+
+the bot may return the generic disambiguation page:
+"Drake may refer to:"
+instead of prioritizing the music artist page.
+
+Problem B:
+When using natural language:
+Wiki drake
+
+the bot can still trigger the wrong flow or create ambiguous handling, instead of cleanly treating it as:
+wiki query = drake
+
+Problem C:
+When pressing the Wiki button under an artist profile (for example Drake),
+the callback can still produce a wrong or generic result.
+
+Problem D:
+The artist name "Wiki" (rapper) causes keyword collision with the wiki feature.
+The system must not confuse:
+- wiki lookup for Drake
+with
+- artist/song query involving Wiki
+
+==================================================
+REQUIRED BEHAVIOR
+==================================================
+
+1. /wiki [query] must always be treated as an explicit wiki lookup.
+   Examples:
+   - /wiki drake
+   - /wiki ariana grande
+   - /wiki taylor swift
+
+2. Natural-language patterns that begin with the wiki intent must resolve cleanly to wiki lookup.
+   Examples:
+   - wiki drake
+   - wiki ariana grande
+   - wiki adele
+   - wiki ashlee
+
+These should map to:
+intent = wiki
+query = remaining text after the wiki keyword
+
+3. The Wiki button under artist profiles must always call the wiki feature with the exact artist name only.
+   Example:
+   artist profile = Drake
+   Wiki button → /wiki Drake behavior
+
+4. For music artists, wiki lookup should prefer the artist page when possible, not a generic disambiguation page.
+   Example:
+   /wiki drake
+   should prefer Drake (rapper/artist), not the general "Drake may refer to" page, if a music-artist page can be identified.
+
+5. The existence of the artist named "Wiki" must NOT break wiki intent behavior.
+   The parser must distinguish:
+   - "wiki drake" = wiki lookup for Drake
+   - "lyrics wiki" = lyrics/song/artist context for artist named Wiki
+   - "song wiki" = song dashboard / music search context
+   - "artist wiki" = artist profile for the artist named Wiki
+
+So the word "wiki" should behave as:
+- an intent keyword when it appears in wiki-intent position
+- a normal artist name in other music-intent positions
+
+==================================================
+IMPORTANT IMPLEMENTATION GUIDANCE
+==================================================
+
+Please fix this using the smallest possible change set.
+
+Likely areas:
+- intent_router.py (wiki-intent detection)
+- button callback generation/handling for Wiki button
+- wiki lookup prioritization logic in the relevant service/helper
+
+Important:
+Do NOT broadly change general song matching or lyrics matching again.
+The previous attempt caused regressions in /song, /lyrics, and /analyze for multi-word artist/song names.
+Avoid touching that unless absolutely necessary.
+
+If a wiki result is ambiguous, prefer the music artist page when:
+- the query matches a known artist result already in the bot context
+- or the result title/body strongly indicates singer/rapper/artist/music
+
+==================================================
+TEST CASES REQUIRED
+==================================================
+
+Please test all of the following after the fix:
+
+Explicit wiki command:
+1. /wiki drake
+2. /wiki ariana grande
+3. /wiki adele
+4. /wiki taylor swift
+
+Natural-language wiki:
+5. wiki drake
+6. wiki ariana grande
+7. wiki adele
+8. wiki ashlee
+
+Wiki button:
+9. open artist profile for Drake → press Wiki
+10. open artist profile for Ariana Grande → press Wiki
+
+Conflict cases with the artist named Wiki:
+11. /artist wiki
+12. lyrics wiki
+13. song wiki
+14. /song wiki
+15. /lyrics wiki
+
+Regression checks:
+16. /song taylor swift love story
+17. /analyze ariana grande position
+18. /lyrics ariana grande position
+19. analyze teddy swims lose control
+20. tell me more about taylor swift
+
+==================================================
+REPORT BACK WITH
+==================================================
+
+1. Exactly which files were changed
+2. Root cause of the wiki conflict
+3. How the parser now distinguishes wiki intent vs artist named Wiki
+4. How the Wiki button now behaves
+5. Confirmation that no unrelated commands were modified
+6. Any remaining edge cases
