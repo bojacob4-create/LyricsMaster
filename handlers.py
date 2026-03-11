@@ -6,7 +6,7 @@ from telegram.error import TelegramError
 from buttons import (
     lyrics_buttons, song_dashboard_buttons, artist_buttons, artist_summary_buttons,
     recommend_buttons, song_list_buttons, ambiguous_buttons,
-    analyze_buttons, stats_buttons
+    analyze_buttons, stats_buttons, artist_analyze_buttons
 )
 from services.lyrics_service import get_song_lyrics
 from services.translator_service import (
@@ -309,6 +309,7 @@ def callback_query_handler(update: Update, context: CallbackContext):
         'top': top_command,
         'random': random_command,
         'wiki': wiki_command,
+        'artistsongs': _artist_songs_picker_command,
     }
 
     handler = handler_map.get(action)
@@ -815,6 +816,56 @@ def youtube_command(update: Update, context: CallbackContext):
         )
 
 
+def _artist_songs_picker_command(update: Update, context: CallbackContext):
+    artist_name = " ".join(context.args) if context.args else ""
+    if not artist_name:
+        update.message.reply_text("Please specify an artist name.")
+        return
+
+    info = get_artist_info(artist_name)
+    if info:
+        songs_list = info['top_songs'][:5]
+        markup = artist_summary_buttons(info['name'], songs_list)
+        update.message.reply_text(
+            f"🎤 {info['name']}\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "🔥 Pick a song below to explore:",
+            reply_markup=markup
+        )
+        return
+
+    try:
+        import requests
+        api_key = os.environ.get('LASTFM_API_KEY')
+        if api_key:
+            resp = requests.get(
+                'https://ws.audioscrobbler.com/2.0/',
+                params={'method': 'artist.getTopTracks', 'artist': artist_name,
+                        'api_key': api_key, 'format': 'json', 'limit': 5},
+                timeout=5
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                tracks = data.get('toptracks', {}).get('track', [])
+                if tracks:
+                    top_songs = [t['name'] for t in tracks[:5]]
+                    markup = artist_summary_buttons(artist_name, top_songs)
+                    update.message.reply_text(
+                        f"🎤 {artist_name}\n"
+                        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                        "🔥 Pick a song below to explore:",
+                        reply_markup=markup
+                    )
+                    return
+    except Exception:
+        pass
+
+    update.message.reply_text(
+        f"😕 I couldn't find top songs for \"{artist_name}\".\n\n"
+        f"Try /song {artist_name} - [song name] if you know a specific song!"
+    )
+
+
 def _clean_primary_artist(artist: str) -> str:
     if not artist:
         return artist
@@ -847,7 +898,7 @@ def analyze_command(update: Update, context: CallbackContext):
             display_name = info['name'] if info else clean.title()
             update.message.reply_text(
                 f"What would you like for \"{display_name}\"?",
-                reply_markup=ambiguous_buttons(display_name)
+                reply_markup=artist_analyze_buttons(display_name)
             )
             return
 

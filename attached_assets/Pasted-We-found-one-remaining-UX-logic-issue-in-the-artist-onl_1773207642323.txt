@@ -1,0 +1,109 @@
+We found one remaining UX/logic issue in the artist-only analyze interface.
+
+Current good behavior
+
+For artist-only analyze queries such as:
+	•	analyze kehlani
+	•	analyze selena gomez
+	•	analyze drake
+
+the bot now correctly shows the artist interface instead of jumping into random song analysis.
+
+This part is good and should remain unchanged.
+
+⸻
+
+Remaining Problem 1 — “Song Dashboard” does not work well for artists outside the static artist database
+
+Example:
+	•	analyze kehlani
+
+The bot correctly identifies Kehlani as an artist and shows the artist interface.
+
+But when pressing:
+	•	Song Dashboard
+
+the bot falls into an ambiguity message like:
+	•	I'm not sure if "Kehlani" is a song or an artist.
+
+This means the Song Dashboard button in the artist-only analyze interface is still relying on logic that does not work generally for artists outside the static artist database.
+
+Required behavior
+
+In the artist-only analyze interface, the Song Dashboard button should NOT directly call a single ambiguous /song ArtistName flow.
+
+Instead, it should behave like an artist song picker:
+	•	show top / known songs for that artist
+	•	then let the user choose one
+	•	then open /song Artist - Song
+
+This should work for:
+	•	artists in the static database
+	•	artists resolved via Wikipedia fallback
+	•	artists detected through artist-only analyze logic
+
+Do NOT hardcode only Kehlani or Selena Gomez.
+This must work generally.
+
+⸻
+
+Remaining Problem 2 — “Lyrics” button is not reasonable in artist-only analyze mode
+
+If the user asked:
+	•	analyze kehlani
+
+then showing a Lyrics button is confusing, because there is no song selected yet.
+
+Required behavior
+
+For the artist-only analyze interface, please remove the Lyrics button entirely.
+
+Recommended buttons in this interface:
+	•	Artist Profile
+	•	Song Dashboard
+	•	YouTube
+	•	Similar Songs
+
+Only song-specific flows should show Lyrics.
+
+⸻
+
+Important constraints
+
+Do NOT modify or break:
+	•	the current correct artist-only analyze detection
+	•	song analysis for artist + song
+	•	/song
+	•	/artist
+	•	lyrics parser
+	•	top/trending
+	•	translation
+	•	recommendations
+	•	wiki fallback
+	•	working artist profile behavior
+
+This should be a narrow fix for the artist-only analyze interface only.
+
+⸻
+
+Please test after the fix
+	1.	analyze kehlani
+	•	should show artist interface
+	•	should NOT show Lyrics button
+	•	Song Dashboard should open a song picker, not an ambiguity error
+	2.	analyze selena gomez
+	•	same expected behavior
+	3.	analyze drake
+	•	same expected behavior
+	•	current good behavior must remain intact
+	4.	analyze kehlani folded
+	•	should still run normal song analysis
+	•	song-specific buttons should remain unchanged
+
+⸻
+
+Report back with
+	•	exact files modified
+	•	how Song Dashboard now works for artist-only analyze flows
+	•	confirmation that Lyrics was removed only from artist-only analyze interface
+	•	confirmation that no unrelated commands were changed

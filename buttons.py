@@ -136,3 +136,16 @@ def ambiguous_buttons(query):
             InlineKeyboardButton("🎧 Similar Songs", callback_data=_cb("recommend", query)),
         ],
     ])
+
+
+def artist_analyze_buttons(artist_name):
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🎤 Artist Profile", callback_data=_cb("artist", artist_name)),
+            InlineKeyboardButton("🎵 Song Dashboard", callback_data=_cb("artistsongs", artist_name)),
+        ],
+        [
+            InlineKeyboardButton("📺 YouTube", callback_data=_cb("youtube", artist_name)),
+            InlineKeyboardButton("🎧 Similar Songs", callback_data=_cb("recommend", artist_name)),
+        ],
+    ])
