@@ -1,0 +1,88 @@
+The recent UX improvements for /top and /trending are working well. Now I want to verify and slightly improve the data accuracy of these commands.
+
+Please investigate the following points carefully. This is a data-source validation task, not a UI change.
+
+⸻
+
+1️⃣ Verify /trending uses real current chart data
+
+The /trending command currently shows:
+
+Trending Now
+Source: Apple Music Charts
+
+Please confirm the following:
+
+• The API endpoint being used actually returns current trending songs from Apple Music.
+• The chart being used is real-time or regularly updated (for example Apple Music Top 100 or similar).
+• The songs displayed are current chart entries, not cached or static sample data.
+
+If caching is used, please confirm:
+
+• Cache duration
+• How often the list refreshes
+
+The goal is to ensure /trending always reflects recent chart data.
+
+⸻
+
+2️⃣ Validate /top genre charts
+
+The /top command should represent popular songs for a genre today, not historical classics.
+
+Example problem observed:
+
+/top soul returned:
+
+John Legend — All of Me
+
+This song is more than 10 years old, which suggests the system might be pulling:
+
+• generic artist discographies
+• static examples
+• popularity-based picks
+• or random songs tagged with the genre
+
+Instead, /top should ideally represent recent popular songs in that genre.
+
+Please verify:
+
+• How /top currently selects songs
+• Whether the genre results come from a chart source or another dataset
+• Whether the data represents recent popularity
+
+If possible, adjust the selection logic so /top prioritizes:
+
+• recent charting songs
+• currently popular tracks
+• or trending tracks within that genre
+
+The goal is for /top pop, /top rap, /top kpop, /top soul, etc. to feel current and relevant.
+
+⸻
+
+3️⃣ Do NOT modify unrelated systems
+
+This task is only about data correctness.
+
+Do not modify:
+
+• buttons system
+• /song dashboard
+• lyrics parser
+• intent router
+• artist system
+• translation system
+• wiki service
+• recommendation system
+
+⸻
+
+4️⃣ Provide a short report
+
+After reviewing and making any necessary adjustments, please report:
+
+• Data sources used for /trending
+• Data sources used for /top
+• Whether results are real-time or cached
+• Any changes made to improve recency or relevance

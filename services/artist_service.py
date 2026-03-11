@@ -236,13 +236,17 @@ def get_top_by_genre(genre_query: str) -> Optional[tuple]:
     genre_lower = genre_query.lower().strip()
     resolved = GENRE_ALIASES.get(genre_lower, genre_lower)
 
-    if resolved in GENRE_TOP_SONGS:
-        songs = list(GENRE_TOP_SONGS[resolved])
-        import random as rng
-        rng.shuffle(songs)
-        return resolved, songs[:7]
+    if resolved not in GENRE_TOP_SONGS:
+        return None
 
-    return None
+    live = _get_live_genre_songs(resolved)
+    if live:
+        return resolved, live
+
+    songs = list(GENRE_TOP_SONGS[resolved])
+    import random as rng
+    rng.shuffle(songs)
+    return resolved, songs[:7]
 
 
 def format_top_songs(genre: str, songs: List[Dict]) -> str:
@@ -262,9 +266,13 @@ def format_top_songs(genre: str, songs: List[Dict]) -> str:
 
     body = '\n\n'.join(lines)
 
+    is_live = any('Charting now' in s.get('note', '') for s in songs)
+    source_line = "Source: Apple Music Charts\n" if is_live else ""
+
     return (
         f"{emoji} Top {display_genre}\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{source_line}\n"
         f"{body}\n\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "🎵 Pick a song below to explore:"
@@ -317,14 +325,25 @@ def format_artist_info(info: Dict) -> str:
     )
 
 
-_trending_cache = {'songs': None, 'timestamp': 0}
-TRENDING_CACHE_TTL = 3600
+_chart_cache = {'raw': None, 'trending': None, 'timestamp': 0}
+CHART_CACHE_TTL = 3600
+
+APPLE_GENRE_MAP = {
+    'pop': 'Pop',
+    'rap': 'Hip-Hop/Rap',
+    'rnb': 'R&B/Soul',
+    'rock': 'Alternative',
+    'country': 'Country',
+    'latin': 'Latin',
+    'kpop': 'K-Pop',
+    'soul': 'R&B/Soul',
+}
 
 
-def _fetch_live_trending() -> Optional[List[Dict]]:
+def _fetch_apple_chart() -> Optional[List[Dict]]:
     try:
         r = session.get(
-            'https://rss.applemarketingtools.com/api/v2/us/music/most-played/25/songs.json',
+            'https://rss.applemarketingtools.com/api/v2/us/music/most-played/100/songs.json',
             timeout=10
         )
         if r.status_code != 200:
@@ -335,43 +354,78 @@ def _fetch_live_trending() -> Optional[List[Dict]]:
             return None
 
         songs = []
-        seen_artists = set()
         for item in results:
             artist = item.get('artistName', '').strip()
             name = item.get('name', '').strip()
             if not artist or not name:
                 continue
-            if artist.lower() in seen_artists:
-                continue
-            seen_artists.add(artist.lower())
-            songs.append({'artist': artist, 'song': name})
-            if len(songs) >= 10:
-                break
+            genres = [g.get('name', '') for g in item.get('genres', []) if g.get('name') != 'Music']
+            songs.append({'artist': artist, 'song': name, 'genres': genres})
 
-        return songs if len(songs) >= 5 else None
+        return songs if len(songs) >= 10 else None
 
     except Exception as e:
-        logger.debug(f"Live trending fetch error: {e}")
+        logger.debug(f"Apple chart fetch error: {e}")
         return None
 
 
-def get_trending_songs() -> tuple:
+def _get_cached_chart() -> Optional[List[Dict]]:
     import time
     now = time.time()
+    if _chart_cache['raw'] and (now - _chart_cache['timestamp']) < CHART_CACHE_TTL:
+        return _chart_cache['raw']
 
-    if _trending_cache['songs'] and (now - _trending_cache['timestamp']) < TRENDING_CACHE_TTL:
-        return _trending_cache['songs'], True
+    raw = _fetch_apple_chart()
+    if raw:
+        _chart_cache['raw'] = raw
+        _chart_cache['timestamp'] = now
+        trending = []
+        seen_artists = set()
+        for s in raw:
+            if s['artist'].lower() not in seen_artists:
+                seen_artists.add(s['artist'].lower())
+                trending.append({'artist': s['artist'], 'song': s['song']})
+                if len(trending) >= 10:
+                    break
+        _chart_cache['trending'] = trending
+    return raw
 
-    live = _fetch_live_trending()
-    if live:
-        _trending_cache['songs'] = live
-        _trending_cache['timestamp'] = now
-        return live, True
+
+def get_trending_songs() -> tuple:
+    raw = _get_cached_chart()
+    if raw and _chart_cache.get('trending'):
+        return _chart_cache['trending'], True
 
     import random
     pool = list(TRENDING_SONGS)
     random.shuffle(pool)
     return pool[:8], False
+
+
+def _get_live_genre_songs(genre_key: str) -> Optional[List[Dict]]:
+    apple_genre = APPLE_GENRE_MAP.get(genre_key)
+    if not apple_genre:
+        return None
+
+    raw = _get_cached_chart()
+    if not raw:
+        return None
+
+    songs = []
+    seen_artists = set()
+    for item in raw:
+        if apple_genre in item.get('genres', []):
+            if item['artist'].lower() not in seen_artists:
+                seen_artists.add(item['artist'].lower())
+                songs.append({
+                    'artist': item['artist'],
+                    'song': item['song'],
+                    'note': 'Charting now on Apple Music',
+                })
+                if len(songs) >= 7:
+                    break
+
+    return songs if len(songs) >= 3 else None
 
 
 def format_trending(songs: List[Dict], is_live: bool = True) -> str:
