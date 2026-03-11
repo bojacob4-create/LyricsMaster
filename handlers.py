@@ -842,13 +842,14 @@ def analyze_command(update: Update, context: CallbackContext):
             return
 
         if _is_artist_only_query(query):
-            info = get_artist_info(query)
-            if info:
-                update.message.reply_text(
-                    f"What would you like for \"{info['name']}\"?",
-                    reply_markup=ambiguous_buttons(info['name'])
-                )
-                return
+            clean = clean_input(query)
+            info = get_artist_info(clean)
+            display_name = info['name'] if info else clean.title()
+            update.message.reply_text(
+                f"What would you like for \"{display_name}\"?",
+                reply_markup=ambiguous_buttons(display_name)
+            )
+            return
 
         update.message.chat.send_action(action="typing")
 
@@ -1166,14 +1167,47 @@ def _is_artist_only_query(query: str) -> bool:
     if '-' in clean:
         return False
     info = get_artist_info(clean)
-    if not info:
-        return False
-    query_words = clean.lower().split()
-    name_words = info['name'].lower().split()
-    if set(query_words) == set(name_words):
-        return True
-    if set(query_words) < set(name_words):
-        return True
+    if info:
+        query_words = clean.lower().split()
+        name_words = info['name'].lower().split()
+        if set(query_words) == set(name_words):
+            return True
+        if set(query_words) < set(name_words):
+            return True
+    try:
+        import requests
+        api_key = os.environ.get('LASTFM_API_KEY')
+        if api_key:
+            resp = requests.get(
+                'https://ws.audioscrobbler.com/2.0/',
+                params={'method': 'artist.getInfo', 'artist': clean,
+                        'api_key': api_key, 'format': 'json'},
+                timeout=5
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                artist_data = data.get('artist', {})
+                bio_content = artist_data.get('bio', {}).get('content', '')
+                listeners = int(artist_data.get('stats', {}).get('listeners', '0'))
+                if listeners > 5000 and len(bio_content) > 50:
+                    return True
+    except Exception:
+        pass
+    try:
+        import requests
+        resp = requests.get(
+            'https://en.wikipedia.org/api/rest_v1/page/summary/' + clean.replace(' ', '_'),
+            timeout=5, headers={'User-Agent': 'LyricsMasterBot/1.0'}
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            desc = (data.get('description', '') or '').lower()
+            extract = (data.get('extract', '') or '').lower()
+            music_words = ['singer', 'rapper', 'musician', 'songwriter', 'artist', 'band', 'group', 'vocalist', 'producer', 'dj', 'mc']
+            if any(w in desc for w in music_words) or any(w in extract[:300] for w in music_words):
+                return True
+    except Exception:
+        pass
     return False
 
 

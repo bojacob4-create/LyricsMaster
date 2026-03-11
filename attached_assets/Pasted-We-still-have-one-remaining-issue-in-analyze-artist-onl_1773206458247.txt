@@ -1,0 +1,90 @@
+We still have one remaining issue in analyze artist-only behavior.
+
+Current status
+
+The old desired behavior is now correctly restored for:
+	•	analyze drake
+
+This now shows the correct artist action interface:
+	•	Artist Profile
+	•	Song Dashboard
+	•	Lyrics
+	•	YouTube
+	•	Similar Songs
+
+This behavior is correct and must NOT be changed or broken.
+
+⸻
+
+Remaining issue
+
+The same artist-only logic is not working generally.
+
+Examples:
+	•	analyze selena gomez
+	•	analyze kehlani
+
+These still jump directly into a song analysis for a matched track, which is wrong.
+
+So the fix currently works for Drake, but not for artist-only queries in general.
+
+⸻
+
+Required behavior
+
+For any artist-only analyze query, the bot should behave like the current correct Drake behavior:
+	•	analyze drake → artist interface
+	•	analyze selena gomez → artist interface
+	•	analyze kehlani → artist interface
+	•	analyze ariana grande → artist interface
+
+Only if the query clearly contains artist + song, then run song analysis.
+
+Examples:
+	•	analyze kehlani folded → song analysis
+	•	analyze ariana grande positions → song analysis
+
+⸻
+
+Important
+
+Do NOT break the current good behavior of:
+	•	analyze drake
+
+Use that as the correct reference behavior.
+
+Do NOT modify or refactor unrelated systems:
+	•	lyrics parser
+	•	song matching
+	•	/song
+	•	/artist
+	•	/top
+	•	/trending
+	•	translation
+	•	recommendations
+	•	wiki fallback
+	•	buttons layout
+
+Only fix the artist-only detection inside analyze_command so it works generally, not just for Drake.
+
+⸻
+
+Please test before reporting fixed
+
+Test all of these:
+	1.	analyze drake → artist interface
+	2.	analyze selena gomez → artist interface
+	3.	analyze kehlani → artist interface
+	4.	analyze ariana grande → artist interface
+	5.	analyze kehlani folded → song analysis
+	6.	analyze ariana grande positions → song analysis
+
+Please do not mark this fixed unless all six cases work correctly.
+
+⸻
+
+Report back with
+	•	exact file modified
+	•	exact logic changed
+	•	why it worked for Drake but not for Selena Gomez / Kehlani before
+	•	confirmation that the current Drake behavior was preserved unchanged
