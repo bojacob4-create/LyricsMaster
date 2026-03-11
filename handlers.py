@@ -847,17 +847,22 @@ def _fetch_artist_top_songs(artist_name: str) -> list:
         import requests
         resp = requests.get(
             'https://itunes.apple.com/search',
-            params={'term': artist_name, 'media': 'music', 'entity': 'song', 'limit': 15},
+            params={'term': artist_name, 'media': 'music', 'entity': 'song', 'limit': 50},
             timeout=5
         )
         if resp.status_code == 200:
             results = resp.json().get('results', [])
             seen = set()
             songs = []
+            artist_lower = artist_name.lower()
+            artist_words = set(artist_lower.split())
             for r in results:
                 aname = (r.get('artistName') or '').lower()
                 tname = r.get('trackName', '')
-                if artist_name.lower() in aname and tname and tname not in seen:
+                if not tname or tname in seen:
+                    continue
+                aname_words = set(aname.replace(',', ' ').replace('&', ' ').split())
+                if artist_lower in aname or artist_words <= aname_words:
                     seen.add(tname)
                     songs.append(tname)
                     if len(songs) >= 5:

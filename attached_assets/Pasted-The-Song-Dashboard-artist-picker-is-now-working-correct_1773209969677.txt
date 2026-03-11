@@ -1,0 +1,64 @@
+The Song Dashboard artist picker is now working correctly, which is great.
+However, there is room for improvement in the quality and consistency of the song selection.
+
+Current observation
+
+Example:
+	•	analyze kehlani → Song Dashboard shows only 2 songs
+	•	analyze selena gomez → Song Dashboard shows 5 songs
+
+This suggests the current selection logic may be too restrictive when filtering results.
+
+Improvement goal
+
+Improve the artist song picker quality while keeping the current architecture intact.
+
+Required behavior
+	1.	The Song Dashboard should attempt to return up to 5 songs for the artist when possible.
+	2.	Use the iTunes Search API results more effectively:
+	•	Increase the search result pool if needed (e.g., fetch more results then filter).
+	•	Ensure results match the target artist name correctly.
+	3.	Prefer popular / well-known songs when selecting the final list.
+	4.	Maintain clean filtering so songs from other artists with similar names are excluded.
+
+Important constraints
+
+Do NOT modify or break any of the following systems:
+	•	/song
+	•	/artist
+	•	/lyrics
+	•	/analyze song-specific analysis
+	•	lyrics parser
+	•	top/trending commands
+	•	translation
+	•	recommendations
+	•	wiki fallback
+	•	button layouts that are currently working
+
+Only improve the song selection logic inside the artist Song Dashboard flow.
+
+Code safety
+
+Keep the code clean and avoid unnecessary refactoring.
+Do not remove existing logic unless you are certain it is unused and safe.
+
+Testing requirement
+
+Please test the behavior before reporting the fix.
+
+Verify these cases:
+	1.	analyze kehlani → Song Dashboard
+	•	should return several recognizable songs if available (ideally up to 5)
+	2.	analyze selena gomez → Song Dashboard
+	•	should still return strong well-known songs
+	3.	analyze drake → Song Dashboard
+	•	existing correct behavior must remain unchanged
+	4.	analyze kehlani folded
+	•	song analysis flow must remain exactly the same
+
+Do not mark this complete until these tests pass.
+
+Report back with
+	•	what logic was improved in the song selection
+	•	how many search results are fetched before filtering
+	•	confirmation that no unrelated systems were modified
