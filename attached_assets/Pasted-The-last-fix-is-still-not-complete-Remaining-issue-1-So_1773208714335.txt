@@ -1,0 +1,118 @@
+The last fix is still not complete.
+
+Remaining issue 1 — Song Dashboard still does not work for artists outside the static artist database
+
+Example tested:
+	•	Analyze Kehlani
+	•	press Song Dashboard
+
+Current result:
+	•	the bot replies:
+I couldn't find top songs for "Kehlani".
+	•	so the Song Dashboard flow still does not work properly for artists outside the static DB
+
+This means the new artist-only Song Dashboard logic is still not functioning correctly for fallback artists.
+
+Required behavior
+
+For artist-only analyze flows such as:
+	•	analyze kehlani
+	•	analyze selena gomez
+
+pressing Song Dashboard must open a valid song picker for that artist.
+
+It should not fail with:
+	•	I couldn't find top songs...
+
+If static DB top songs are unavailable, the fallback source must actually work and return song choices.
+
+Do NOT hardcode specific artists like Kehlani or Selena Gomez.
+This must work generally for artists outside the static DB.
+
+⸻
+
+Remaining issue 2 — Duplicate reply on one button press
+
+In the same test, pressing Song Dashboard once produced the same failure reply twice.
+
+This strongly suggests there is a duplicate response path somewhere in the callback handling.
+
+Please inspect carefully for:
+	•	duplicated callback handling
+	•	the same callback action being processed twice
+	•	reply being sent in both a failure branch and a fallback branch
+	•	duplicated handler registration
+	•	any dead / overlapping logic in this specific flow
+
+This must be fixed.
+
+One button press should produce only one response.
+
+⸻
+
+Code cleanliness requirement
+
+Please clean up this specific Song Dashboard callback flow carefully only where needed.
+
+Important:
+	•	Do NOT do a broad refactor
+	•	Do NOT remove unrelated handlers
+	•	Do NOT delete working code without verifying it is unused
+	•	Only remove duplicate / dead / overlapping logic related to this artist-only Song Dashboard flow if you are certain it is safe
+
+The goal is:
+	•	make the flow work for artists outside the static DB
+	•	prevent duplicate replies
+	•	keep the code path clean and deterministic
+
+⸻
+
+Do NOT modify unrelated working systems
+
+Do NOT touch or break:
+	•	/song
+	•	/lyrics
+	•	/analyze song-specific flows
+	•	/artist
+	•	/top
+	•	/trending
+	•	translation
+	•	recommendations
+	•	wiki fallback
+	•	lyrics parser
+	•	song matching
+	•	top/trending buttons
+	•	artist profile buttons that already work
+
+Only fix:
+	1.	artist-only analyze → Song Dashboard for artists outside static DB
+	2.	duplicate reply on single button press
+	3.	minimal safe cleanup of that specific callback path only
+
+⸻
+
+Please test before reporting fixed
+	1.	analyze kehlani
+	•	press Song Dashboard
+	•	should show a valid song picker
+	•	must reply only once
+	2.	analyze selena gomez
+	•	press Song Dashboard
+	•	should show a valid song picker
+	•	must reply only once
+	3.	analyze drake
+	•	press Song Dashboard
+	•	current good behavior must remain unchanged
+	4.	analyze kehlani folded
+	•	normal song analysis must remain unchanged
+
+Please do not mark this fixed unless all four cases work correctly.
+
+⸻
+
+Report back with
+	•	exact files modified
+	•	root cause of why Song Dashboard still failed for artists outside static DB
+	•	root cause of the duplicate reply
+	•	what minimal cleanup was done in this specific flow
+	•	confirmation that no unrelated systems were modified

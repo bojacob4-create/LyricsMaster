@@ -816,23 +816,10 @@ def youtube_command(update: Update, context: CallbackContext):
         )
 
 
-def _artist_songs_picker_command(update: Update, context: CallbackContext):
-    artist_name = " ".join(context.args) if context.args else ""
-    if not artist_name:
-        update.message.reply_text("Please specify an artist name.")
-        return
-
+def _fetch_artist_top_songs(artist_name: str) -> list:
     info = get_artist_info(artist_name)
     if info:
-        songs_list = info['top_songs'][:5]
-        markup = artist_summary_buttons(info['name'], songs_list)
-        update.message.reply_text(
-            f"🎤 {info['name']}\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "🔥 Pick a song below to explore:",
-            reply_markup=markup
-        )
-        return
+        return info['top_songs'][:5]
 
     try:
         import requests
@@ -848,22 +835,62 @@ def _artist_songs_picker_command(update: Update, context: CallbackContext):
                 data = resp.json()
                 tracks = data.get('toptracks', {}).get('track', [])
                 if tracks:
-                    top_songs = [t['name'] for t in tracks[:5]]
-                    markup = artist_summary_buttons(artist_name, top_songs)
-                    update.message.reply_text(
-                        f"🎤 {artist_name}\n"
-                        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-                        "🔥 Pick a song below to explore:",
-                        reply_markup=markup
-                    )
-                    return
-    except Exception:
-        pass
+                    logger.info(f"Last.fm returned {len(tracks)} top tracks for '{artist_name}'")
+                    return [t['name'] for t in tracks[:5]]
+            logger.warning(f"Last.fm top tracks failed for '{artist_name}': status={resp.status_code}")
+        else:
+            logger.warning("LASTFM_API_KEY not available for top tracks lookup")
+    except Exception as e:
+        logger.warning(f"Last.fm top tracks error for '{artist_name}': {e}")
 
-    update.message.reply_text(
-        f"😕 I couldn't find top songs for \"{artist_name}\".\n\n"
-        f"Try /song {artist_name} - [song name] if you know a specific song!"
-    )
+    try:
+        import requests
+        resp = requests.get(
+            'https://itunes.apple.com/search',
+            params={'term': artist_name, 'media': 'music', 'entity': 'song', 'limit': 15},
+            timeout=5
+        )
+        if resp.status_code == 200:
+            results = resp.json().get('results', [])
+            seen = set()
+            songs = []
+            for r in results:
+                aname = (r.get('artistName') or '').lower()
+                tname = r.get('trackName', '')
+                if artist_name.lower() in aname and tname and tname not in seen:
+                    seen.add(tname)
+                    songs.append(tname)
+                    if len(songs) >= 5:
+                        break
+            if songs:
+                logger.info(f"iTunes returned {len(songs)} tracks for '{artist_name}'")
+                return songs
+    except Exception as e:
+        logger.warning(f"iTunes fallback error for '{artist_name}': {e}")
+
+    return []
+
+
+def _artist_songs_picker_command(update: Update, context: CallbackContext):
+    artist_name = " ".join(context.args) if context.args else ""
+    if not artist_name:
+        update.message.reply_text("Please specify an artist name.")
+        return
+
+    top_songs = _fetch_artist_top_songs(artist_name)
+    if top_songs:
+        markup = artist_summary_buttons(artist_name, top_songs)
+        update.message.reply_text(
+            f"🎤 {artist_name}\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "🔥 Pick a song below to explore:",
+            reply_markup=markup
+        )
+    else:
+        update.message.reply_text(
+            f"😕 I couldn't find top songs for \"{artist_name}\".\n\n"
+            f"Try /song {artist_name} - [song name] if you know a specific song!"
+        )
 
 
 def _clean_primary_artist(artist: str) -> str:
