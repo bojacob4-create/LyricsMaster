@@ -1,0 +1,138 @@
+We found an issue with the Artist button under /analyze, and it appears to have two related root causes.
+
+Please keep the fix narrow and do NOT modify unrelated commands.
+
+⸻
+
+Problem 1 — Analyze queries that contain only an artist name should not jump to a random song
+
+Examples:
+	•	analyze drake
+	•	analyze selena gomez
+	•	analyze kehlani
+
+Current behavior is inconsistent:
+	•	analyze drake leads into a useful artist-related flow
+	•	analyze selena gomez incorrectly jumps to a song result:
+Cashmere Cat feat. Tory Lanez & Selena Gomez - Trust Nobody
+	•	then the Artist button tries to use that long artist credit and fails
+
+This is not the expected behavior.
+
+Required behavior:
+
+If the analyze query appears to be artist-only (no clear song title), do NOT jump directly to a random matched song.
+
+Instead, route it into a clarification / artist-oriented flow, similar to how the bot already behaves in other ambiguous cases.
+
+Examples:
+	•	analyze drake
+	•	analyze selena gomez
+	•	analyze kehlani
+
+should not auto-select unrelated songs.
+
+⸻
+
+Problem 2 — Artist button under /analyze must use a clean primary artist only
+
+For song analyses, the Artist button should open the artist profile of the main artist only.
+
+Examples:
+	•	analyze Kehlani folded
+Artist button should open:
+Kehlani
+	•	if a matched song result has artist credits like:
+Cashmere Cat feat. Tory Lanez & Selena Gomez
+the Artist button must not pass the full featured-artist string to artist lookup
+
+It should either:
+	•	extract the clean primary artist only
+or
+	•	use the artist originally intended by the user if the query was artist-led
+
+⸻
+
+Problem 3 — Artist lookup fallback is too weak for valid artists like Kehlani
+
+Even when the button appears to pass Kehlani, the bot still says:
+
+I don't have quick info for "Kehlani" yet.
+
+Kehlani is a valid well-known artist, so the artist lookup should have a better fallback.
+
+Required behavior:
+
+If the artist is not found in the quick artist dataset, use a better fallback instead of failing immediately.
+
+Possible fallback options:
+	•	exact artist search
+	•	wiki-backed artist resolution
+	•	music-oriented search fallback
+
+This should still return a reasonable artist profile for valid artists such as:
+	•	Kehlani
+	•	Selena Gomez
+	•	other mainstream artists not already in the quick static list
+
+⸻
+
+Important constraints
+
+Do NOT modify or refactor unrelated working commands:
+	•	/start
+	•	/help
+	•	/song
+	•	/lyrics
+	•	/stats
+	•	/recommend
+	•	/artist
+	•	/top
+	•	/random
+	•	/youtube
+	•	/download
+	•	/mp3
+	•	/quiz
+	•	/endquiz
+	•	/wiki
+	•	/trending
+	•	/translate
+	•	/subscribe
+	•	/unsubscribe
+
+Also do NOT break:
+	•	lyrics parser
+	•	song matching
+	•	top/trending button system
+	•	artist buttons in /artist
+	•	translation logic
+	•	wiki routing
+
+Focus only on:
+	1.	analyze artist-only behavior
+	2.	analyze Artist button payload cleaning
+	3.	artist lookup fallback for valid artists
+
+⸻
+
+Please test after the fix
+	1.	analyze kehlani
+	2.	analyze selena gomez
+	3.	analyze drake
+	4.	analyze Kehlani folded -> press Artist
+	5.	analyze adele hello -> press Artist
+	6.	analyze Ariana Grande positions -> press Artist
+
+Expected:
+	•	artist-only analyze inputs should not jump into random songs
+	•	Artist button should open clean artist profiles
+	•	Kehlani and Selena Gomez should not fail with “I don’t have quick info”
+
+⸻
+
+Report back with
+	1.	Exact files modified
+	2.	Root cause of artist-only analyze misrouting
+	3.	Root cause of the Artist button failure with featured-artist strings
+	4.	What fallback was added for artist lookup
+	5.	Confirmation that no unrelated commands were modified

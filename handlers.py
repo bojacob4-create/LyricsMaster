@@ -815,6 +815,14 @@ def youtube_command(update: Update, context: CallbackContext):
         )
 
 
+def _clean_primary_artist(artist: str) -> str:
+    if not artist:
+        return artist
+    import re
+    cleaned = re.split(r'\s+(?:feat\.?|ft\.?|featuring|&|,|x\s)\s*', artist, flags=re.IGNORECASE)[0].strip()
+    return cleaned if cleaned else artist
+
+
 def analyze_command(update: Update, context: CallbackContext):
     """Handle the /analyze command for detailed song analysis."""
     user_id = update.effective_user.id
@@ -832,6 +840,19 @@ def analyze_command(update: Update, context: CallbackContext):
                 "I'll give you a detailed analysis! 📊"
             )
             return
+
+        if _is_artist_only_query(query):
+            info = get_artist_info(query)
+            if info:
+                songs_list = info['top_songs'][:5]
+                update.message.reply_text(
+                    f"🎤 \"{info['name']}\" looks like an artist name.\n\n"
+                    "Which song would you like to analyze?\n\n"
+                    "Pick one below, or type:\n"
+                    f"• /analyze {info['name']} - {songs_list[0]}",
+                    reply_markup=artist_summary_buttons(info['name'], songs_list)
+                )
+                return
 
         update.message.chat.send_action(action="typing")
 
@@ -860,7 +881,8 @@ def analyze_command(update: Update, context: CallbackContext):
 
         try:
             btn_query = display_title if display_title else query
-            markup = analyze_buttons(btn_query, artist_name=artist)
+            primary_artist = _clean_primary_artist(artist) if artist else None
+            markup = analyze_buttons(btn_query, artist_name=primary_artist)
         except Exception:
             markup = None
         update.message.reply_text(response, reply_markup=markup)
@@ -1096,10 +1118,23 @@ def artist_command(update: Update, context: CallbackContext):
         if info:
             update.message.reply_text(format_artist_info(info), reply_markup=artist_buttons(info['name'], info.get('top_songs', [])))
         else:
-            update.message.reply_text(
-                f"😕 I don't have quick info for \"{query}\" yet.\n\n"
-                f"Try /wiki {query} for a Wikipedia lookup instead!"
-            )
+            from services.ai_info_service import get_person_info
+            wiki_info = get_person_info(query)
+            if wiki_info:
+                response = (
+                    f"📚 *{wiki_info['title']}*\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"{wiki_info['info']}"
+                )
+                try:
+                    update.message.reply_text(response, parse_mode='Markdown', disable_web_page_preview=True)
+                except TelegramError:
+                    update.message.reply_text(response.replace('*', ''), disable_web_page_preview=True)
+            else:
+                update.message.reply_text(
+                    f"😕 I couldn't find info for \"{query}\".\n\n"
+                    f"Try /wiki {query} for a broader search!"
+                )
 
     except Exception as e:
         logger.error(f"Error in artist command for user {user_id}: {str(e)}")
