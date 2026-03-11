@@ -844,13 +844,9 @@ def analyze_command(update: Update, context: CallbackContext):
         if _is_artist_only_query(query):
             info = get_artist_info(query)
             if info:
-                songs_list = info['top_songs'][:5]
                 update.message.reply_text(
-                    f"🎤 \"{info['name']}\" looks like an artist name.\n\n"
-                    "Which song would you like to analyze?\n\n"
-                    "Pick one below, or type:\n"
-                    f"• /analyze {info['name']} - {songs_list[0]}",
-                    reply_markup=artist_summary_buttons(info['name'], songs_list)
+                    f"What would you like for \"{info['name']}\"?",
+                    reply_markup=ambiguous_buttons(info['name'])
                 )
                 return
 
