@@ -1,0 +1,80 @@
+I want to improve the artist profile presentation for artists outside the static artist database, while preserving the current excellent format for artists already inside the DB.
+
+Current issue
+
+Artists inside the static DB (for example Drake) have a much cleaner and more structured artist profile:
+	•	artist title
+	•	Genre
+	•	Debut
+	•	From
+	•	Links
+	•	top songs
+	•	buttons
+
+Artists outside the static DB (for example Selena Gomez, Kehlani) currently fall back to a more raw Wikipedia-style text block, which is much less consistent with the bot’s design.
+
+Goal
+
+Please make the artist profile output look structurally consistent for any artist, whether the artist is inside the DB or outside it.
+
+Required behavior
+
+For artists outside the static DB, try to present the profile using the same structured layout style as DB artists:
+	•	artist title
+	•	Genre (if available)
+	•	Debut (if available)
+	•	From (if available)
+	•	Links
+	•	Pick a song below to explore
+	•	top songs
+	•	buttons
+
+If some structured fields are unavailable, do not invent data.
+Just omit the missing field and keep the format clean.
+
+Important
+
+Do NOT break or change the current nice behavior for artists already inside the static DB.
+
+Drake-style output is the reference format and should remain unchanged.
+
+Do NOT modify unrelated systems
+
+Do NOT touch:
+	•	/song
+	•	/lyrics
+	•	/analyze song flow
+	•	lyrics parser
+	•	top/trending
+	•	translation
+	•	recommendations
+	•	wiki routing
+	•	current button behavior that already works
+
+Only improve the artist profile formatting for fallback artists.
+
+Suggested implementation approach
+
+Please use a unified artist profile formatter:
+	•	if artist is in static DB → use current structured DB profile
+	•	if artist is outside DB → map external/Wikipedia data into the same profile template as much as possible
+
+Avoid broad refactoring.
+
+Please test before reporting fixed
+
+Test at least:
+	1.	/artist Drake
+	•	must remain unchanged
+	2.	/artist Selena Gomez
+	•	should use the cleaner structured format instead of raw paragraph-style fallback
+	3.	/artist Kehlani
+	•	same structured fallback style
+	4.	analyze selena gomez → Artist Profile
+	•	should also show the same cleaner structured format
+
+Report back with
+	•	exact files modified
+	•	what structured fields are extracted for fallback artists
+	•	confirmation that DB artist profiles were left unchanged
+	•	confirmation that no unrelated systems were modified

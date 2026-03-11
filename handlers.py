@@ -1175,6 +1175,104 @@ def mp3_command(update: Update, context: CallbackContext):
         )
 
 
+def _build_fallback_artist_profile(query: str):
+    try:
+        import requests
+        resp = requests.get(
+            'https://en.wikipedia.org/api/rest_v1/page/summary/' + query.replace(' ', '_'),
+            timeout=5, headers={'User-Agent': 'LyricsMasterBot/1.0'}
+        )
+        if resp.status_code != 200:
+            resp = requests.get(
+                'https://en.wikipedia.org/api/rest_v1/page/summary/' + query.title().replace(' ', '_'),
+                timeout=5, headers={'User-Agent': 'LyricsMasterBot/1.0'}
+            )
+        if resp.status_code != 200:
+            return None
+
+        data = resp.json()
+        desc = (data.get('description') or '').lower()
+        extract = (data.get('extract') or '')
+        music_words = ['singer', 'rapper', 'musician', 'songwriter', 'artist', 'band', 'group', 'vocalist', 'producer', 'dj', 'mc']
+        if not any(w in desc for w in music_words) and not any(w in extract[:300].lower() for w in music_words):
+            return None
+
+        display_name = data.get('title', query.title())
+        description = data.get('description', '')
+
+        genre = None
+        country = None
+        debut = None
+
+        genre_patterns = [
+            ('pop', 'Pop'), ('rock', 'Rock'), ('hip hop', 'Hip-Hop'), ('hip-hop', 'Hip-Hop'),
+            ('rap', 'Rap'), ('r&b', 'R&B'), ('rnb', 'R&B'), ('soul', 'Soul'),
+            ('country', 'Country'), ('jazz', 'Jazz'), ('electronic', 'Electronic'),
+            ('latin', 'Latin'), ('reggaeton', 'Reggaeton'), ('folk', 'Folk'),
+            ('alternative', 'Alternative'), ('indie', 'Indie'), ('metal', 'Metal'),
+            ('punk', 'Punk'), ('blues', 'Blues'), ('funk', 'Funk'), ('dance', 'Dance'),
+            ('afrobeat', 'Afrobeats'), ('reggae', 'Reggae'), ('k-pop', 'K-Pop'),
+            ('kpop', 'K-Pop'), ('amapiano', 'Amapiano'),
+        ]
+        extract_lower = extract[:500].lower()
+        found_genres = []
+        for pattern, label in genre_patterns:
+            if pattern in extract_lower or pattern in desc:
+                if label not in found_genres:
+                    found_genres.append(label)
+        if found_genres:
+            genre = ' / '.join(found_genres[:2])
+
+        country_patterns = [
+            ('american', 'USA'), ('british', 'UK'), ('canadian', 'Canada'),
+            ('australian', 'Australia'), ('nigerian', 'Nigeria'), ('jamaican', 'Jamaica'),
+            ('south african', 'South Africa'), ('colombian', 'Colombia'),
+            ('puerto rican', 'Puerto Rico'), ('barbadian', 'Barbados'),
+            ('korean', 'South Korea'), ('french', 'France'), ('german', 'Germany'),
+            ('irish', 'Ireland'), ('spanish', 'Spain'), ('brazilian', 'Brazil'),
+            ('mexican', 'Mexico'), ('trinidadian', 'Trinidad'),
+            ('english', 'UK'), ('scottish', 'UK'), ('welsh', 'UK'),
+        ]
+        for pattern, label in country_patterns:
+            if pattern in desc or pattern in extract_lower:
+                country = label
+                break
+
+        import re
+        born_match = re.search(r'born.*?(\d{4})', extract[:200])
+        if born_match:
+            birth_year = int(born_match.group(1))
+            debut = f"~{birth_year + 18}"
+
+        name_slug = display_name.replace(' ', '+')
+        wiki_url = f"https://en.wikipedia.org/wiki/{display_name.replace(' ', '_')}"
+        yt_url = f"https://www.youtube.com/results?search_query={name_slug}+official"
+
+        lines = [f"🎤 {display_name}", "━━━━━━━━━━━━━━━━━━━━━\n"]
+        if genre:
+            lines.append(f"🎵 Genre: {genre}")
+        if debut:
+            lines.append(f"📅 Debut: {debut}")
+        if country:
+            lines.append(f"🌍 From: {country}")
+        lines.append(f"\n🔗 Links:")
+        lines.append(f"  📚 {wiki_url}")
+        lines.append(f"  🎬 {yt_url}")
+        lines.append(f"\n━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("🔥 Pick a song below to explore:")
+
+        top_songs = _fetch_artist_top_songs(display_name)
+
+        return {
+            'name': display_name,
+            'text': '\n'.join(lines),
+            'top_songs': top_songs,
+        }
+    except Exception as e:
+        logger.warning(f"Fallback artist profile error for '{query}': {e}")
+        return None
+
+
 def artist_command(update: Update, context: CallbackContext):
     """Handle the /artist command."""
     user_id = update.effective_user.id
@@ -1198,18 +1296,11 @@ def artist_command(update: Update, context: CallbackContext):
         if info:
             update.message.reply_text(format_artist_info(info), reply_markup=artist_buttons(info['name'], info.get('top_songs', [])))
         else:
-            from services.ai_info_service import get_person_info
-            wiki_info = get_person_info(query)
-            if wiki_info:
-                response = (
-                    f"📚 *{wiki_info['title']}*\n"
-                    "━━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"{wiki_info['info']}"
-                )
-                try:
-                    update.message.reply_text(response, parse_mode='Markdown', disable_web_page_preview=True)
-                except TelegramError:
-                    update.message.reply_text(response.replace('*', ''), disable_web_page_preview=True)
+            profile = _build_fallback_artist_profile(query)
+            if profile:
+                top_songs = profile.get('top_songs', [])
+                markup = artist_buttons(profile['name'], top_songs) if top_songs else None
+                update.message.reply_text(profile['text'], disable_web_page_preview=True, reply_markup=markup)
             else:
                 update.message.reply_text(
                     f"😕 I couldn't find info for \"{query}\".\n\n"
