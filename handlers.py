@@ -859,8 +859,7 @@ def analyze_command(update: Update, context: CallbackContext):
 
         try:
             btn_query = display_title if display_title else query
-            btn_artist = artist if artist else None
-            markup = analyze_buttons(btn_query, artist=btn_artist)
+            markup = analyze_buttons(btn_query)
         except Exception:
             markup = None
         update.message.reply_text(response, reply_markup=markup)

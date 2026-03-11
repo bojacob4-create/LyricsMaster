@@ -62,10 +62,6 @@ TRANSLATE_KEYWORDS = [
     'hindi', 'to hindi',
 ]
 
-WIKI_KEYWORDS = [
-    'wiki', 'wikipedia', 'wiki page', 'look up wiki',
-]
-
 ANALYZE_KEYWORDS = [
     'analyze', 'analysis', 'break down', 'breakdown',
     'deep dive', 'detailed analysis',
@@ -264,10 +260,6 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
     if _match_keywords(text, TRANSLATE_KEYWORDS):
         query = _clean_query_translate(text)
         return 'translate', query
-
-    if _match_keywords(text, WIKI_KEYWORDS):
-        query = _clean_query(text, ['wiki', 'wikipedia', 'wiki page', 'look up'])
-        return 'wiki', query
 
     if _match_keywords(text, ANALYZE_KEYWORDS):
         query = _clean_query(text, ['analyze', 'analysis', 'break down', 'breakdown', 'deep dive', 'detailed'])
