@@ -1,0 +1,100 @@
+I would like to improve the YouTube behavior in the artist-only analyze interface.
+
+The Similar Songs improvements are working perfectly and should not be modified.
+
+Please read carefully and only apply the YouTube improvement described below.
+
+⸻
+
+Current Situation
+
+When the user runs an artist-only analyze command, for example:
+
+analyze Drake
+
+and presses the YouTube button, the bot currently:
+
+• queries the YouTube API
+• fetches the first video
+• displays that video
+
+This works technically but often returns a random or older video, which is not ideal for user experience.
+
+For artist-only context, it is better to let the user choose the type of YouTube content.
+
+⸻
+
+Requested Improvement
+
+When the user presses YouTube under an artist-only analyze interface, instead of immediately returning a video, the bot should show two buttons:
+
+▶️ Top Videos
+🎵 Official Music Videos
+
+⸻
+
+Button Behavior
+
+▶️ Top Videos
+
+This button should open a YouTube search link like:
+
+https://www.youtube.com/results?search_query=Drake+top+videos
+
+This allows the user to see the most popular videos ranked by YouTube.
+
+⸻
+
+🎵 Official Music Videos
+
+This button should open a YouTube search link like:
+
+https://www.youtube.com/results?search_query=Drake+official+music+videos
+
+This ensures the user sees official music releases instead of random clips.
+
+⸻
+
+Important Context Rule
+
+This change should apply ONLY when the analyze query contains an artist name without a song.
+
+Example:
+
+analyze Drake
+
+In this case show the two YouTube options.
+
+⸻
+
+If the analyze query already contains a specific song, for example:
+
+analyze Drake - Hotline Bling
+
+then the existing behavior should remain unchanged:
+
+The bot should continue returning the direct YouTube video for that specific song.
+
+⸻
+
+Do NOT modify
+
+Please do not change:
+
+• Similar Songs logic
+• recommendation system
+• analyze command
+• lyrics system
+• artist profile generation
+• song dashboard
+• existing button callbacks unrelated to YouTube
+
+Only adjust the YouTube behavior in the artist-only analyze interface.
+
+⸻
+
+After Implementation Please Report
+
+• exact files modified
+• confirmation that no unrelated systems were changed
+• confirmation that song-specific YouTube behavior remains unchanged

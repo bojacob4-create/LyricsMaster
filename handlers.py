@@ -1,6 +1,6 @@
 import logging
 import os
-from telegram import Update, BotCommand
+from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackContext, MessageHandler, Filters, CommandHandler
 from telegram.error import TelegramError
 from buttons import (
@@ -794,6 +794,26 @@ def youtube_command(update: Update, context: CallbackContext):
                 "• /youtube Perfect Ed Sheeran\n"
                 "• /youtube Perfect\n\n"
                 "Let's try again! 🎵"
+            )
+            return
+
+        if _is_artist_only_query(query):
+            from urllib.parse import quote
+            clean = clean_input(query)
+            info = get_artist_info(clean)
+            artist_display = info['name'] if info else clean.title()
+            slug = quote(artist_display)
+            top_url = f"https://www.youtube.com/results?search_query={slug}+top+videos"
+            official_url = f"https://www.youtube.com/results?search_query={slug}+official+music+videos"
+            markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("▶️ Top Videos", url=top_url)],
+                [InlineKeyboardButton("🎵 Official Music Videos", url=official_url)],
+            ])
+            update.message.reply_text(
+                f"🎬 YouTube — {artist_display}\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "What would you like to watch?",
+                reply_markup=markup
             )
             return
 
