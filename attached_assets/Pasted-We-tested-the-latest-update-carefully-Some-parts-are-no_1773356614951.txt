@@ -1,0 +1,119 @@
+We tested the latest update carefully.
+
+Some parts are now working well and should remain unchanged:
+	•	subscribe → unsubscribe → subscribe flow is now fixed
+	•	daily count selection issue is fixed
+	•	/recommend and Similar output structure improvements are useful
+	•	button placement rules are still good
+
+However, we found new issues that need careful correction without breaking the currently working systems.
+
+Issue 1 — MP3 became less reliable after the latest changes
+
+Before the latest MP3 matching update, the MP3 feature was working better for us.
+
+Now we are seeing failures like:
+
+“MP3 Not Available
+Couldn’t find a working audio source for this song.
+Please try again later.”
+
+This suggests that the current source-resolution flow is now too weak or too slow.
+
+Required MP3 change
+
+Please remove YouTube entirely from the MP3 source search flow.
+
+At this stage, YouTube appears to be causing:
+	•	blocking
+	•	slowdowns
+	•	failed conversions
+	•	instability
+
+For the MP3 button, please use only non-YouTube audio/source providers.
+
+Suggested provider order:
+	1.	SoundCloud
+	2.	Audiomack
+	3.	Bandcamp
+	4.	Archive.org
+	5.	Jamendo
+
+If needed, you may add other clean non-YouTube sources, but please do not use YouTube in the MP3 resolution flow.
+
+Important MP3 behavior requirements
+	•	prioritize speed and reliability over aggressive searching
+	•	fail fast if no clean source is found
+	•	avoid long retries
+	•	avoid excessive source chaining that causes lag
+	•	keep the user-facing flow simple
+
+Issue 2 — bot is slower and sometimes sends duplicate outputs
+
+After the recent changes, the bot feels slower.
+
+We also noticed that sometimes:
+	•	one command
+	•	or one button press
+
+results in two outputs instead of one.
+
+Please investigate this carefully.
+
+Possible causes may include:
+	•	duplicate execution path
+	•	retries triggering second response
+	•	long-running fallback chains
+	•	response timeout / callback overlap
+
+Required fix
+
+Please make the bot more responsive and ensure:
+	•	one command = one response
+	•	one button press = one response
+	•	no duplicate outputs
+	•	no unnecessary waits when source lookups fail
+
+Issue 3 — /recommend and Similar should use a wider and more up-to-date recommendation pool
+
+We do not want /recommend or Similar suggestions to be taken from a narrow fixed pool of songs.
+
+Please make sure the recommendation candidate pool is:
+	•	broader
+	•	fresher
+	•	more up to date
+	•	more varied
+
+The recommendation logic itself is good, so do not change the user-facing Similar / recommend behavior.
+
+We only want the underlying candidate pool to be wider and more current.
+
+If possible, recommendations should use a larger current music selection rather than a small static set.
+
+Important — do not break what is currently working
+
+Please do not change:
+	•	subscribe / unsubscribe behavior (it is now fixed)
+	•	button placement rules
+	•	daily count selection
+	•	the current general UI structure
+	•	Similar / recommend user flow itself
+
+Only fix:
+	1.	MP3 reliability by removing YouTube from MP3 sources
+	2.	bot lag / duplicate output issue
+	3.	recommendation candidate freshness and breadth
+
+Please test manually before reporting completion
+
+Please manually test:
+	•	MP3 button on at least 3 songs
+	•	one button press should produce only one response
+	•	one command should produce only one response
+	•	/recommend should still work normally
+	•	Similar should still work normally
+
+And report back with:
+	•	exact files modified
+	•	what was manually tested
+	•	confirmation that unrelated working systems were not changed

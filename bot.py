@@ -55,6 +55,8 @@ class TelegramBotWorker:
         self.running = True
         self.lock_file = "/tmp/telegram_bot.lock"
         self.scheduler = None
+        self._conflict_count = 0
+        self._max_conflicts = 10  # Exit if another instance is consistently winning
         
         # Check if another instance is running
         if self._is_another_instance_running():
@@ -152,8 +154,28 @@ class TelegramBotWorker:
     def error_handler(self, update: Update, context: CallbackContext):
         """Handle bot errors."""
         try:
+            error_str = str(context.error)
+
+            if 'Conflict' in error_str and 'getUpdates' in error_str:
+                self._conflict_count += 1
+                if self._conflict_count >= self._max_conflicts:
+                    logger.error(
+                        f"Detected {self._conflict_count} consecutive polling conflicts — "
+                        "a deployed instance has priority. This dev instance is shutting down."
+                    )
+                    self.running = False
+                    if self.updater:
+                        try:
+                            self.updater.stop()
+                        except Exception:
+                            pass
+                return
+
+            # Reset conflict count on any non-Conflict error
+            self._conflict_count = 0
+
             if isinstance(context.error, NetworkError):
-                logger.warning(f"Network error occurred: {str(context.error)}")
+                logger.warning(f"Network error occurred: {error_str}")
                 self.handle_connection_error()
                 return
             elif isinstance(context.error, TimedOut):

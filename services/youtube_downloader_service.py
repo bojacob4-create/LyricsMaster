@@ -164,78 +164,33 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
             "• Wait a minute and retry"
         )
 
-_SKIP_KEYWORDS = ['official video', 'music video', 'mv', 'vevo', 'live performance',
-                   'live at', 'concert', 'tour', 'karaoke', 'instrumental', 'cover by']
-
-
-def _score_entry(entry: dict) -> int:
-    """Score a search entry — higher is better for audio quality."""
-    title = (entry.get('title') or '').lower()
-    score = 0
-    for kw in ['audio', 'lyrics', 'official audio', 'full song']:
-        if kw in title:
-            score += 2
-    for kw in _SKIP_KEYWORDS:
-        if kw in title:
-            score -= 3
-    dur = entry.get('duration') or 0
-    if 120 <= dur <= 360:
-        score += 1
-    return score
-
-
-def _try_audio_download(source_query: str, file_prefix: str) -> Tuple[bool, any]:
-    """Attempt audio download from a single source query, with candidate scoring."""
-    info_opts = {
-        'format': 'bestaudio/best',
-        'quiet': True,
-        'no_warnings': True,
-        'socket_timeout': 20,
-        'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
-    }
-    with yt_dlp.YoutubeDL(info_opts) as ydl:
-        meta = ydl.extract_info(source_query, download=False)
-
-    entries = []
-    if isinstance(meta, dict):
-        if meta.get('entries'):
-            entries = [e for e in meta['entries'] if e]
-        else:
-            entries = [meta]
-
-    if not entries:
-        raise FileNotFoundError("no entries returned from search")
-
-    entries.sort(key=_score_entry, reverse=True)
-    chosen = entries[0]
-
-    duration = chosen.get('duration', 0) or 0
-    if duration > 600:
-        raise ValueError(f"too_long:{duration}")
-
-    direct_url = chosen.get('webpage_url') or chosen.get('url')
-    if not direct_url:
-        raise FileNotFoundError("no URL for chosen entry")
-
+def _try_sc_download(source_query: str, file_prefix: str) -> Tuple[bool, any]:
+    """Download audio from SoundCloud via a single yt-dlp call."""
     output_template = f'{file_prefix}.%(ext)s'
-    dl_opts = {
+    ydl_opts = {
         'format': 'bestaudio/best',
         'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
         'outtmpl': output_template,
         'restrictfilenames': True,
-        'socket_timeout': 30,
-        'retries': 2,
+        'socket_timeout': 25,
+        'retries': 1,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
-            'preferredquality': '192',
+            'preferredquality': '128',
         }],
-        'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
     }
-    with yt_dlp.YoutubeDL(dl_opts) as ydl:
-        ydl.download([direct_url])
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(source_query, download=True)
+
+    if isinstance(info, dict) and info.get('entries'):
+        info = info['entries'][0]
+
+    duration = info.get('duration', 0) or 0
+    if duration > 600:
+        raise ValueError(f"too_long:{duration}")
 
     mp3_path = os.path.join(os.getcwd(), f'{file_prefix}.mp3')
     if not os.path.exists(mp3_path):
@@ -246,27 +201,26 @@ def _try_audio_download(source_query: str, file_prefix: str) -> Tuple[bool, any]
         else:
             raise FileNotFoundError("audio file not found after download")
 
-    return True, (mp3_path, chosen.get('title', 'Audio'), chosen.get('uploader', 'Unknown'), duration)
+    return True, (mp3_path, info.get('title', 'Audio'), info.get('uploader', 'Unknown'), duration)
 
 
 def download_audio_for_song(artist: str, song: str) -> Tuple[bool, any]:
-    """Download MP3 for a song by trying multiple audio sources in order."""
+    """Download MP3 for a song using SoundCloud only (no YouTube)."""
     import hashlib
     query = f"{artist} - {song}" if song else artist
     file_prefix = 'audio_' + hashlib.md5(query.encode()).hexdigest()[:10]
 
-    audio_query = f"{query} audio"
+    # Try SoundCloud with two query variations before giving up
     sources = [
-        f"ytsearch3:{audio_query}",
         f"scsearch1:{query}",
-        f"ytsearch3:{query}",
+        f"scsearch1:{song} {artist}" if song else None,
     ]
     sources = [s for s in sources if s]
 
     for source in sources:
         try:
-            logger.info(f"MP3: trying source '{source}'")
-            ok, data = _try_audio_download(source, file_prefix)
+            logger.info(f"MP3: trying SoundCloud source '{source}'")
+            ok, data = _try_sc_download(source, file_prefix)
             if ok:
                 mp3_path, title, uploader, duration = data
                 file_size = os.path.getsize(mp3_path)
