@@ -1,0 +1,171 @@
+We want to implement several careful improvements to the bot while preserving all current functionality. The bot is currently working very well, so the goal is polish and reliability improvements only, not architectural changes.
+
+Please follow these instructions carefully and do not modify unrelated systems.
+
+⸻
+
+1 Remove the /download command completely
+
+The /download command currently depends on YouTube extraction which fails frequently due to YouTube restrictions.
+
+This creates a bad user experience because users see errors and assume the bot is broken.
+
+Please:
+
+• Remove the /download command
+• Remove it from /start and /help menus
+• Remove its handler logic if present
+
+No other functionality should be affected.
+
+⸻
+
+2 Convert /mp3 into a contextual button
+
+Instead of a command, MP3 should become a button inside song outputs.
+
+The goal is:
+
+Users press 🎧 MP3 and the bot converts the song automatically.
+
+The user should not need to provide a YouTube link.
+
+⸻
+
+MP3 button behavior
+
+When the user presses 🎧 MP3, the bot should:
+	1.	Use the known Artist + Song from the current context
+	2.	Internally search for an audio source using multiple providers (not only YouTube)
+
+Example search sources:
+
+• YouTube
+• SoundCloud
+• Audiomack
+• other available audio mirrors
+	3.	Use the first valid working source
+	4.	Convert it to MP3
+	5.	Send the MP3 file directly to the user
+
+During conversion the bot can send a short message like:
+
+🎧 Converting to MP3...
+
+Then deliver the audio.
+
+⸻
+
+3 MP3 button placement rules
+
+The MP3 button should only appear when the output represents one specific song.
+
+It must NOT appear in outputs that show multiple songs.
+
+⸻
+
+MP3 should appear in:
+
+• /song results
+• /analyze results
+• daily subscription song output
+• similar-song result after a specific song is chosen
+• any output where the bot clearly knows:
+
+Artist - Song
+
+
+⸻
+
+MP3 should NOT appear in:
+
+• /trending
+• /top
+• /recommend lists
+• artist profiles
+• any multi-song list
+
+⸻
+
+4 Improve the /subscribe system
+
+Currently /subscribe works, but we want to add improvements.
+
+⸻
+
+A Add daily song count options
+
+When a user subscribes, show buttons:
+
+1 song per day
+2 songs per day
+3 songs per day
+
+The user chooses how many daily discoveries they want.
+
+Maximum allowed: 3 songs per day
+
+Store the value in the database for that user.
+
+⸻
+
+B Prevent duplicate subscriptions
+
+If a user already subscribed and sends /subscribe again, the bot should NOT re-subscribe them.
+
+Instead reply with something like:
+
+🎵 You're already subscribed!
+
+Your daily song discoveries are active.
+
+The original subscription message should only appear when the user subscribes for the first time.
+
+⸻
+
+5 Improve Daily Song output
+
+The current Daily Song format is simpler than the /song command output.
+
+We want the Daily Song message to reuse the same formatting style used by /song.
+
+The only addition should be a header like:
+
+🎵 Daily Discovery
+
+After that, the output should follow the same structure used in /song.
+
+Also ensure the MP3 button appears here since it is a single-song output.
+
+⸻
+
+6 Improve /unsubscribe
+
+The current message is very basic.
+
+Replace it with something slightly more polished like:
+
+👋 You're unsubscribed.
+
+Daily song discovery has been stopped.
+
+You can rejoin anytime with:
+/subscribe 🎵
+
+No other behavior changes are required.
+
+⸻
+
+Important constraints
+
+Please follow these constraints strictly:
+
+• Do not change the Similar Songs system
+• Do not modify Analyze logic
+• Do not modify Artist Profile system
+• Do not modify YouTube button logic
+• Do not change existing commands unless specified above
+
+These systems are already working well.
+
+This task is only about UX improvements and reliability.

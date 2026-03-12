@@ -20,6 +20,9 @@ def lyrics_buttons(query):
             InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", query)),
             InlineKeyboardButton("🎧 Similar", callback_data=_cb("recommend", query)),
         ],
+        [
+            InlineKeyboardButton("🎧 MP3", callback_data=_cb("mp3", query)),
+        ],
     ])
 
 
@@ -35,6 +38,7 @@ def song_dashboard_buttons(query):
         ],
         [
             InlineKeyboardButton("🎧 Similar", callback_data=_cb("recommend", query)),
+            InlineKeyboardButton("🎧 MP3", callback_data=_cb("mp3", query)),
         ],
     ])
 
@@ -82,6 +86,7 @@ def recommend_buttons(query):
         ],
         [
             InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", query)),
+            InlineKeyboardButton("🎧 MP3", callback_data=_cb("mp3", query)),
         ],
     ])
 
@@ -105,6 +110,9 @@ def analyze_buttons(query, artist_name=None):
         [
             InlineKeyboardButton("👤 Artist", callback_data=_cb("artist", artist_val)),
             InlineKeyboardButton("🎧 Similar Songs", callback_data=_cb("recommend", query)),
+        ],
+        [
+            InlineKeyboardButton("🎧 MP3", callback_data=_cb("mp3", query)),
         ],
     ])
 
@@ -156,4 +164,28 @@ def artist_analyze_buttons(artist_name):
             InlineKeyboardButton("📺 YouTube", callback_data=_cb("youtube", artist_name)),
             InlineKeyboardButton("🎧 Similar Songs", callback_data=_cb("recommend", artist_name)),
         ],
+    ])
+
+
+def daily_song_buttons(query):
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🎵 Full Lyrics", callback_data=_cb("lyrics", query)),
+            InlineKeyboardButton("📊 Analyze", callback_data=_cb("analyze", query)),
+        ],
+        [
+            InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", query)),
+            InlineKeyboardButton("🎧 MP3", callback_data=_cb("mp3", query)),
+        ],
+        [
+            InlineKeyboardButton("🎧 Similar Songs", callback_data=_cb("recommend", query)),
+        ],
+    ])
+
+
+def subscribe_count_buttons():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("1 song per day", callback_data="subcount:1")],
+        [InlineKeyboardButton("2 songs per day", callback_data="subcount:2")],
+        [InlineKeyboardButton("3 songs per day", callback_data="subcount:3")],
     ])

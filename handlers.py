@@ -6,7 +6,8 @@ from telegram.error import TelegramError
 from buttons import (
     lyrics_buttons, song_dashboard_buttons, artist_buttons, artist_summary_buttons,
     recommend_buttons, song_list_buttons, ambiguous_buttons,
-    analyze_buttons, stats_buttons, artist_analyze_buttons, recommend_pick_buttons
+    analyze_buttons, stats_buttons, artist_analyze_buttons, recommend_pick_buttons,
+    daily_song_buttons, subscribe_count_buttons
 )
 from services.lyrics_service import get_song_lyrics
 from services.translator_service import (
@@ -63,8 +64,6 @@ def start_command(update: Update, context: CallbackContext):
         "🔝 */top* — Top songs by genre\n"
         "🎲 */random* — Random song discovery\n"
         "🎬 */youtube* — Find the music video\n"
-        "📥 */download* — Download YouTube videos\n"
-        "🎵 */mp3* — Download audio as MP3\n"
         "🎮 */quiz* — Lyrics guessing game\n"
         "🔔 */subscribe* — Daily song picks\n\n"
         "*Try it now:*\n"
@@ -114,9 +113,6 @@ def help_command(update: Update, context: CallbackContext):
         "*🎮 Fun*\n"
         "▫️ */quiz* — Lyrics guessing game (40 songs!)\n"
         "▫️ */endquiz* — End current quiz\n\n"
-        "*📥 Media*\n"
-        "▫️ */download* — Download YouTube videos\n"
-        "▫️ */mp3* — Download audio as MP3\n\n"
         "*🔔 Daily Updates*\n"
         "▫️ */subscribe* — Get daily song picks\n"
         "▫️ */unsubscribe* — Stop daily updates\n\n"
@@ -264,8 +260,6 @@ def natural_language_handler(update: Update, context: CallbackContext):
             'recommend': recommend_command,
             'artist': artist_command,
             'youtube': youtube_command,
-            'download': download_command,
-            'mp3': mp3_command,
             'trending': trending_command,
             'translate': translate_lyrics_command,
             'analyze': analyze_command,
@@ -302,6 +296,27 @@ def callback_query_handler(update: Update, context: CallbackContext):
     _pending_recommend_artist.pop(user_id, None)
     logger.info(f"Callback from user {user_id}: action='{action}', param='{param}'")
 
+    if action == 'subcount':
+        try:
+            count = int(param)
+            chat_id = update.effective_chat.id
+            subscribe_user(user_id, chat_id, daily_count=count)
+            query.message.reply_text(
+                f"🔔 You're subscribed!\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"You'll receive {count} song{'s' if count > 1 else ''} per day.\n\n"
+                "Every day you'll get curated songs with:\n"
+                "• Full lyrics and mood analysis\n"
+                "• Word statistics and patterns\n"
+                "• Fresh discoveries to explore\n\n"
+                "Your first pick arrives tomorrow! 🎶\n\n"
+                "To stop: /unsubscribe"
+            )
+        except Exception as e:
+            logger.error(f"Error in subcount callback for user {user_id}: {e}")
+            query.message.reply_text("😓 Something went wrong. Please try /subscribe again.")
+        return
+
     context.args = param.split() if param else []
 
     handler_map = {
@@ -309,7 +324,6 @@ def callback_query_handler(update: Update, context: CallbackContext):
         'recommend': recommend_command,
         'artist': artist_command,
         'youtube': youtube_command,
-        'download': download_command,
         'mp3': mp3_command,
         'trending': trending_command,
         'translate': translate_lyrics_command,
@@ -694,27 +708,35 @@ def translate_lyrics_command(update: Update, context: CallbackContext):
 
 
 def send_daily_song(context: CallbackContext):
-    """Send daily song to all subscribed users."""
+    """Send daily song(s) to all subscribed users."""
     try:
         logger.info("Starting daily song distribution")
 
-        song, lyrics, analysis = get_daily_song()
-        if not all([song, lyrics, analysis]):
-            logger.error("Failed to get daily song")
-            return
+        subscribed = get_subscribed_users()
+        logger.info(f"Sending daily songs to {len(subscribed)} users")
 
-        message = format_daily_song(song, lyrics, analysis)
-
-        # Send to all subscribed users
-        subscribed_users = get_subscribed_users()
-
-        for user_id, data in subscribed_users.items():
+        for user_id, data in subscribed.items():
             try:
-                context.bot.send_message(
-                    chat_id=data["chat_id"],
-                    text=message
-                )
-                logger.info(f"Sent daily song to user {user_id}")
+                daily_count = data.get("daily_count", 1)
+                sent = set()
+                for _ in range(daily_count):
+                    song, lyrics, analysis = get_daily_song()
+                    if not all([song, lyrics, analysis]):
+                        logger.error(f"Failed to get daily song for user {user_id}")
+                        continue
+                    song_key = f"{song['artist']} - {song['song']}"
+                    if song_key in sent:
+                        continue
+                    sent.add(song_key)
+                    message = format_daily_song(song, lyrics, analysis)
+                    btn_query = song_key
+                    markup = daily_song_buttons(btn_query)
+                    context.bot.send_message(
+                        chat_id=data["chat_id"],
+                        text=message,
+                        reply_markup=markup
+                    )
+                logger.info(f"Sent {len(sent)} daily song(s) to user {user_id}")
             except Exception as e:
                 logger.error(f"Failed to send daily song to user {user_id}: {str(e)}")
 
@@ -729,23 +751,24 @@ def subscribe_daily_command(update: Update, context: CallbackContext):
     try:
         logger.info(f"User {user_id} requesting daily song subscription")
 
-        if subscribe_user(user_id, chat_id):
+        existing = get_subscribed_users()
+        if user_id in existing and existing[user_id].get("active"):
+            count = existing[user_id].get("daily_count", 1)
             update.message.reply_text(
-                "🔔 You're subscribed!\n"
-                "━━━━━━━━━━━━━━━━━━━━━\n\n"
-                "Every day you'll get a curated song with:\n"
-                "• Full lyrics and mood analysis\n"
-                "• Word statistics and patterns\n"
-                "• A fresh discovery to explore\n\n"
-                "Your first pick arrives tomorrow! 🎶\n\n"
+                "🎵 You're already subscribed!\n\n"
+                f"Your daily song {'discoveries are' if count > 1 else 'discovery is'} active "
+                f"({count} song{'s' if count > 1 else ''} per day).\n\n"
                 "To stop: /unsubscribe"
             )
-            logger.info(f"Successfully subscribed user {user_id}")
-        else:
-            update.message.reply_text(
-                "😓 Oops! Something went wrong while subscribing.\n"
-                "Please try again in a moment! 🔄"
-            )
+            return
+
+        update.message.reply_text(
+            "🔔 How many songs would you like per day?\n\n"
+            "Choose below:",
+            reply_markup=subscribe_count_buttons()
+        )
+        logger.info(f"Shown subscribe count options to user {user_id}")
+
     except Exception as e:
         logger.error(f"Error in subscribe command for user {user_id}: {str(e)}")
         update.message.reply_text(
@@ -762,8 +785,10 @@ def unsubscribe_daily_command(update: Update, context: CallbackContext):
 
         if unsubscribe_user(user_id):
             update.message.reply_text(
-                "👋 Unsubscribed from daily songs.\n\n"
-                "You can re-subscribe anytime with /subscribe 🎵"
+                "👋 You're unsubscribed.\n\n"
+                "Daily song discovery has been stopped.\n\n"
+                "You can rejoin anytime with:\n"
+                "/subscribe 🎵"
             )
             logger.info(f"Successfully unsubscribed user {user_id}")
         else:
@@ -1166,38 +1191,52 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
             update.message.reply_text(error_message)
 
 def mp3_command(update: Update, context: CallbackContext):
-    """Handle the /mp3 command to download audio as MP3."""
+    """Handle the MP3 button — convert a known song to MP3."""
     user_id = update.effective_user.id
     try:
         if not context.args:
             update.message.reply_text(
-                "🎵 Download as MP3\n"
-                "━━━━━━━━━━━━━━━━━━━━━\n\n"
-                "Usage: /mp3 [YouTube URL]\n\n"
-                "Supported formats:\n"
-                "• youtube.com/watch?v=...\n"
-                "• youtu.be/...\n"
-                "• youtube.com/shorts/...\n\n"
-                "I'll extract the audio and send it as MP3."
+                "🎧 Use the MP3 button on any song result to get the audio file."
             )
             return
 
-        url = context.args[0]
-        logger.info(f"User {user_id} requested MP3 download: {url}")
+        raw = " ".join(context.args)
+        logger.info(f"User {user_id} requested MP3: '{raw}'")
 
         processing_message = update.message.reply_text(
-            "🎵 Converting to MP3...\n"
+            "🎧 Converting to MP3...\n"
             "━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "⏳ Extracting audio and converting.\n"
+            "⏳ Finding audio source and converting.\n"
             "This may take 30–60 seconds."
         )
+
+        url = None
+        if raw.startswith('http://') or raw.startswith('https://'):
+            url = raw
+        else:
+            if ' - ' in raw:
+                parts = raw.split(' - ', 1)
+                artist_q, song_q = parts[0].strip(), parts[1].strip()
+            else:
+                artist_q, song_q = raw.strip(), ''
+            url = get_youtube_link(artist_q, song_q)
+            if not url and song_q:
+                url = get_youtube_link(song_q, '')
+            if not url:
+                url = get_youtube_link(raw, '')
+
+        if not url:
+            processing_message.edit_text(
+                "😕 Couldn't find an audio source for this song.\n"
+                "Please try again later! 🔄"
+            )
+            return
 
         success, result = download_youtube_audio(url)
 
         if success:
             file_path, info_message, title, uploader = result
             processing_message.edit_text(info_message)
-
             try:
                 with open(file_path, 'rb') as audio_file:
                     update.message.reply_audio(
@@ -1212,7 +1251,6 @@ def mp3_command(update: Update, context: CallbackContext):
                     "❌ The MP3 was created but couldn't be sent.\n"
                     "It may be too large for Telegram (50MB limit)."
                 )
-
             cleanup_video(file_path)
         else:
             processing_message.edit_text(result)
@@ -1220,7 +1258,7 @@ def mp3_command(update: Update, context: CallbackContext):
     except Exception as e:
         logger.error(f"Error in mp3 command for user {user_id}: {str(e)}")
         update.message.reply_text(
-            "😓 Something went wrong with the MP3 download.\n"
+            "😓 Something went wrong with the MP3 conversion.\n"
             "Please try again later! 🔄"
         )
 
@@ -1727,8 +1765,6 @@ def main():
         dp.add_handler(CommandHandler("analyze", analyze_command))
         dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
         dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
-        dp.add_handler(CommandHandler("download", download_command))
-        dp.add_handler(CommandHandler("mp3", mp3_command))
         dp.add_handler(CommandHandler("wiki", wiki_command))
         dp.add_handler(CommandHandler("artist", artist_command))
         dp.add_handler(CommandHandler("trending", trending_command))
@@ -1753,8 +1789,6 @@ def main():
             BotCommand("top", "🔝 Top songs by genre"),
             BotCommand("random", "🎲 Random song discovery"),
             BotCommand("youtube", "🎬 Find the music video"),
-            BotCommand("download", "📥 Download YouTube video"),
-            BotCommand("mp3", "🎵 Download as MP3"),
             BotCommand("quiz", "🎮 Lyrics guessing game"),
             BotCommand("endquiz", "End current quiz"),
             BotCommand("wiki", "📚 Artist Wikipedia info"),

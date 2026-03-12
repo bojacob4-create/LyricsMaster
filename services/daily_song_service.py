@@ -89,16 +89,18 @@ def get_daily_song() -> Tuple[Dict, str, Dict]:
         logger.error(f"Error getting daily song: {str(e)}")
         return None, None, None
 
-def subscribe_user(user_id: int, chat_id: int) -> bool:
+def subscribe_user(user_id: int, chat_id: int, daily_count: int = 1) -> bool:
     """Subscribe a user to daily songs."""
     try:
+        daily_count = max(1, min(3, daily_count))
         subscribed_users[user_id] = {
             "chat_id": chat_id,
             "subscribed_at": str(datetime.now()),
-            "active": True
+            "active": True,
+            "daily_count": daily_count,
         }
         _save_subscribers(subscribed_users)
-        logger.info(f"User {user_id} subscribed to daily songs")
+        logger.info(f"User {user_id} subscribed to daily songs (count={daily_count})")
         return True
     except Exception as e:
         logger.error(f"Error subscribing user {user_id}: {str(e)}")
@@ -122,7 +124,7 @@ def get_subscribed_users() -> Dict:
             if data.get("active", False)}
 
 def format_daily_song(song: Dict, lyrics: str, analysis: Dict) -> str:
-    """Format daily song message."""
+    """Format daily song message matching the /song command style."""
     mood_emoji = {
         'happy': '😊',
         'sad': '😢',
@@ -132,20 +134,34 @@ def format_daily_song(song: Dict, lyrics: str, analysis: Dict) -> str:
     }.get(analysis["mood"], '🎵')
 
     stats = analysis["stats"]
+    display_title = f"{song['artist']} - {song['song']}"
+
+    lyrics_lines = [l.strip() for l in lyrics.strip().split('\n') if l.strip()]
+    preview_lines = lyrics_lines[:4]
+    lyrics_preview = '\n'.join(f"  {l}" for l in preview_lines)
+    if len(lyrics_lines) > 4:
+        lyrics_preview += "\n  ..."
+
+    vocab_pct = stats.get('vocabulary_richness', 0)
+    if vocab_pct >= 70:
+        vocab_label = "Rich"
+    elif vocab_pct >= 50:
+        vocab_label = "Moderate"
+    else:
+        vocab_label = "Repetitive"
 
     return (
-        "🎵 Daily Song Discovery\n"
+        "🎵 Daily Discovery\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Today's Pick: {song['artist']} — {song['song']}\n\n"
-        f"Mood: {mood_emoji} {analysis['mood'].title()}\n"
-        f"📝 {stats['total_lines']} lines  •  {stats['total_words']} words\n"
-        f"🎨 Vocabulary: {stats['vocabulary_richness']}%\n\n"
-        "── Preview ──\n\n"
-        f"{lyrics[:800]}\n\n"
+        f"🎵 {display_title}\n\n"
+        f"📝 Lyrics Preview:\n{lyrics_preview}\n\n"
+        f"📊 Quick Stats:\n"
+        f"  {mood_emoji} Mood: {analysis['mood'].title()}\n"
+        f"  📝 Words: {stats['total_words']} | Lines: {stats['total_lines']}\n"
+        f"  🧠 Vocabulary: {vocab_pct}% ({vocab_label})\n\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🎤 /lyrics {song['artist']} - {song['song']}\n"
-        f"📊 /analyze {song['artist']} - {song['song']}\n"
-        f"🎵 /recommend {song['artist']} - {song['song']}"
+        f"🎤 /lyrics {display_title}\n"
+        f"🔍 /analyze {display_title}"
     )
 
 def send_daily_song(context) -> None:
