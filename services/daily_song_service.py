@@ -142,8 +142,12 @@ def unsubscribe_user(user_id: int) -> bool:
 
 def get_subscribed_users() -> Dict:
     """Get all actively subscribed users."""
-    return {uid: data for uid, data in subscribed_users.items() 
+    return {uid: data for uid, data in subscribed_users.items()
             if data.get("active", False)}
+
+def get_subscriber_data(user_id: int) -> Optional[Dict]:
+    """Return raw subscriber data for a user, or None if not found."""
+    return subscribed_users.get(user_id)
 
 def format_daily_song(song: Dict, lyrics: str, analysis: Dict) -> str:
     """Format daily song message matching the /song command style."""

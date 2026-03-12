@@ -164,10 +164,61 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
             "• Wait a minute and retry"
         )
 
+_SKIP_KEYWORDS = ['official video', 'music video', 'mv', 'vevo', 'live performance',
+                   'live at', 'concert', 'tour', 'karaoke', 'instrumental', 'cover by']
+
+
+def _score_entry(entry: dict) -> int:
+    """Score a search entry — higher is better for audio quality."""
+    title = (entry.get('title') or '').lower()
+    score = 0
+    for kw in ['audio', 'lyrics', 'official audio', 'full song']:
+        if kw in title:
+            score += 2
+    for kw in _SKIP_KEYWORDS:
+        if kw in title:
+            score -= 3
+    dur = entry.get('duration') or 0
+    if 120 <= dur <= 360:
+        score += 1
+    return score
+
+
 def _try_audio_download(source_query: str, file_prefix: str) -> Tuple[bool, any]:
-    """Attempt audio download from a single source query."""
+    """Attempt audio download from a single source query, with candidate scoring."""
+    info_opts = {
+        'format': 'bestaudio/best',
+        'quiet': True,
+        'no_warnings': True,
+        'socket_timeout': 20,
+        'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
+    }
+    with yt_dlp.YoutubeDL(info_opts) as ydl:
+        meta = ydl.extract_info(source_query, download=False)
+
+    entries = []
+    if isinstance(meta, dict):
+        if meta.get('entries'):
+            entries = [e for e in meta['entries'] if e]
+        else:
+            entries = [meta]
+
+    if not entries:
+        raise FileNotFoundError("no entries returned from search")
+
+    entries.sort(key=_score_entry, reverse=True)
+    chosen = entries[0]
+
+    duration = chosen.get('duration', 0) or 0
+    if duration > 600:
+        raise ValueError(f"too_long:{duration}")
+
+    direct_url = chosen.get('webpage_url') or chosen.get('url')
+    if not direct_url:
+        raise FileNotFoundError("no URL for chosen entry")
+
     output_template = f'{file_prefix}.%(ext)s'
-    ydl_opts = {
+    dl_opts = {
         'format': 'bestaudio/best',
         'noplaylist': True,
         'quiet': True,
@@ -181,27 +232,21 @@ def _try_audio_download(source_query: str, file_prefix: str) -> Tuple[bool, any]
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        },
+        'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(source_query, download=False)
-        if isinstance(info, dict) and info.get('entries'):
-            info = info['entries'][0]
-        duration = info.get('duration', 0) or 0
-        if duration > 600:
-            raise ValueError(f"too_long:{duration}")
-        ydl.download([source_query])
-        mp3_path = os.path.join(os.getcwd(), f'{file_prefix}.mp3')
-        if not os.path.exists(mp3_path):
-            matches = globmod.glob(os.path.join(os.getcwd(), f'{file_prefix}.*'))
-            matches = [m for m in matches if not m.endswith('.part')]
-            if matches:
-                mp3_path = matches[0]
-            else:
-                raise FileNotFoundError("audio file not found after download")
-        return True, (mp3_path, info.get('title', 'Audio'), info.get('uploader', 'Unknown'), duration)
+    with yt_dlp.YoutubeDL(dl_opts) as ydl:
+        ydl.download([direct_url])
+
+    mp3_path = os.path.join(os.getcwd(), f'{file_prefix}.mp3')
+    if not os.path.exists(mp3_path):
+        matches = globmod.glob(os.path.join(os.getcwd(), f'{file_prefix}.*'))
+        matches = [m for m in matches if not m.endswith('.part')]
+        if matches:
+            mp3_path = matches[0]
+        else:
+            raise FileNotFoundError("audio file not found after download")
+
+    return True, (mp3_path, chosen.get('title', 'Audio'), chosen.get('uploader', 'Unknown'), duration)
 
 
 def download_audio_for_song(artist: str, song: str) -> Tuple[bool, any]:
@@ -210,10 +255,11 @@ def download_audio_for_song(artist: str, song: str) -> Tuple[bool, any]:
     query = f"{artist} - {song}" if song else artist
     file_prefix = 'audio_' + hashlib.md5(query.encode()).hexdigest()[:10]
 
+    audio_query = f"{query} audio"
     sources = [
-        f"ytsearch1:{query}",
+        f"ytsearch3:{audio_query}",
         f"scsearch1:{query}",
-        f"ytsearch1:{song} {artist}" if song else None,
+        f"ytsearch3:{query}",
     ]
     sources = [s for s in sources if s]
 

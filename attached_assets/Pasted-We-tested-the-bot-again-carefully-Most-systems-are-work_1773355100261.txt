@@ -1,0 +1,125 @@
+We tested the bot again carefully.
+Most systems are working very well, so please be very careful and do not break any existing working behavior.
+
+The following systems are currently working well and must remain unchanged:
+	•	Similar Songs logic
+	•	recommendation quality itself
+	•	song/analyze/lyrics outputs
+	•	MP3 button placement on single-song outputs
+	•	no MP3 button in multi-song outputs
+	•	Apple Music current top songs integration
+	•	removal of /download and /mp3 from /start and /help
+
+However, we found a few remaining issues and UX improvements that need to be addressed carefully.
+
+Issue 1 — /subscribe state bug after unsubscribe
+
+We tested this flow:
+	1.	already subscribed
+	2.	/unsubscribe
+	3.	/subscribe
+
+Expected:
+The bot should show the daily count picker again:
+	•	1 song per day
+	•	2 songs per day
+	•	3 songs per day
+
+Actual:
+The bot replied:
+	•	“You’re already subscribed!”
+	•	“1 song per day”
+
+This means the unsubscribe flow is not fully clearing the user subscription state.
+
+Please fix this so that after unsubscribe, a new /subscribe starts fresh and always shows the daily count picker again.
+
+Issue 2 — daily output should depend on daily count
+
+We want the daily song delivery UX to behave like this:
+
+If the user selected 1 song per day
+Send a full single-song dashboard using the same style and quality as /song.
+
+This should include:
+	•	song-style formatting
+	•	all normal single-song buttons
+	•	MP3 button, because this is a single-song output
+
+If the user selected 2 or 3 songs per day
+Do not send 2 or 3 full song dashboards directly.
+
+Instead, send a compact daily discovery list / picker, similar to /trending or /top:
+	•	show the selected daily songs
+	•	each song should have a button
+	•	when the user presses a song button, open the full /song-style output for that chosen song
+
+This will keep the daily subscription clean and user-friendly.
+
+Issue 3 — /recommend output needs song entry buttons
+
+The recommendation engine is working well and should not be changed.
+
+But the current /recommend output shows recommended songs only as text.
+
+We want direct song entry buttons for the recommended songs, similar to how /top and /trending let the user pick a song.
+
+Please add buttons for the recommended songs themselves, so the user can directly open any recommended track.
+
+Important note about buttons under /recommend
+
+The current action buttons under /recommend (Lyrics / Analyze / Video / MP3) appear to be tied to the original source song, not the recommended songs list.
+
+This is actually correct and should remain:
+	•	those buttons belong to the original song that the recommendation was based on
+
+What is missing is:
+	•	additional direct buttons for each recommended song
+
+So please:
+	•	keep current source-song action buttons unchanged
+	•	add song-entry buttons for the recommended tracks themselves
+
+MP3 quality improvement request
+
+The MP3 feature is now working much better, which is great. Please do not change the current working flow.
+
+However, please improve source matching quality carefully:
+	•	better matching of artist + song
+	•	avoid weak matches such as unrelated “Official Video” context when possible
+	•	prioritize cleaner audio/source matches before download
+	•	improve candidate scoring rather than changing the whole system
+
+We do not want a large rewrite here — only safer matching improvements.
+
+Daily source reminder
+
+Please make sure the daily subscription songs remain:
+	•	randomly selected
+	•	from the current Apple Music Top 100
+	•	always up to date
+
+Please do not change
+
+Do not modify:
+	•	Similar Songs logic
+	•	recommendation engine logic
+	•	song/analyze/lyrics core behavior
+	•	MP3 button placement rules
+	•	Apple Music chart integration
+
+Only fix the issues above and improve the related UX carefully.
+
+Please test manually before reporting completion
+
+Please manually test:
+	1.	subscribe → unsubscribe → subscribe again
+	2.	user with 1 song/day daily delivery
+	3.	user with 2 songs/day daily delivery
+	4.	/recommend Tyla Water
+	5.	MP3 from a recommended/song result
+
+And report back:
+	•	exact files modified
+	•	what was tested manually
+	•	confirmation that no unrelated working systems were changed

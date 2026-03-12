@@ -154,6 +154,34 @@ def recommend_pick_buttons(artist_name, top_songs):
     return InlineKeyboardMarkup(rows)
 
 
+def recommend_results_buttons(source_query, recommendations):
+    """Buttons for recommend output: source-song actions + buttons for each recommended song."""
+    rows = []
+    rows.append([
+        InlineKeyboardButton("🎵 Lyrics", callback_data=_cb("lyrics", source_query)),
+        InlineKeyboardButton("📊 Analyze", callback_data=_cb("analyze", source_query)),
+    ])
+    rows.append([
+        InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", source_query)),
+        InlineKeyboardButton("🎧 MP3", callback_data=_cb("mp3", source_query)),
+    ])
+    if recommendations:
+        rows.append([InlineKeyboardButton("── Recommended Songs ──", callback_data="noop:x")])
+        for rec in recommendations[:5]:
+            song_q = f"{rec['artist']} - {rec['name']}"
+            rows.append([InlineKeyboardButton(f"🎵 {rec['name']} — {rec['artist']}", callback_data=_cb("song", song_q))])
+    return InlineKeyboardMarkup(rows)
+
+
+def daily_picker_buttons(songs):
+    """Compact picker buttons for multi-song daily delivery."""
+    rows = []
+    for s in songs:
+        song_q = f"{s['artist']} - {s['song']}"
+        rows.append([InlineKeyboardButton(f"🎵 {s['song']} — {s['artist']}", callback_data=_cb("song", song_q))])
+    return InlineKeyboardMarkup(rows)
+
+
 def artist_analyze_buttons(artist_name):
     return InlineKeyboardMarkup([
         [

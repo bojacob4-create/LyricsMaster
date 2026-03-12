@@ -7,7 +7,8 @@ from buttons import (
     lyrics_buttons, song_dashboard_buttons, artist_buttons, artist_summary_buttons,
     recommend_buttons, song_list_buttons, ambiguous_buttons,
     analyze_buttons, stats_buttons, artist_analyze_buttons, recommend_pick_buttons,
-    daily_song_buttons, subscribe_count_buttons
+    daily_song_buttons, subscribe_count_buttons,
+    recommend_results_buttons, daily_picker_buttons
 )
 from services.lyrics_service import get_song_lyrics
 from services.translator_service import (
@@ -24,7 +25,8 @@ from services.daily_song_service import (
     unsubscribe_user,
     get_daily_song,
     format_daily_song,
-    get_subscribed_users
+    get_subscribed_users,
+    get_subscriber_data,
 )
 from utils import (
     format_lyrics,
@@ -295,6 +297,9 @@ def callback_query_handler(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     _pending_recommend_artist.pop(user_id, None)
     logger.info(f"Callback from user {user_id}: action='{action}', param='{param}'")
+
+    if action == 'noop':
+        return
 
     if action == 'subcount':
         try:
@@ -598,7 +603,8 @@ def recommend_command(update: Update, context: CallbackContext):
         formatted_recommendations = format_recommendations(recommendations, display_title)
 
         btn_query = display_title if display_title else query
-        update.message.reply_text(formatted_recommendations, reply_markup=recommend_buttons(btn_query))
+        markup = recommend_results_buttons(btn_query, recommendations)
+        update.message.reply_text(formatted_recommendations, reply_markup=markup)
         logger.info(f"Successfully sent recommendations to user {user_id}")
 
     except Exception as e:
@@ -718,25 +724,50 @@ def send_daily_song(context: CallbackContext):
         for user_id, data in subscribed.items():
             try:
                 daily_count = data.get("daily_count", 1)
-                sent = set()
-                for _ in range(daily_count):
+
+                collected = []
+                seen_keys = set()
+                attempts = 0
+                while len(collected) < daily_count and attempts < daily_count * 3:
+                    attempts += 1
                     song, lyrics, analysis = get_daily_song()
                     if not all([song, lyrics, analysis]):
-                        logger.error(f"Failed to get daily song for user {user_id}")
                         continue
                     song_key = f"{song['artist']} - {song['song']}"
-                    if song_key in sent:
+                    if song_key in seen_keys:
                         continue
-                    sent.add(song_key)
+                    seen_keys.add(song_key)
+                    collected.append((song, lyrics, analysis))
+
+                if not collected:
+                    logger.error(f"No daily songs available for user {user_id}")
+                    continue
+
+                if daily_count == 1:
+                    song, lyrics, analysis = collected[0]
+                    song_key = f"{song['artist']} - {song['song']}"
                     message = format_daily_song(song, lyrics, analysis)
-                    btn_query = song_key
-                    markup = daily_song_buttons(btn_query)
+                    markup = daily_song_buttons(song_key)
                     context.bot.send_message(
                         chat_id=data["chat_id"],
                         text=message,
                         reply_markup=markup
                     )
-                logger.info(f"Sent {len(sent)} daily song(s) to user {user_id}")
+                else:
+                    songs_for_picker = [{"artist": s["artist"], "song": s["song"]} for s, _, __ in collected]
+                    lines = [f"🎵 Daily Discovery — {daily_count} Songs\n━━━━━━━━━━━━━━━━━━━━━\n"]
+                    for i, (s, _, __) in enumerate(collected, 1):
+                        lines.append(f"{i}. {s['artist']} — {s['song']}")
+                    lines.append("\n\nTap a song below to open the full dashboard:")
+                    message = "\n".join(lines)
+                    markup = daily_picker_buttons(songs_for_picker)
+                    context.bot.send_message(
+                        chat_id=data["chat_id"],
+                        text=message,
+                        reply_markup=markup
+                    )
+
+                logger.info(f"Sent {len(collected)} daily song(s) to user {user_id}")
             except Exception as e:
                 logger.error(f"Failed to send daily song to user {user_id}: {str(e)}")
 
@@ -751,9 +782,9 @@ def subscribe_daily_command(update: Update, context: CallbackContext):
     try:
         logger.info(f"User {user_id} requesting daily song subscription")
 
-        existing = get_subscribed_users()
-        if user_id in existing and existing[user_id].get("active"):
-            count = existing[user_id].get("daily_count", 1)
+        raw = get_subscriber_data(user_id)
+        if raw and raw.get("active"):
+            count = raw.get("daily_count", 1)
             update.message.reply_text(
                 "🎵 You're already subscribed!\n\n"
                 f"Your daily song {'discoveries are' if count > 1 else 'discovery is'} active "
