@@ -1,139 +1,46 @@
 import os
 import logging
 import requests
-import base64
 import random
 import time
 from typing import List, Dict, Optional
-from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
-_spotify_token_cache = {'token': None, 'expires': 0}
+# Cache: (timestamp, [candidates])
+_apple_cache: Dict[str, tuple] = {}
+_CACHE_TTL = 3600  # 1 hour
 
 
-def _get_spotify_token() -> Optional[str]:
+def _fetch_apple_top_songs() -> List[Dict]:
+    """Fetch global Apple Music top 100 with caching."""
     now = time.time()
-    if _spotify_token_cache['token'] and _spotify_token_cache['expires'] > now:
-        return _spotify_token_cache['token']
+    cached = _apple_cache.get('global')
+    if cached and (now - cached[0]) < _CACHE_TTL:
+        return cached[1]
 
-    client_id = os.environ.get('SPOTIFY_CLIENT_ID')
-    client_secret = os.environ.get('SPOTIFY_CLIENT_SECRET')
-    if not client_id or not client_secret:
-        return None
-
+    candidates = []
     try:
-        auth_base64 = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
-        r = requests.post('https://accounts.spotify.com/api/token',
-            headers={'Authorization': f'Basic {auth_base64}', 'Content-Type': 'application/x-www-form-urlencoded'},
-            data={'grant_type': 'client_credentials'}, timeout=8)
+        url = "https://rss.applemarketingtools.com/api/v2/us/music/most-played/100/songs.json"
+        r = requests.get(url, timeout=8, headers={'User-Agent': 'LyricsMasterBot/1.0'})
         if r.status_code == 200:
-            data = r.json()
-            _spotify_token_cache['token'] = data['access_token']
-            _spotify_token_cache['expires'] = now + data.get('expires_in', 3600) - 60
-            return _spotify_token_cache['token']
+            results = r.json().get('feed', {}).get('results', [])
+            for item in results:
+                name = item.get('name', '').strip()
+                artist = item.get('artistName', '').strip()
+                if name and artist:
+                    candidates.append({
+                        'name': name,
+                        'artist': artist,
+                        'reason': 'Trending on Apple Music Top 100',
+                    })
+            logger.info(f"Apple Music top 100 fetched {len(candidates)} tracks")
     except Exception as e:
-        logger.debug(f"Spotify token error: {e}")
-    return None
+        logger.debug(f"Apple Music global chart failed: {e}")
 
-
-def _get_spotify_recommendations(artist: str, song: str) -> Optional[List[Dict]]:
-    token = _get_spotify_token()
-    if not token:
-        return None
-
-    try:
-        headers = {'Authorization': f'Bearer {token}'}
-        sr = requests.get('https://api.spotify.com/v1/search',
-            headers=headers,
-            params={'q': f'track:{song} artist:{artist}', 'type': 'track', 'limit': 1},
-            timeout=8)
-
-        if sr.status_code != 200:
-            return None
-
-        items = sr.json().get('tracks', {}).get('items', [])
-        if not items:
-            sr = requests.get('https://api.spotify.com/v1/search',
-                headers=headers,
-                params={'q': f'{artist} {song}', 'type': 'track', 'limit': 1},
-                timeout=8)
-            if sr.status_code != 200:
-                return None
-            items = sr.json().get('tracks', {}).get('items', [])
-            if not items:
-                return None
-
-        seed_track = items[0]
-        track_id = seed_track['id']
-        seed_artist_id = seed_track['artists'][0]['id'] if seed_track.get('artists') else None
-
-        rec_params = {'seed_tracks': track_id, 'limit': 20}
-        if seed_artist_id:
-            rec_params['seed_artists'] = seed_artist_id
-
-        rr = requests.get('https://api.spotify.com/v1/recommendations',
-            headers=headers, params=rec_params, timeout=8)
-        if rr.status_code != 200:
-            return None
-
-        recommendations = []
-        seen = set()
-        for t in rr.json().get('tracks', []):
-            artist_name = t['artists'][0]['name'] if t.get('artists') else 'Unknown'
-            track_name = t['name']
-            key = f"{artist_name.lower()}-{track_name.lower()}"
-            if key in seen or artist_name.lower() == artist.lower():
-                continue
-            seen.add(key)
-            recommendations.append({
-                'name': track_name,
-                'artist': artist_name,
-                'popularity': t.get('popularity', 0)
-            })
-
-        if len(recommendations) > 5:
-            recommendations = random.sample(recommendations, 5)
-        return recommendations if recommendations else None
-
-    except Exception as e:
-        logger.debug(f"Spotify recommendations error: {e}")
-        return None
-
-
-def _get_lastfm_recommendations(artist: str, song: str) -> Optional[List[Dict]]:
-    api_key = os.environ.get('LASTFM_API_KEY')
-    if not api_key:
-        return None
-
-    try:
-        r = requests.get('https://ws.audioscrobbler.com/2.0/', params={
-            'method': 'track.getsimilar', 'artist': artist, 'track': song,
-            'api_key': api_key, 'format': 'json', 'limit': 20
-        }, timeout=8)
-
-        if r.status_code != 200:
-            return None
-
-        tracks = r.json().get('similartracks', {}).get('track', [])
-        if not tracks:
-            return None
-
-        recommendations = []
-        for t in tracks:
-            recommendations.append({
-                'name': t['name'],
-                'artist': t['artist']['name'],
-                'match': round(float(t.get('match', 0)) * 100)
-            })
-
-        if len(recommendations) > 5:
-            recommendations = random.sample(recommendations, 5)
-        return recommendations if recommendations else None
-
-    except Exception as e:
-        logger.debug(f"Last.fm recommendations error: {e}")
-        return None
+    if candidates:
+        _apple_cache['global'] = (now, candidates)
+    return candidates
 
 
 GENRE_RECOMMENDATIONS = {
@@ -187,15 +94,15 @@ GENRE_RECOMMENDATIONS = {
         {'artist': 'SZA', 'name': 'Kill Bill', 'reason': 'R&B with dark storytelling'},
         {'artist': 'Chris Brown', 'name': 'Under The Influence', 'reason': 'Smooth R&B groove'},
         {'artist': 'Khalid', 'name': 'Talk', 'reason': 'Youthful alternative R&B'},
-        {'artist': 'H.E.R.', 'name': 'Focus', 'reason': 'Soulful guitar-driven R&B'},
         {'artist': 'Lucky Daye', 'name': 'Over', 'reason': 'Neo-soul with lush production'},
-        {'artist': 'Brent Faiyaz', 'name': 'Loose Change', 'reason': 'Introspective modern R&B'},
         {'artist': 'Victoria Monét', 'name': 'On My Mama', 'reason': 'Funky R&B bop from 2023'},
-        {'artist': 'Chlöe', 'name': 'Pray It Away', 'reason': 'Powerful contemporary R&B'},
         {'artist': 'Usher', 'name': 'Good Good', 'reason': 'Classic R&B sound 2024'},
         {'artist': 'SZA', 'name': 'Saturn', 'reason': 'Ethereal R&B from 2024'},
         {'artist': 'The Weeknd', 'name': 'Timeless', 'reason': 'Smooth R&B from 2024'},
         {'artist': 'Tyla', 'name': 'Jump', 'reason': 'Afro-R&B crossover 2024'},
+        {'artist': 'H.E.R.', 'name': 'Focus', 'reason': 'Soulful guitar-driven R&B'},
+        {'artist': 'Chlöe', 'name': 'Pray It Away', 'reason': 'Powerful contemporary R&B'},
+        {'artist': 'Brent Faiyaz', 'name': 'Loose Change', 'reason': 'Introspective modern R&B'},
     ],
     'hiphop': [
         {'artist': 'Kendrick Lamar', 'name': 'HUMBLE.', 'reason': 'Hard-hitting lyrical mastery'},
@@ -211,11 +118,11 @@ GENRE_RECOMMENDATIONS = {
         {'artist': 'GloRilla', 'name': 'FNF', 'reason': 'Memphis rap energy'},
         {'artist': 'Ice Spice', 'name': 'Munch', 'reason': 'Drill-influenced viral rap'},
         {'artist': 'Tyler, The Creator', 'name': 'DOGTOOTH', 'reason': 'Left-field rap from 2024'},
-        {'artist': 'Lil Wayne', 'name': 'Kat Food', 'reason': 'Veteran rap with fresh delivery'},
         {'artist': 'Future', 'name': 'Like That', 'reason': 'Trap heat from 2024'},
         {'artist': 'Metro Boomin', 'name': 'Superhero', 'reason': 'Cinematic trap production'},
-        {'artist': 'Playboi Carti', 'name': 'Sky', 'reason': 'Atmospheric trap experience'},
         {'artist': 'Doechii', 'name': 'Nissan Altima', 'reason': 'Standout rap voice from 2024'},
+        {'artist': 'Playboi Carti', 'name': 'Sky', 'reason': 'Atmospheric trap experience'},
+        {'artist': 'Lil Wayne', 'name': 'Kat Food', 'reason': 'Veteran rap with fresh delivery'},
     ],
     'rock': [
         {'artist': 'Arctic Monkeys', 'name': 'Do I Wanna Know?', 'reason': 'Dark atmospheric rock'},
@@ -225,7 +132,6 @@ GENRE_RECOMMENDATIONS = {
         {'artist': 'The Killers', 'name': 'Mr. Brightside', 'reason': 'Iconic indie rock anthem'},
         {'artist': 'Muse', 'name': 'Uprising', 'reason': 'Epic stadium rock'},
         {'artist': 'Tame Impala', 'name': 'The Less I Know The Better', 'reason': 'Psychedelic rock groove'},
-        {'artist': 'Arctic Monkeys', 'name': 'R U Mine?', 'reason': 'Garage rock energy'},
         {'artist': 'Hozier', 'name': 'Take Me To Church', 'reason': 'Blues-rock with depth'},
         {'artist': 'Paramore', 'name': 'This Is Why', 'reason': 'Post-punk revival 2023'},
         {'artist': 'Wet Leg', 'name': 'Chaise Longue', 'reason': 'Indie rock deadpan wit'},
@@ -234,6 +140,7 @@ GENRE_RECOMMENDATIONS = {
         {'artist': 'Coldplay', 'name': 'The Scientist', 'reason': 'Emotional alternative rock'},
         {'artist': 'Radiohead', 'name': 'Creep', 'reason': 'Defining 90s alternative rock'},
         {'artist': 'Linkin Park', 'name': 'The Emptiness Machine', 'reason': 'Rock comeback 2024'},
+        {'artist': 'Arctic Monkeys', 'name': 'R U Mine?', 'reason': 'Garage rock energy'},
     ],
     'latin': [
         {'artist': 'Bad Bunny', 'name': 'Titi Me Pregunto', 'reason': 'Latin trap/reggaeton vibes'},
@@ -241,15 +148,15 @@ GENRE_RECOMMENDATIONS = {
         {'artist': 'Karol G', 'name': 'BICHOTA', 'reason': 'Reggaeton with attitude'},
         {'artist': 'Rauw Alejandro', 'name': 'Todo de Ti', 'reason': 'Modern Latin pop'},
         {'artist': 'Ozuna', 'name': 'Taki Taki', 'reason': 'Reggaeton dance energy'},
-        {'artist': 'Bad Bunny', 'name': 'un verano sin ti', 'reason': 'Latin experimental 2022'},
+        {'artist': 'Bad Bunny', 'name': 'Monaco', 'reason': 'Latin trap from 2024'},
         {'artist': 'Karol G', 'name': 'Mañana Será Bonito', 'reason': 'Latin pop 2023'},
         {'artist': 'Peso Pluma', 'name': 'Ella Baila Sola', 'reason': 'Regional Mexican breakout 2023'},
-        {'artist': 'Shakira', 'name': 'Bzrp Music Sessions #53', 'reason': 'Viral Latin pop diss 2023'},
-        {'artist': 'Bad Bunny', 'name': 'Monaco', 'reason': 'Latin trap from 2024'},
+        {'artist': 'Shakira', 'name': 'Bzrp Music Sessions #53', 'reason': 'Viral Latin pop 2023'},
         {'artist': 'Myke Towers', 'name': 'La Inocente', 'reason': 'Smooth reggaeton flow'},
         {'artist': 'Feid', 'name': 'Chorrito Pa Las Animas', 'reason': 'Chill reggaeton 2023'},
         {'artist': 'Anitta', 'name': 'Funk Rave', 'reason': 'Brazilian funk crossover'},
         {'artist': 'Rauw Alejandro', 'name': 'Lokera', 'reason': 'Uptempo reggaeton 2022'},
+        {'artist': 'J Balvin', 'name': 'Con Altura', 'reason': 'Classic reggaeton crossover'},
     ],
     'classic': [
         {'artist': 'Fleetwood Mac', 'name': 'Dreams', 'reason': 'Timeless classic rock'},
@@ -271,26 +178,35 @@ GENRE_RECOMMENDATIONS = {
 ARTIST_GENRE_MAP = {
     'tyla': 'afrobeats', 'ayra starr': 'afrobeats', 'rema': 'afrobeats', 'burna boy': 'afrobeats',
     'wizkid': 'afrobeats', 'davido': 'afrobeats', 'ckay': 'afrobeats', 'fireboy dml': 'afrobeats',
-    'tiwa savage': 'afrobeats', 'asake': 'afrobeats', 'omah lay': 'afrobeats',
+    'tiwa savage': 'afrobeats', 'asake': 'afrobeats', 'omah lay': 'afrobeats', 'tems': 'afrobeats',
+    'victony': 'afrobeats', 'kizz daniel': 'afrobeats', 'oxlade': 'afrobeats',
     'taylor swift': 'pop', 'ed sheeran': 'pop', 'dua lipa': 'pop', 'harry styles': 'pop',
     'olivia rodrigo': 'pop', 'billie eilish': 'pop', 'ariana grande': 'pop', 'miley cyrus': 'pop',
     'katy perry': 'pop', 'bruno mars': 'pop', 'justin bieber': 'pop', 'shawn mendes': 'pop',
     'charlie puth': 'pop', 'lizzo': 'pop', 'doja cat': 'pop', 'camila cabello': 'pop',
+    'sabrina carpenter': 'pop', 'chappell roan': 'pop', 'gracie abrams': 'pop',
     'sza': 'rnb', 'the weeknd': 'rnb', 'daniel caesar': 'rnb', 'h.e.r.': 'rnb',
     'brent faiyaz': 'rnb', 'summer walker': 'rnb', 'jhene aiko': 'rnb', 'khalid': 'rnb',
     'frank ocean': 'rnb', 'chris brown': 'rnb', 'usher': 'rnb', 'alicia keys': 'rnb',
-    'adele': 'rnb', 'sam smith': 'rnb', 'john legend': 'rnb',
+    'adele': 'rnb', 'sam smith': 'rnb', 'john legend': 'rnb', 'victoria monet': 'rnb',
+    'lucky daye': 'rnb', 'chloe': 'rnb',
     'drake': 'hiphop', 'kendrick lamar': 'hiphop', 'j. cole': 'hiphop', 'kanye west': 'hiphop',
     'travis scott': 'hiphop', 'eminem': 'hiphop', 'lil wayne': 'hiphop', 'jay-z': 'hiphop',
     'tyler, the creator': 'hiphop', 'megan thee stallion': 'hiphop', 'nicki minaj': 'hiphop',
     'post malone': 'hiphop', '21 savage': 'hiphop', 'jid': 'hiphop', 'future': 'hiphop',
+    'sexyy red': 'hiphop', 'glorilla': 'hiphop', 'ice spice': 'hiphop', 'doechii': 'hiphop',
     'bad bunny': 'latin', 'rosalia': 'latin', 'karol g': 'latin', 'rauw alejandro': 'latin',
-    'ozuna': 'latin', 'j balvin': 'latin', 'daddy yankee': 'latin',
+    'ozuna': 'latin', 'j balvin': 'latin', 'daddy yankee': 'latin', 'peso pluma': 'latin',
+    'shakira': 'latin', 'myke towers': 'latin', 'feid': 'latin', 'anitta': 'latin',
     'queen': 'rock', 'the beatles': 'rock', 'led zeppelin': 'rock', 'pink floyd': 'rock',
     'nirvana': 'rock', 'foo fighters': 'rock', 'arctic monkeys': 'rock',
     'imagine dragons': 'rock', 'coldplay': 'rock', 'u2': 'rock', 'the killers': 'rock',
+    'tame impala': 'rock', 'hozier': 'rock', 'paramore': 'rock', 'wet leg': 'rock',
+    'boygenius': 'rock', 'radiohead': 'rock', 'muse': 'rock', 'linkin park': 'rock',
     'fleetwood mac': 'classic', 'elvis presley': 'classic', 'michael jackson': 'pop',
     'whitney houston': 'rnb', 'mariah carey': 'rnb', 'rihanna': 'pop',
+    'david bowie': 'classic', 'stevie wonder': 'classic', 'marvin gaye': 'classic',
+    'eagles': 'classic', 'prince': 'classic', 'elton john': 'classic',
 }
 
 MOOD_GENRE_WEIGHTS = {
@@ -300,7 +216,6 @@ MOOD_GENRE_WEIGHTS = {
     'sad': ['rnb', 'pop', 'rock'],
     'relaxed': ['rnb', 'pop', 'classic'],
 }
-
 
 _ITUNES_GENRE_MAP = {
     'hip-hop/rap': 'hiphop', 'hip hop/rap': 'hiphop', 'hip-hop': 'hiphop',
@@ -342,11 +257,32 @@ def _detect_genre(artist: str, song: str, mood: str) -> str:
     return mood_genres[0] if mood_genres else 'pop'
 
 
+def _get_apple_recommendations(artist: str, song: str) -> Optional[List[Dict]]:
+    """Get recommendations from Apple Music global top 100."""
+    candidates = _fetch_apple_top_songs()
+
+    if not candidates:
+        return None
+
+    # Filter out the source artist and the exact source song
+    filtered = [
+        c for c in candidates
+        if c['artist'].lower() != artist.lower()
+        and c['name'].lower() != song.lower()
+    ]
+    if len(filtered) < 3:
+        return None
+
+    # Random sample so results feel fresh on every call
+    sample_size = min(5, len(filtered))
+    return random.sample(filtered, sample_size)
+
+
 def _get_curated_recommendations(artist: str, song: str, mood: str) -> List[Dict]:
     genre = _detect_genre(artist, song, mood)
     logger.info(f"Curated recommendations: genre='{genre}' for '{artist} - {song}' (mood={mood})")
 
-    pool = GENRE_RECOMMENDATIONS.get(genre, GENRE_RECOMMENDATIONS['pop'])
+    pool = list(GENRE_RECOMMENDATIONS.get(genre, GENRE_RECOMMENDATIONS['pop']))
     filtered = [s for s in pool if s['artist'].lower() != artist.lower()]
 
     if len(filtered) < 3:
@@ -357,7 +293,7 @@ def _get_curated_recommendations(artist: str, song: str, mood: str) -> List[Dict
                 for s in extras:
                     if s['artist'].lower() != artist.lower() and s not in filtered:
                         filtered.append(s)
-                        if len(filtered) >= 7:
+                        if len(filtered) >= 15:
                             break
 
     return random.sample(filtered, min(5, len(filtered)))
@@ -365,15 +301,10 @@ def _get_curated_recommendations(artist: str, song: str, mood: str) -> List[Dict
 
 def get_similar_songs(artist: str, song: str, mood: str) -> List[Dict]:
     try:
-        spotify_recs = _get_spotify_recommendations(artist, song)
-        if spotify_recs and len(spotify_recs) >= 3:
-            logger.info(f"Using Spotify recommendations for '{artist} - {song}'")
-            return spotify_recs
-
-        lastfm_recs = _get_lastfm_recommendations(artist, song)
-        if lastfm_recs and len(lastfm_recs) >= 3:
-            logger.info(f"Using Last.fm recommendations for '{artist} - {song}'")
-            return lastfm_recs
+        apple_recs = _get_apple_recommendations(artist, song)
+        if apple_recs and len(apple_recs) >= 3:
+            logger.info(f"Using Apple Music recommendations for '{artist} - {song}'")
+            return apple_recs
 
         logger.info(f"Using curated recommendations for '{artist} - {song}'")
         return _get_curated_recommendations(artist, song, mood)

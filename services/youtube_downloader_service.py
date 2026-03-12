@@ -6,6 +6,7 @@ import yt_dlp
 import unicodedata
 import string
 import glob as globmod
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -164,17 +165,72 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
             "• Wait a minute and retry"
         )
 
+def _search_audiomack_url(artist: str, song: str) -> Optional[str]:
+    """Search Audiomack unofficial API and return the track page URL, or None."""
+    query = f"{artist} {song}"
+    try:
+        r = requests.get(
+            'https://audiomack.com/api/v1/music/search',
+            params={'q': query, 'type': 'song', 'limit': 3},
+            timeout=7,
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'},
+        )
+        if r.status_code == 200:
+            results = r.json().get('results', {})
+            if isinstance(results, dict):
+                results = results.get('results', [])
+            if results:
+                track = results[0]
+                uploader_slug = (track.get('uploader') or {}).get('url_slug', '')
+                song_slug = track.get('url_slug', '')
+                if uploader_slug and song_slug:
+                    url = f"https://audiomack.com/{uploader_slug}/song/{song_slug}"
+                    logger.info(f"Audiomack found: {url}")
+                    return url
+    except Exception as e:
+        logger.debug(f"Audiomack search error: {e}")
+    return None
+
+
 def _try_sc_download(source_query: str, file_prefix: str) -> Tuple[bool, any]:
-    """Download audio from SoundCloud via a single yt-dlp call."""
+    """Download audio from a source query (SoundCloud search or direct URL)."""
+    # Step 1: resolve the webpage_url (avoids the broken internal API URL bug in SC extractor)
+    resolve_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': True,
+        'socket_timeout': 15,
+    }
+    with yt_dlp.YoutubeDL(resolve_opts) as ydl:
+        meta = ydl.extract_info(source_query, download=False)
+
+    if isinstance(meta, dict) and meta.get('entries'):
+        entry = meta['entries'][0]
+    else:
+        entry = meta
+
+    if not entry:
+        raise FileNotFoundError("no entry returned from search")
+
+    # Prefer webpage_url (full site URL); fall back to id-based url
+    download_url = entry.get('webpage_url') or entry.get('url') or source_query
+    duration = int(entry.get('duration', 0) or 0)
+    if duration > 600:
+        raise ValueError(f"too_long:{duration}")
+
+    title = entry.get('title', 'Audio')
+    uploader = entry.get('uploader', 'Unknown')
+
+    # Step 2: download from the resolved URL
     output_template = f'{file_prefix}.%(ext)s'
-    ydl_opts = {
+    dl_opts = {
         'format': 'bestaudio/best',
         'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
         'outtmpl': output_template,
         'restrictfilenames': True,
-        'socket_timeout': 25,
+        'socket_timeout': 30,
         'retries': 1,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
@@ -182,15 +238,8 @@ def _try_sc_download(source_query: str, file_prefix: str) -> Tuple[bool, any]:
             'preferredquality': '128',
         }],
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(source_query, download=True)
-
-    if isinstance(info, dict) and info.get('entries'):
-        info = info['entries'][0]
-
-    duration = info.get('duration', 0) or 0
-    if duration > 600:
-        raise ValueError(f"too_long:{duration}")
+    with yt_dlp.YoutubeDL(dl_opts) as ydl:
+        ydl.download([download_url])
 
     mp3_path = os.path.join(os.getcwd(), f'{file_prefix}.mp3')
     if not os.path.exists(mp3_path):
@@ -201,25 +250,27 @@ def _try_sc_download(source_query: str, file_prefix: str) -> Tuple[bool, any]:
         else:
             raise FileNotFoundError("audio file not found after download")
 
-    return True, (mp3_path, info.get('title', 'Audio'), info.get('uploader', 'Unknown'), duration)
+    return True, (mp3_path, title, uploader, duration)
 
 
 def download_audio_for_song(artist: str, song: str) -> Tuple[bool, any]:
-    """Download MP3 for a song using SoundCloud only (no YouTube)."""
+    """Download MP3 for a song: SoundCloud first, then Audiomack. No YouTube."""
     import hashlib
     query = f"{artist} - {song}" if song else artist
     file_prefix = 'audio_' + hashlib.md5(query.encode()).hexdigest()[:10]
 
-    # Try SoundCloud with two query variations before giving up
-    sources = [
-        f"scsearch1:{query}",
-        f"scsearch1:{song} {artist}" if song else None,
-    ]
-    sources = [s for s in sources if s]
+    # Build source list: SoundCloud primary, Audiomack via URL, SC alt query
+    sources = []
+    sources.append(('sc', f"scsearch1:{query}"))
+    am_url = _search_audiomack_url(artist, song)
+    if am_url:
+        sources.append(('sc', am_url))
+    if song:
+        sources.append(('sc', f"scsearch1:{song} {artist}"))
 
-    for source in sources:
+    for _kind, source in sources:
         try:
-            logger.info(f"MP3: trying SoundCloud source '{source}'")
+            logger.info(f"MP3: trying source '{source}'")
             ok, data = _try_sc_download(source, file_prefix)
             if ok:
                 mp3_path, title, uploader, duration = data

@@ -1,0 +1,124 @@
+Several improvements are working correctly and should remain unchanged:
+	•	subscribe / unsubscribe flow is now working correctly
+	•	button placement rules are still correct
+	•	daily song count logic is correct
+	•	duplicate bot instance issue was identified properly
+	•	general UI and command structure should remain unchanged
+
+However, a few of the requested items were either partially implemented or missed. Please address the following points carefully.
+
+⸻
+
+1 — MP3 system still needs improvement
+
+You removed YouTube from the MP3 system, which is correct.
+
+However, the MP3 system now relies only on SoundCloud, which makes it too limited and causes many songs to fail.
+
+The MP3 button should not depend on a single provider.
+
+Please extend the MP3 source system to include additional non-YouTube providers.
+
+Recommended providers:
+	1.	SoundCloud
+	2.	Audiomack
+	3.	Bandcamp
+	4.	Archive.org
+	5.	Jamendo
+
+The system should try them sequentially but without creating long delays.
+
+Important requirements:
+	•	prioritize speed and reliability
+	•	fail fast if no clean source is found
+	•	do not introduce long retry chains
+	•	keep the user experience simple
+
+Do not reintroduce YouTube into the MP3 resolution flow.
+
+⸻
+
+2 — Recommendation system source change
+
+Currently the recommendation system still relies on:
+	•	Spotify
+	•	Last.fm
+
+We want to change this.
+
+The recommend command and the Similar button should not rely on Spotify or Last.fm.
+
+Instead, the recommendation candidate pool should come from Apple Music charts / catalog data, similar to how the daily song system now uses Apple Music Top charts.
+
+This ensures:
+	•	more current music
+	•	broader modern coverage
+	•	less dependency on external APIs with tight limits
+
+⸻
+
+3 — Recommendation pool structure
+
+The current implementation expanded a curated pool to 13–18 songs per genre.
+
+This is not sufficient for a command like /recommend or the Similar button.
+
+These commands should draw from a much wider and more dynamic pool rather than a small fixed curated list.
+
+Please ensure that:
+	•	recommendations are selected randomly from a large candidate set
+	•	the pool includes recent and current tracks
+	•	recommendations are not repeated frequently
+	•	the system avoids relying on a small static genre list
+
+The goal is that recommendations feel fresh and varied.
+
+⸻
+
+4 — Bot responsiveness and duplicate outputs
+
+The conflict handling improvement is correct.
+
+However, please confirm through testing that:
+	•	one command → one response
+	•	one button press → one response
+	•	no duplicate outputs occur
+	•	no lag occurs when commands are executed
+
+If duplicate responses still occur, investigate whether any handler paths can trigger multiple replies.
+
+⸻
+
+5 — Manual testing requirement
+
+Before reporting completion, please manually test the following:
+
+MP3 button:
+	•	test on at least 3 different songs
+
+Recommend command:
+	•	test with 2 different artists
+
+Similar button:
+	•	verify recommendations are varied and not repeating the same songs
+
+General bot behavior:
+	•	ensure commands and button presses produce only one response
+
+Please include in your report:
+	•	files modified
+	•	what was manually tested
+	•	confirmation that existing working systems were not changed
+
+⸻
+
+Important
+
+Do not modify the following systems:
+	•	subscribe / unsubscribe logic
+	•	daily song delivery logic
+	•	button placement rules
+	•	existing UI layout
+	•	working command flows
+
+Only implement the requested fixes above.

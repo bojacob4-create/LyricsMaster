@@ -26,4 +26,5 @@ dependencies = [
     "yt-dlp>=2025.2.19",
     "flask-wtf>=1.2.2",
     "uwsgi>=2.0.28",
+    "apscheduler>=3.6.3",
 ]
