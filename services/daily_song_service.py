@@ -2,7 +2,8 @@ import os
 import json
 import random
 import logging
-from typing import Dict, Optional, Tuple
+import requests
+from typing import Dict, Optional, Tuple, List
 from datetime import datetime
 from services.lyrics_service import get_song_lyrics
 from utils import detect_song_mood, get_song_statistics
@@ -30,7 +31,27 @@ def _save_subscribers(data: Dict) -> None:
 
 subscribed_users = _load_subscribers()
 
-# List of curated songs for daily recommendations
+def _fetch_apple_music_top100() -> List[Dict]:
+    """Fetch Apple Music Top 100 songs (US chart)."""
+    try:
+        url = "https://rss.applemarketingtools.com/api/v2/us/music/most-played/100/songs.json"
+        resp = requests.get(url, timeout=10, headers={'User-Agent': 'LyricsMasterBot/1.0'})
+        if resp.status_code == 200:
+            data = resp.json()
+            results = data.get('feed', {}).get('results', [])
+            songs = []
+            for item in results:
+                name = item.get('name', '').strip()
+                artist = item.get('artistName', '').strip()
+                if name and artist:
+                    songs.append({"artist": artist, "song": name})
+            logger.info(f"Fetched {len(songs)} songs from Apple Music Top 100")
+            return songs
+    except Exception as e:
+        logger.error(f"Failed to fetch Apple Music Top 100: {e}")
+    return []
+
+# Fallback static list used when Apple Music API is unavailable
 DAILY_SONGS = [
     {"artist": "The Beatles", "song": "Hey Jude"},
     {"artist": "Queen", "song": "Bohemian Rhapsody"},
@@ -65,25 +86,26 @@ DAILY_SONGS = [
 ]
 
 def get_daily_song() -> Tuple[Dict, str, Dict]:
-    """Get a random song with its lyrics and analysis."""
+    """Get a random song from Apple Music Top 100, falling back to static list."""
     try:
-        # Pick a random song
-        song_choice = random.choice(DAILY_SONGS)
+        pool = _fetch_apple_music_top100()
+        if not pool:
+            logger.warning("Apple Music Top 100 unavailable, using static fallback list")
+            pool = DAILY_SONGS
 
-        # Get lyrics
-        lyrics = get_song_lyrics(song_choice["artist"], song_choice["song"])
-        if not lyrics:
-            logger.error(f"Could not fetch lyrics for daily song: {song_choice}")
-            return None, None, None
+        random.shuffle(pool)
+        for song_choice in pool[:10]:
+            lyrics = get_song_lyrics(song_choice["artist"], song_choice["song"])
+            if not lyrics:
+                logger.debug(f"No lyrics for daily candidate: {song_choice}")
+                continue
+            mood = detect_song_mood(lyrics)
+            stats = get_song_statistics(lyrics)
+            logger.info(f"Daily song selected: {song_choice['artist']} - {song_choice['song']}")
+            return song_choice, lyrics, {"mood": mood, "stats": stats}
 
-        # Analyze song
-        mood = detect_song_mood(lyrics)
-        stats = get_song_statistics(lyrics)
-
-        return song_choice, lyrics, {
-            "mood": mood,
-            "stats": stats
-        }
+        logger.error("All daily song candidates failed to return lyrics")
+        return None, None, None
 
     except Exception as e:
         logger.error(f"Error getting daily song: {str(e)}")

@@ -35,7 +35,7 @@ from utils import (
     format_detailed_analysis
 )
 from services.youtube_service import get_youtube_link, format_youtube_response
-from services.youtube_downloader_service import download_youtube_video, download_youtube_audio, cleanup_video
+from services.youtube_downloader_service import download_youtube_video, download_youtube_audio, download_audio_for_song, cleanup_video
 from services.ai_info_service import get_person_info
 from services.artist_service import (
     get_artist_info, format_artist_info, get_trending_songs, format_trending,
@@ -1210,29 +1210,13 @@ def mp3_command(update: Update, context: CallbackContext):
             "This may take 30–60 seconds."
         )
 
-        url = None
-        if raw.startswith('http://') or raw.startswith('https://'):
-            url = raw
+        if ' - ' in raw:
+            parts = raw.split(' - ', 1)
+            artist_q, song_q = parts[0].strip(), parts[1].strip()
         else:
-            if ' - ' in raw:
-                parts = raw.split(' - ', 1)
-                artist_q, song_q = parts[0].strip(), parts[1].strip()
-            else:
-                artist_q, song_q = raw.strip(), ''
-            url = get_youtube_link(artist_q, song_q)
-            if not url and song_q:
-                url = get_youtube_link(song_q, '')
-            if not url:
-                url = get_youtube_link(raw, '')
+            artist_q, song_q = raw.strip(), ''
 
-        if not url:
-            processing_message.edit_text(
-                "😕 Couldn't find an audio source for this song.\n"
-                "Please try again later! 🔄"
-            )
-            return
-
-        success, result = download_youtube_audio(url)
+        success, result = download_audio_for_song(artist_q, song_q)
 
         if success:
             file_path, info_message, title, uploader = result

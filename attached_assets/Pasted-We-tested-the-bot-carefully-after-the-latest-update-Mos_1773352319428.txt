@@ -1,0 +1,158 @@
+We tested the bot carefully after the latest update.
+Most improvements were implemented very well — thank you for the careful work.
+
+However, we found a few remaining issues that still need to be fixed.
+
+Before making any changes, please ensure that the working features remain untouched.
+
+The following parts are currently working correctly and must not be broken:
+
+• MP3 button appears only on single-song outputs (/song, /lyrics, /analyze)
+• MP3 does NOT appear on multi-song outputs (/top, /trending)
+• /subscribe system with 1 / 2 / 3 songs per day selection works correctly
+• Duplicate subscription detection works
+• /unsubscribe message works correctly
+• /download and /mp3 are already removed from /start and /help
+
+These should remain exactly as they are.
+
+⸻
+
+Issue 1 — /download command still exists
+
+When sending:
+
+/download
+
+The bot still responds with a usage message for downloading YouTube videos.
+
+This command should be completely removed.
+
+Required:
+
+• Remove the /download CommandHandler
+• Remove any /download logic in handlers
+• Ensure the command no longer responds
+
+⸻
+
+Issue 2 — /mp3 command still exists
+
+When sending:
+
+/mp3
+
+The bot still responds with:
+
+Use the MP3 button on any song result
+
+However this command should not exist anymore.
+
+Required:
+
+• Remove the /mp3 CommandHandler completely
+• The MP3 feature should only work via the button
+
+⸻
+
+Issue 3 — Telegram command menu still shows /download and /mp3
+
+In Telegram’s command suggestions (next to the chat input), these still appear:
+
+/download
+/mp3
+
+This means they still exist in the BotCommand registration.
+
+Required:
+
+• Remove /download from BotCommand list
+• Remove /mp3 from BotCommand list
+• Update the command menu
+
+⸻
+
+Issue 4 — /translate description still incorrect
+
+Currently it shows:
+
+Arabic translation
+
+But the bot supports translating to multiple languages.
+
+Required description:
+
+Translate lyrics to any language
+
+
+⸻
+
+Issue 5 — MP3 system still depends on YouTube only
+
+Currently the MP3 button still works like this:
+
+search YouTube → download → convert
+
+This causes frequent failures such as:
+
+MP3 Download Failed
+Reason: YouTube blocked the download
+
+The MP3 system must not depend on YouTube alone.
+
+Required improvement:
+
+• Search multiple possible audio/video sources internally
+• Choose a working source automatically
+• Download audio from that source
+• Send the MP3 file to the user
+
+The source selection should remain internal and invisible to the user.
+
+Goal:
+
+High success rate when pressing the MP3 button.
+
+⸻
+
+Issue 6 — Daily song source must be Apple Music Top 100
+
+Daily discovery must use:
+
+Apple Music Top 100
+
+Logic should be:
+
+Fetch Apple Music Top 100
+↓
+Random selection
+↓
+Send based on user daily_count (1 / 2 / 3)
+
+This ensures that daily songs are always up-to-date trending songs.
+
+⸻
+
+Important
+
+After implementing the fixes, please test the following manually instead of assuming they work:
+
+Test these commands:
+
+/download
+/mp3
+/help
+/song Adele Hello
+/trending
+/subscribe
+
+Ensure that:
+
+• /download gives no response
+• /mp3 gives no response
+• command list no longer shows them
+• MP3 button works correctly
+
+Please confirm the test results after implementation.
+
+

@@ -25,7 +25,7 @@ from handlers import (
     recommend_command, quiz_command, quiz_answer, end_quiz_command,
     translate_lyrics_command, youtube_command, analyze_command,
     subscribe_daily_command, unsubscribe_daily_command,
-    download_command, wiki_command, mp3_command,
+    wiki_command,
     artist_command, trending_command,
     song_command, top_command, random_command,
     natural_language_handler, callback_query_handler
@@ -132,13 +132,11 @@ class TelegramBotWorker:
                 BotCommand("stats", "📊 Song word statistics"),
                 BotCommand("recommend", "🎵 Find similar songs"),
                 BotCommand("analyze", "🔍 Deep lyrical analysis"),
-                BotCommand("translate", "🌍 Arabic translation"),
+                BotCommand("translate", "🌍 Translate lyrics to any language"),
                 BotCommand("artist", "🎤 Quick artist profile"),
                 BotCommand("top", "🔝 Top songs by genre"),
                 BotCommand("random", "🎲 Random song discovery"),
                 BotCommand("youtube", "🎬 Find the music video"),
-                BotCommand("download", "📥 Download YouTube video"),
-                BotCommand("mp3", "🎵 Download as MP3"),
                 BotCommand("quiz", "🎮 Lyrics guessing game"),
                 BotCommand("endquiz", "End current quiz"),
                 BotCommand("wiki", "📚 Artist Wikipedia info"),
@@ -229,8 +227,6 @@ class TelegramBotWorker:
             dp.add_handler(CommandHandler("analyze", analyze_command))
             dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
             dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
-            dp.add_handler(CommandHandler("download", download_command))
-            dp.add_handler(CommandHandler("mp3", mp3_command))
             dp.add_handler(CommandHandler("wiki", wiki_command))
             dp.add_handler(CommandHandler("artist", artist_command))
             dp.add_handler(CommandHandler("trending", trending_command))
