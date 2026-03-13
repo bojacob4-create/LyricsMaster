@@ -422,6 +422,89 @@ MOOD_GENRE_WEIGHTS = {
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Song-level energy inference (title keywords → 'high' | 'mid' | 'low')
+# These are conservative — mood is the primary signal; keywords only override
+# when a strong title-level signal exists.
+# ──────────────────────────────────────────────────────────────────────────────
+_ENERGY_HIGH_WORDS: frozenset = frozenset({
+    'dance', 'fire', 'wild', 'hype', 'party', 'power', 'loud', 'fast',
+    'run', 'rush', 'jump', 'burn', 'rage', 'beast', 'flex', 'lit',
+    'bounce', 'banger', 'anthem', 'go', 'turn', 'fuel', 'spark',
+    'riot', 'electric', 'charged', 'ignite', 'explode', 'rampage',
+})
+_ENERGY_LOW_WORDS: frozenset = frozenset({
+    'sad', 'cry', 'tears', 'lonely', 'alone', 'miss', 'lost',
+    'broken', 'hurt', 'sorry', 'goodbye', 'slow', 'quiet', 'still',
+    'calm', 'soft', 'sleep', 'dream', 'rest', 'peace', 'breathe',
+    'fade', 'whisper', 'empty', 'cold', 'rain', 'dark', 'hollow',
+    'silence', 'sorrow', 'grief', 'mourn', 'ache', 'numb',
+})
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Song-level production feel inference (style/genre → production bucket)
+# Buckets: electronic | acoustic | band | trap | cinematic | minimal | mixed
+# ──────────────────────────────────────────────────────────────────────────────
+_PROD_FROM_STYLE: Dict[str, str] = {
+    'dance_pop': 'electronic',   'synth_pop': 'electronic',
+    'dance_electronic': 'electronic', 'festival_edm': 'electronic',
+    'house': 'electronic',       'pop_rnb': 'electronic',
+    'reggaeton': 'electronic',   'amapiano': 'electronic',
+    'acoustic_pop': 'acoustic',  'folk_rock': 'acoustic',
+    'country': 'acoustic',
+    'cinematic_pop': 'cinematic', 'dream_pop': 'cinematic',
+    'trap': 'trap',              'melodic_rap': 'trap',
+    'lyrical_rap': 'trap',       'female_rap': 'trap',
+    'indie_rock': 'band',        'alt_rock': 'band',
+    'anthemic_rock': 'band',     'punk_pop': 'band',
+    'psychedelic_rock': 'band',  'classic_rock': 'band',
+    'alt_pop': 'mixed',          'emotional_pop': 'minimal',
+    'smooth_rnb': 'minimal',     'alt_rnb': 'minimal',
+    'emotional_rnb': 'minimal',  'sensual_rnb': 'minimal',
+    'soul': 'minimal',
+    'afrobeats': 'mixed',        'afro_fusion': 'mixed',
+    'latin_pop': 'mixed',        'regional_mexican': 'mixed',
+}
+_PROD_FROM_GENRE: Dict[str, str] = {
+    'hiphop': 'trap',  'rnb': 'minimal',  'pop': 'electronic',
+    'afrobeats': 'mixed', 'rock': 'band', 'latin': 'mixed',
+    'classic': 'band',
+}
+
+# Energy compatibility (symmetric)
+_ENERGY_COMPAT: Dict[tuple, float] = {
+    ('high', 'high'): 100, ('high', 'mid'): 55, ('high', 'low'): 15,
+    ('mid',  'mid'):  100, ('mid',  'low'): 60,
+    ('low',  'low'):  100,
+}
+
+# Production feel compatibility (symmetric)
+_PRODUCTION_COMPAT: Dict[tuple, float] = {
+    ('electronic', 'electronic'): 100, ('electronic', 'minimal'): 55,
+    ('electronic', 'mixed'): 60,       ('electronic', 'trap'): 28,
+    ('electronic', 'cinematic'): 35,   ('electronic', 'acoustic'): 8,
+    ('electronic', 'band'): 10,
+    ('acoustic', 'acoustic'): 100,     ('acoustic', 'minimal'): 65,
+    ('acoustic', 'cinematic'): 60,     ('acoustic', 'band'): 65,
+    ('acoustic', 'mixed'): 45,         ('acoustic', 'trap'): 6,
+    ('trap', 'trap'): 100,             ('trap', 'mixed'): 58,
+    ('trap', 'minimal'): 48,           ('trap', 'band'): 12,
+    ('band', 'band'): 100,             ('band', 'acoustic'): 65,
+    ('band', 'cinematic'): 55,         ('band', 'minimal'): 35,
+    ('band', 'mixed'): 40,
+    ('cinematic', 'cinematic'): 100,   ('cinematic', 'minimal'): 70,
+    ('cinematic', 'acoustic'): 60,     ('cinematic', 'band'): 55,
+    ('cinematic', 'mixed'): 50,        ('cinematic', 'trap'): 8,
+    ('minimal', 'minimal'): 100,       ('minimal', 'cinematic'): 70,
+    ('minimal', 'acoustic'): 65,       ('minimal', 'mixed'): 58,
+    ('minimal', 'trap'): 48,           ('minimal', 'band'): 35,
+    ('mixed', 'mixed'): 100,           ('mixed', 'minimal'): 58,
+    ('mixed', 'electronic'): 60,       ('mixed', 'trap'): 58,
+    ('mixed', 'band'): 40,             ('mixed', 'acoustic'): 45,
+    ('mixed', 'cinematic'): 50,
+}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Style / subgenre layer
 # Artist → style family (more specific than genre, used only for scoring)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -982,6 +1065,69 @@ def _style_compat(s1: str, s2: str) -> float:
     return float(score) if score is not None else 10.0
 
 
+def _infer_energy(title: str, mood: str, genre: str) -> str:
+    """
+    Infer song energy level ('high' | 'mid' | 'low') from the song title.
+    Mood is the authoritative fallback; title keywords only override when
+    a clear signal is present.
+    """
+    words = set(re.sub(r"[^a-z\s]", '', title.lower()).split())
+    high_hits = len(_ENERGY_HIGH_WORDS & words)
+    low_hits  = len(_ENERGY_LOW_WORDS  & words)
+
+    if high_hits > low_hits:
+        return 'high'
+    if low_hits > high_hits:
+        return 'low'
+
+    if mood == 'energetic':
+        return 'high'
+    if mood in ('sad', 'chill', 'relaxed'):
+        return 'low'
+    if mood == 'happy':
+        return 'high' if genre in ('hiphop', 'rock', 'afrobeats') else 'mid'
+    if mood == 'romantic':
+        return 'low'
+    return 'mid'
+
+
+def _infer_production(style: str, genre: str) -> str:
+    """
+    Infer song production feel from its style/subgenre.
+
+    When style is known, look it up in _PROD_FROM_STYLE for a precise value.
+    When style is unknown, return 'mixed' — production cannot be reliably
+    inferred from genre alone (pop can be trap, acoustic, electronic, etc.).
+    Using genre as a fallback when style is unknown creates false matches
+    (e.g. an unknown-style song in 'pop' would wrongly score as 'electronic').
+
+    Returns one of: electronic | acoustic | band | trap | cinematic | minimal | mixed
+    """
+    if style and style != 'unknown':
+        prod = _PROD_FROM_STYLE.get(style)
+        if prod:
+            return prod
+    return 'mixed'
+
+
+def _energy_compat(e1: str, e2: str) -> float:
+    """Energy level compatibility score 0-100 (symmetric)."""
+    if not e1 or not e2:
+        return 50.0
+    if e1 == e2:
+        return 100.0
+    return float(_ENERGY_COMPAT.get((e1, e2)) or _ENERGY_COMPAT.get((e2, e1)) or 30.0)
+
+
+def _production_compat(p1: str, p2: str) -> float:
+    """Production feel compatibility score 0-100 (symmetric)."""
+    if not p1 or not p2:
+        return 50.0
+    if p1 == p2:
+        return 100.0
+    return float(_PRODUCTION_COMPAT.get((p1, p2)) or _PRODUCTION_COMPAT.get((p2, p1)) or 20.0)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Lightweight metadata helpers (no external API calls)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1055,18 +1201,33 @@ def _infer_tempo(mood: str, genre: str) -> str:
 
 
 def _build_song_profile(artist: str, song: str, handler_mood: str, genre: str) -> Dict:
-    """Build a lightweight metadata profile dict for a song."""
-    ap = _get_artist_profile(artist)
-    mood = _infer_mood_from_title(song, genre, handler_mood)
-    tempo = _infer_tempo(mood, genre)
+    """
+    Build a song-first profile dict.
+
+    Primary signals (derived from the song itself):
+      mood       — from title keywords + handler hint
+      energy     — from title keywords, with mood as fallback
+      production — from style/subgenre mapping
+      style      — from SONG_STYLE_OVERRIDE → ARTIST_STYLE (weak hint)
+
+    Secondary signals (artist-level, kept as weak context):
+      vocal, era — from ARTIST_PROFILE
+    """
+    ap    = _get_artist_profile(artist)
+    mood  = _infer_mood_from_title(song, genre, handler_mood)
     style = _get_song_style(artist, song)
+
+    energy     = _infer_energy(song, mood, genre)
+    production = _infer_production(style, genre)
+
     return {
-        'genre': genre,
-        'mood': mood,
-        'vocal': ap.get('vocal', 'male'),
-        'tempo': tempo,
-        'era': ap.get('era', 'modern'),
-        'style': style,
+        'genre':      genre,
+        'mood':       mood,
+        'style':      style,
+        'energy':     energy,
+        'production': production,
+        'vocal':      ap.get('vocal', 'male'),
+        'era':        ap.get('era', 'modern'),
     }
 
 
@@ -1078,31 +1239,45 @@ def _mood_compat(m1: str, m2: str) -> float:
 def _score_candidate(candidate_artist: str, candidate_name: str,
                      candidate_genre: str, source: Dict) -> float:
     """
-    Score a candidate against source profile (0-100, weighted).
+    Score a candidate against the source song profile (0-100, weighted).
 
-    Weights (v2 — style/subgenre layer added):
-      30% style/subgenre similarity  ← replaces generic vocal-only signal
-      25% mood similarity
-      20% genre similarity
-      15% vocal similarity           ← reduced: style is now the precision signal
-      10% era similarity
+    Weights (v3 — song-first architecture):
+      22% mood            primary emotional tone of the song
+      20% style           subgenre family; ARTIST_STYLE is a weak hint here
+      18% energy          high/mid/low level inferred from the song itself
+      15% production      electronic/acoustic/band/trap/cinematic/minimal/mixed
+      15% genre           broad pool match
+       6% vocal           artist-level signal, kept as weak tiebreaker
+       4% era             artist-level signal, kept as weak tiebreaker
+
+    The song-level signals (mood + energy + production = 55%) now outweigh
+    artist-level/lookup signals (style + genre + vocal + era = 45%).
+    ARTIST_STYLE's contribution is further diluted because style is one
+    of seven signals, not the dominant one.
     """
-    cp = _get_artist_profile(candidate_artist)
-    c_mood = _infer_mood_from_title(candidate_name, candidate_genre, '')
+    cp      = _get_artist_profile(candidate_artist)
+    c_mood  = _infer_mood_from_title(candidate_name, candidate_genre, '')
     c_style = _get_song_style(candidate_artist, candidate_name)
 
-    mood_score = _mood_compat(c_mood, source['mood'])
-    genre_score = 100.0 if candidate_genre == source['genre'] else 20.0
-    style_score = _style_compat(c_style, source.get('style', 'unknown'))
-    vocal_score = 100.0 if cp.get('vocal') == source['vocal'] else 40.0
-    era_score = 100.0 if cp.get('era') == source['era'] else 30.0
+    c_energy     = _infer_energy(candidate_name, c_mood, candidate_genre)
+    c_production = _infer_production(c_style, candidate_genre)
+
+    mood_score       = _mood_compat(c_mood, source['mood'])
+    style_score      = _style_compat(c_style, source.get('style', 'unknown'))
+    energy_score     = _energy_compat(c_energy, source.get('energy', 'mid'))
+    production_score = _production_compat(c_production, source.get('production', 'mixed'))
+    genre_score      = 100.0 if candidate_genre == source['genre'] else 20.0
+    vocal_score      = 100.0 if cp.get('vocal') == source['vocal'] else 40.0
+    era_score        = 100.0 if cp.get('era')   == source['era']   else 30.0
 
     return (
-        0.30 * style_score +
-        0.25 * mood_score +
-        0.20 * genre_score +
-        0.15 * vocal_score +
-        0.10 * era_score
+        0.22 * mood_score       +
+        0.20 * style_score      +
+        0.18 * energy_score     +
+        0.15 * production_score +
+        0.15 * genre_score      +
+        0.06 * vocal_score      +
+        0.04 * era_score
     )
 
 
@@ -1242,20 +1417,23 @@ def _get_apple_recommendations(artist: str, song: str,
 
     scored.sort(key=lambda x: x[0], reverse=True)
 
-    # Check quality: are the top-5 results actually similar in vibe?
-    top5_scores = [s for s, _, _ in scored[:5]]
-    avg_quality = sum(top5_scores) / len(top5_scores) if top5_scores else 0
-    logger.info(f"[REC] Apple top-5 avg score: {avg_quality:.1f} "
-                f"(threshold={_APPLE_MIN_QUALITY}) for '{artist} - {song}'")
+    # Quality gate: each candidate must individually exceed the threshold.
+    # Songs below the threshold are dropped from the pool entirely — this
+    # prevents a low-scoring outlier from being jittered into the final 5
+    # (jitter operates on the pool, so a song rated #8 pre-jitter can become
+    # #5 post-jitter if its ±2 jitter lands above position 5 scores).
+    quality_pool = [(s, c, g) for s, c, g in scored if s >= _APPLE_MIN_QUALITY]
+    logger.info(f"[REC] Apple quality pool: {len(quality_pool)} songs >= {_APPLE_MIN_QUALITY} "
+                f"for '{artist} - {song}'")
 
-    if avg_quality < _APPLE_MIN_QUALITY:
-        # Curated pool will give better genre/vibe matches — use that instead
-        logger.info(f"[REC] Apple quality too low ({avg_quality:.1f}), falling back to curated")
+    if len(quality_pool) < 3:
+        # Not enough individually-matching songs — curated will be more accurate
+        logger.info(f"[REC] Apple quality pool too small, falling back to curated")
         return None
 
-    # Good quality: take top 12, apply small jitter, then deduplicate by artist.
-    # ±2 jitter (was ±4) prevents low-scorers from randomly overtaking top picks.
-    top_pool = scored[:12]
+    # Good quality: take top 12 from the quality pool, apply small jitter,
+    # then deduplicate by artist.
+    top_pool = quality_pool[:12]
     jittered = [(s + random.uniform(-2, 2), c, g) for s, c, g in top_pool]
     jittered.sort(key=lambda x: x[0], reverse=True)
 
@@ -1274,10 +1452,14 @@ def _get_apple_recommendations(artist: str, song: str,
         if len(result) == 5:
             break
 
-    # Safety pad in case dedup reduced results below 5
+    # Safety pad: if fewer than 5 unique artists, pull from the broader scored
+    # list (not just the quality pool). Check seen_artists — never song-dict
+    # equality, because result entries have a modified 'reason' field.
     if len(result) < 5:
-        for _, c, c_genre in jittered:
-            if c not in [r for r in result]:
+        for _, c, c_genre in scored:
+            ak = c['artist'].lower()
+            if ak not in seen_artists:
+                seen_artists.add(ak)
                 rec = dict(c)
                 rec['reason'] = _generate_reason(
                     c['artist'], c['name'], c_genre, source_profile, c.get('reason', '')
