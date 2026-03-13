@@ -537,6 +537,51 @@ ARTIST_STYLE = {
     'shakira': 'latin_pop',
     'anitta': 'latin_pop',
     'rosalia': 'latin_pop',
+    # ── Dream pop / Cinematic pop ─────────────────────────────────────────────
+    'lana del rey': 'dream_pop',
+    'cigarettes after sex': 'dream_pop',
+    'beach house': 'dream_pop',
+    'the xx': 'dream_pop',
+    'mazzy star': 'dream_pop',
+    'aurora': 'cinematic_pop',
+    'birdy': 'cinematic_pop',
+    'lorde': 'cinematic_pop',
+    'halsey': 'cinematic_pop',
+    'sigrid': 'cinematic_pop',
+    'florence + the machine': 'cinematic_pop',
+    'mitski': 'cinematic_pop',
+    'phoebe bridgers': 'dream_pop',
+    'boygenius': 'dream_pop',
+    # ── Electronic / EDM ─────────────────────────────────────────────────────
+    'calvin harris': 'dance_electronic',
+    'david guetta': 'dance_electronic',
+    'kygo': 'dance_electronic',
+    'the chainsmokers': 'dance_electronic',
+    'zedd': 'dance_electronic',
+    'dj snake': 'dance_electronic',
+    'diplo': 'dance_electronic',
+    'major lazer': 'dance_electronic',
+    'robin schulz': 'dance_electronic',
+    'martin solveig': 'dance_electronic',
+    'avicii': 'festival_edm',
+    'tiesto': 'festival_edm',
+    'marshmello': 'festival_edm',
+    'skrillex': 'festival_edm',
+    'martin garrix': 'festival_edm',
+    'deadmau5': 'festival_edm',
+    'swedish house mafia': 'festival_edm',
+    'above & beyond': 'festival_edm',
+    'illenium': 'festival_edm',
+    'alesso': 'festival_edm',
+    'disclosure': 'house',
+    'fred again': 'house',
+    'duke dumont': 'house',
+    'fisher': 'house',
+    'chris lake': 'house',
+    'john summit': 'house',
+    'bicep': 'house',
+    'caribou': 'house',
+    'four tet': 'house',
     # ── Country (explicit style to block cross-genre bleed) ───────────────────
     'luke combs': 'country',
     'morgan wallen': 'country',
@@ -729,11 +774,11 @@ STYLE_COMPAT: Dict[tuple, float] = {
     ('trap', 'lyrical_rap'): 38,
     ('melodic_rap', 'melodic_rap'): 100,
     ('melodic_rap', 'trap'): 55,
-    ('melodic_rap', 'lyrical_rap'): 62,
+    ('melodic_rap', 'lyrical_rap'): 48,
     ('melodic_rap', 'pop_rnb'): 42,
     ('melodic_rap', 'smooth_rnb'): 38,
     ('lyrical_rap', 'lyrical_rap'): 100,
-    ('lyrical_rap', 'melodic_rap'): 62,
+    ('lyrical_rap', 'melodic_rap'): 48,
     ('lyrical_rap', 'trap'): 38,
     ('lyrical_rap', 'female_rap'): 45,
     ('female_rap', 'female_rap'): 100,
@@ -800,6 +845,78 @@ STYLE_COMPAT: Dict[tuple, float] = {
     ('afro_fusion', 'country'): 3,
     ('dance_pop', 'regional_mexican'): 8,
     ('emotional_rnb', 'reggaeton'): 15,
+    # ── Dream pop family ──────────────────────────────────────────────────────
+    ('dream_pop', 'dream_pop'): 100,
+    ('dream_pop', 'cinematic_pop'): 88,
+    ('dream_pop', 'alt_pop'): 72,
+    ('dream_pop', 'emotional_pop'): 65,
+    ('dream_pop', 'indie_rock'): 68,
+    ('dream_pop', 'psychedelic_rock'): 62,
+    ('dream_pop', 'folk_rock'): 58,
+    ('dream_pop', 'acoustic_pop'): 45,
+    ('dream_pop', 'synth_pop'): 38,
+    # Low / block for dream_pop vs R&B and hip-hop
+    ('dream_pop', 'alt_rnb'): 15,
+    ('dream_pop', 'smooth_rnb'): 8,
+    ('dream_pop', 'sensual_rnb'): 5,
+    ('dream_pop', 'emotional_rnb'): 20,
+    ('dream_pop', 'trap'): 5,
+    ('dream_pop', 'melodic_rap'): 8,
+    ('dream_pop', 'dance_pop'): 18,
+    ('dream_pop', 'dance_electronic'): 12,
+    # ── Cinematic pop family ──────────────────────────────────────────────────
+    ('cinematic_pop', 'cinematic_pop'): 100,
+    ('cinematic_pop', 'dream_pop'): 88,
+    ('cinematic_pop', 'alt_pop'): 72,
+    ('cinematic_pop', 'emotional_pop'): 68,
+    ('cinematic_pop', 'indie_rock'): 68,
+    ('cinematic_pop', 'folk_rock'): 62,
+    ('cinematic_pop', 'psychedelic_rock'): 55,
+    ('cinematic_pop', 'acoustic_pop'): 50,
+    ('cinematic_pop', 'synth_pop'): 35,
+    # Block R&B / hip-hop bleed
+    ('cinematic_pop', 'alt_rnb'): 12,
+    ('cinematic_pop', 'smooth_rnb'): 8,
+    ('cinematic_pop', 'sensual_rnb'): 5,
+    ('cinematic_pop', 'emotional_rnb'): 22,
+    ('cinematic_pop', 'trap'): 5,
+    ('cinematic_pop', 'dance_pop'): 20,
+    ('cinematic_pop', 'dance_electronic'): 10,
+    # ── Dance electronic family ───────────────────────────────────────────────
+    ('dance_electronic', 'dance_electronic'): 100,
+    ('dance_electronic', 'festival_edm'): 80,
+    ('dance_electronic', 'house'): 72,
+    ('dance_electronic', 'dance_pop'): 75,
+    ('dance_electronic', 'synth_pop'): 62,
+    ('dance_electronic', 'pop_rnb'): 35,
+    # Block incompatible styles
+    ('dance_electronic', 'country'): 5,
+    ('dance_electronic', 'trap'): 12,
+    ('dance_electronic', 'melodic_rap'): 12,
+    ('dance_electronic', 'lyrical_rap'): 8,
+    ('dance_electronic', 'afrobeats'): 15,
+    ('dance_electronic', 'dream_pop'): 12,
+    ('dance_electronic', 'cinematic_pop'): 10,
+    ('dance_electronic', 'emotional_rnb'): 10,
+    # ── Festival EDM family ───────────────────────────────────────────────────
+    ('festival_edm', 'festival_edm'): 100,
+    ('festival_edm', 'dance_electronic'): 80,
+    ('festival_edm', 'house'): 70,
+    ('festival_edm', 'synth_pop'): 58,
+    ('festival_edm', 'dance_pop'): 60,
+    ('festival_edm', 'country'): 5,
+    ('festival_edm', 'trap'): 12,
+    ('festival_edm', 'dream_pop'): 8,
+    # ── House family ──────────────────────────────────────────────────────────
+    ('house', 'house'): 100,
+    ('house', 'dance_electronic'): 72,
+    ('house', 'festival_edm'): 70,
+    ('house', 'dance_pop'): 65,
+    ('house', 'synth_pop'): 55,
+    ('house', 'pop_rnb'): 40,
+    ('house', 'country'): 5,
+    ('house', 'trap'): 10,
+    ('house', 'dream_pop'): 15,
 }
 
 
@@ -817,6 +934,12 @@ STYLE_GENRE_AFFINITY: Dict[str, str] = {
     'indie_rock': 'rock', 'alt_rock': 'rock',   'anthemic_rock': 'rock',
     'folk_rock': 'rock',  'punk_pop': 'rock',   'psychedelic_rock': 'rock',
     'classic_rock': 'classic',
+    # New style families → best curated pool to cross-search
+    'dream_pop': 'rock',        # Hozier, Tame Impala, Radiohead in rock pool
+    'cinematic_pop': 'rock',    # same — indie/alt artists closest match
+    'dance_electronic': 'pop',  # dance_pop artists in pop pool are closest
+    'festival_edm': 'pop',      # same
+    'house': 'pop',             # same
 }
 
 
@@ -1130,19 +1253,38 @@ def _get_apple_recommendations(artist: str, song: str,
         logger.info(f"[REC] Apple quality too low ({avg_quality:.1f}), falling back to curated")
         return None
 
-    # Good quality: take top 10, add jitter, sample 5 for variety
-    top_pool = scored[:10]
-    jittered = [(s + random.uniform(-4, 4), c, g) for s, c, g in top_pool]
+    # Good quality: take top 12, apply small jitter, then deduplicate by artist.
+    # ±2 jitter (was ±4) prevents low-scorers from randomly overtaking top picks.
+    top_pool = scored[:12]
+    jittered = [(s + random.uniform(-2, 2), c, g) for s, c, g in top_pool]
     jittered.sort(key=lambda x: x[0], reverse=True)
-    selected = jittered[:5]
 
+    # Per-artist deduplication: no artist more than once in final 5
     result = []
-    for score, c, c_genre in selected:
-        rec = dict(c)
-        rec['reason'] = _generate_reason(
-            c['artist'], c['name'], c_genre, source_profile, c.get('reason', '')
-        )
-        result.append(rec)
+    seen_artists: set = set()
+    for _, c, c_genre in jittered:
+        ak = c['artist'].lower()
+        if ak not in seen_artists:
+            seen_artists.add(ak)
+            rec = dict(c)
+            rec['reason'] = _generate_reason(
+                c['artist'], c['name'], c_genre, source_profile, c.get('reason', '')
+            )
+            result.append(rec)
+        if len(result) == 5:
+            break
+
+    # Safety pad in case dedup reduced results below 5
+    if len(result) < 5:
+        for _, c, c_genre in jittered:
+            if c not in [r for r in result]:
+                rec = dict(c)
+                rec['reason'] = _generate_reason(
+                    c['artist'], c['name'], c_genre, source_profile, c.get('reason', '')
+                )
+                result.append(rec)
+            if len(result) == 5:
+                break
 
     return result
 
@@ -1164,12 +1306,15 @@ def _get_curated_recommendations(artist: str, song: str,
         pool_genres.add(style_genre)
         logger.info(f"[REC] style '{source_style}' pulls in extra pool: '{style_genre}'")
 
-    # Add mood-related genres if primary pool is small
-    for rg in MOOD_GENRE_WEIGHTS.get(mood, ['pop']):
-        if rg not in pool_genres:
-            pool_genres.add(rg)
-            if len(pool_genres) >= 3:
-                break
+    # Expand with mood-related genres only when the style is unknown.
+    # Known styles already route to the correct pool via STYLE_GENRE_AFFINITY;
+    # mood expansion would add unrelated genre pools (e.g. rnb into dream_pop queries).
+    if source_style == 'unknown':
+        for rg in MOOD_GENRE_WEIGHTS.get(mood, ['pop']):
+            if rg not in pool_genres:
+                pool_genres.add(rg)
+                if len(pool_genres) >= 3:
+                    break
 
     # Build flat candidate list (candidate_dict, pool_genre)
     pool: List[tuple] = []
@@ -1197,12 +1342,26 @@ def _get_curated_recommendations(artist: str, song: str,
     top_pool = scored[:8]
     jittered = [(s + random.uniform(-3, 3), e, g) for s, e, g in top_pool]
     jittered.sort(key=lambda x: x[0], reverse=True)
-    selected = jittered[:5]
 
+    # Artist diversity: no artist appears more than once in the final 5.
+    # Iterate through the scored list in order; skip duplicate artists.
     result = []
-    for score, entry, pool_genre in selected:
-        rec = dict(entry)
-        result.append(rec)
+    seen_artists: set = set()
+    for _, entry, _pool_genre in jittered:
+        ak = entry['artist'].lower()
+        if ak not in seen_artists:
+            seen_artists.add(ak)
+            result.append(dict(entry))
+        if len(result) == 5:
+            break
+
+    # Safety fallback: if dedup left fewer than 5, pad from remaining scored
+    if len(result) < 5:
+        for _, entry, _pool_genre in scored:
+            if dict(entry) not in result:
+                result.append(dict(entry))
+            if len(result) == 5:
+                break
 
     return result
 

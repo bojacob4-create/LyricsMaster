@@ -1,0 +1,111 @@
+The recommendation intelligence update is working and the structure is good. However, after testing several additional songs we identified a few remaining weaknesses in the style system.
+
+Do NOT redesign the system.
+The current architecture (style scoring, compatibility matrix, curated pools, Apple Music gate) should remain exactly as it is.
+
+Only refine the style coverage.
+
+Do NOT modify:
+
+• command names
+• button labels
+• callback routing
+• output message format
+• Similar button flow
+• MP3 system
+• song dashboard
+• /lyrics /analyze /artist /wiki commands
+
+Only adjust the internal recommendation logic inside services/recommendation_service.py.
+
+⸻
+
+Findings from testing
+
+Lana Del Rey – Summertime Sadness
+
+Results returned mostly R&B artists (Jhene Aiko, Brent Faiyaz, Lucky Daye).
+
+The song belongs more to:
+alt_pop / cinematic_pop / dream_pop
+
+The system currently seems to interpret it only as “moody female vocal”.
+
+⸻
+
+Calvin Harris – Feel So Close
+
+Results returned pop/country artists.
+
+This indicates the system lacks a proper representation for:
+EDM / dance electronic / festival electronic styles.
+
+⸻
+
+Kendrick Lamar – HUMBLE
+
+Recommendations were correct but overly concentrated on Drake.
+
+The system should allow more diversity within the rap style cluster.
+
+⸻
+
+Required refinement
+
+Do not change the scoring system itself.
+
+Instead expand the style taxonomy slightly by introducing additional style families such as:
+
+alt_pop
+dream_pop
+cinematic_pop
+dance_electronic
+festival_edm
+house
+
+Then update:
+
+• ARTIST_STYLE mapping
+• STYLE_COMPAT matrix
+• STYLE_GENRE_AFFINITY map
+
+so that these styles connect to the appropriate pools.
+
+Example:
+
+dance_electronic
+→ EDM / electronic curated pool
+
+alt_pop
+→ alternative pop / indie pop pool
+
+⸻
+
+Important constraints
+
+Do NOT introduce external APIs.
+Do NOT slow down /recommend.
+Keep everything lightweight and in-memory.
+
+Do NOT modify any other file.
+
+The goal is only to improve style recognition so that songs like:
+
+• Lana Del Rey – Summertime Sadness
+• Calvin Harris – Feel So Close
+
+produce more accurate recommendations.
+
+⸻
+
+Success criteria
+
+After refinement:
+
+• Lana Del Rey should lean toward alt-pop / atmospheric artists
+• Calvin Harris should lean toward EDM / electronic artists
+• Rap recommendations should show more artist diversity
+
+Focus only on expanding and refining the style classification layer.
+
+Do not modify the current system architecture, command behavior, routing, or any already working functionality.
