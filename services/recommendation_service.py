@@ -128,6 +128,44 @@ ARTIST_GENRE_MAP = {
     'hans zimmer': 'classic',        'ennio morricone': 'classic',
     'ludovico einaudi': 'classic',   'yann tiersen': 'classic',
     'john williams': 'classic',
+    # Hip-hop / Trap (chart-active artists commonly mis-defaulting to pop)
+    'lil uzi vert': 'hiphop',        'lil baby': 'hiphop',
+    'youngboy never broke again': 'hiphop', 'pooh shiesty': 'hiphop',
+    'dababy': 'hiphop',              'don toliver': 'hiphop',
+    'gunna': 'hiphop',               'lil durk': 'hiphop',
+    'polo g': 'hiphop',              'roddy ricch': 'hiphop',
+    'a boogie wit da hoodie': 'hiphop', 'a$ap rocky': 'hiphop',
+    'a$ap ferg': 'hiphop',           'chief keef': 'hiphop',
+    'juice wrld': 'hiphop',          'xxxtentacion': 'hiphop',
+    'nba youngboy': 'hiphop',        'jack harlow': 'hiphop',
+    'yeat': 'hiphop',                'central cee': 'hiphop',
+    'fivio foreign': 'hiphop',       'asap rocky': 'hiphop',
+    'quavo': 'hiphop',               'takeoff': 'hiphop',
+    'offset': 'hiphop',              'migos': 'hiphop',
+    '42 dugg': 'hiphop',             'moneybagg yo': 'hiphop',
+    'mozzy': 'hiphop',
+    'blxst': 'rnb',                  'mariah the scientist': 'rnb',
+    'kehlani': 'rnb',                'giveon': 'rnb',
+    'bryson tiller': 'rnb',          'dvsn': 'rnb',
+    # Country (chart-active, commonly in Apple Top 100)
+    'morgan wallen': 'country',      'luke combs': 'country',
+    'ella langley': 'country',       'whiskey myers': 'country',
+    'zach bryan': 'country',         'hardy': 'country',
+    'tyler hubbard': 'country',      'brett young': 'country',
+    'thomas rhett': 'country',       'blake shelton': 'country',
+    'dierks bentley': 'country',     'eric church': 'country',
+    'chris stapleton': 'country',    'kacey musgraves': 'country',
+    'lainey wilson': 'country',      'cody johnson': 'country',
+    # Rock / Alt-rock (chart-active, commonly mis-defaulting to pop)
+    'dominic fike': 'rock',          'the strokes': 'rock',
+    'wallows': 'rock',               'cage the elephant': 'rock',
+    'the 1975': 'rock',              'interpol': 'rock',
+    'vampire weekend': 'rock',       'beach boys': 'classic',
+    'the smiths': 'rock',            'the cure': 'rock',
+    'mgmt': 'rock',                  'alt-j': 'rock',
+    'glass animals': 'rock',         'the lumineers': 'rock',
+    'of monsters and men': 'rock',   'big thief': 'indie',
+    'alex g': 'indie',
 }
 
 # iTunes genre → internal genre
@@ -140,7 +178,7 @@ _ITUNES_GENRE_MAP = {
     'rock': 'rock', 'alternative': 'rock',
     'indie': 'indie', 'indie pop': 'indie', 'art pop': 'indie',
     'latin': 'latin', 'reggaeton': 'latin', 'latin urban': 'latin',
-    'country': 'pop', 'jazz': 'classic', 'classical': 'classic',
+    'country': 'country', 'jazz': 'classic', 'classical': 'classic',
     'k-pop': 'pop', 'afrobeats': 'afrobeats', 'reggae': 'afrobeats',
     'metal': 'rock', 'punk': 'rock', 'blues': 'rnb', 'funk': 'rnb',
     'afropop': 'afrobeats', 'dancehall': 'afrobeats',
@@ -795,13 +833,14 @@ ARTIST_STYLE = {
     'aurora': 'cinematic_pop',
     'birdy': 'cinematic_pop',
     'lorde': 'cinematic_pop',
-    'halsey': 'cinematic_pop',
+    'halsey': 'synth_pop',
     'sigrid': 'cinematic_pop',
     'florence + the machine': 'cinematic_pop',
     'mitski': 'cinematic_pop',
     'phoebe bridgers': 'dream_pop',
     'boygenius': 'dream_pop',
     # ── Electronic / EDM ─────────────────────────────────────────────────────
+    'daft punk': 'dance_pop',
     'calvin harris': 'dance_electronic',
     'david guetta': 'dance_electronic',
     'kygo': 'dance_electronic',
@@ -1346,6 +1385,7 @@ POOL_ECOSYSTEM: Dict[str, str] = {
     'afrobeats':  'afrobeats_world',
     'latin':      'afrobeats_world',
     'classic':    'classical_cinematic',
+    'country':    'country_folk',
 }
 
 # Each ecosystem's adjacent set (always includes itself).
@@ -1364,6 +1404,7 @@ ECOSYSTEM_ADJACENT: Dict[str, frozenset] = {
     'afrobeats_world':    frozenset({'afrobeats_world', 'rnb_soul', 'pop_synth'}),
     'classical_cinematic':frozenset({'classical_cinematic', 'indie_alt',
                                      'electronic_synth'}),
+    'country_folk':       frozenset({'country_folk'}),
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1767,7 +1808,7 @@ def _get_song_style(artist: str, song: str) -> str:
     Priority: SONG_STYLE_OVERRIDE → ARTIST_STYLE → 'unknown'
     No external calls; O(1) lookup.
     """
-    a_key = re.sub(r'\s*(feat\.?|ft\.?|featuring)\s.*', '', artist.lower().strip(),
+    a_key = re.sub(r'\s+(feat\.?|ft\.?|featuring)\s.*', '', artist.lower().strip(),
                    flags=re.IGNORECASE).strip()
     s_key = song.lower().strip()
 
@@ -1890,7 +1931,7 @@ def _detect_genre_fast(artist: str) -> str:
     if key in ARTIST_GENRE_MAP:
         return ARTIST_GENRE_MAP[key]
     # Try stripping 'feat.' suffix
-    clean = re.sub(r'\s*(feat\.?|ft\.?|featuring)\s.*', '', key, flags=re.IGNORECASE).strip()
+    clean = re.sub(r'\s+(feat\.?|ft\.?|featuring)\s.*', '', key, flags=re.IGNORECASE).strip()
     if clean in ARTIST_GENRE_MAP:
         return ARTIST_GENRE_MAP[clean]
     # Partial match
@@ -1905,7 +1946,7 @@ def _get_artist_profile(artist: str) -> Dict:
     key = artist.lower().strip()
     if key in ARTIST_PROFILE:
         return ARTIST_PROFILE[key]
-    clean = re.sub(r'\s*(feat\.?|ft\.?|featuring)\s.*', '', key, flags=re.IGNORECASE).strip()
+    clean = re.sub(r'\s+(feat\.?|ft\.?|featuring)\s.*', '', key, flags=re.IGNORECASE).strip()
     if clean in ARTIST_PROFILE:
         return ARTIST_PROFILE[clean]
     # Partial
@@ -2116,6 +2157,7 @@ def _build_song_profile(artist: str, song: str, handler_mood: str, genre: str) -
         'style':      style,
         'energy':     energy,
         'production': production,
+        'prod_sig':   prod_sig,   # mood-free structural identity; used to gate pool expansion
         'vocal':      ap.get('vocal', 'male'),
         'era':        ap.get('era', 'modern'),
         'ecosystem':  _infer_ecosystem(production, style, genre, prod_sig),
@@ -2358,6 +2400,21 @@ def _get_apple_recommendations(artist: str, song: str,
 
     scored.sort(key=lambda x: x[0], reverse=True)
 
+    # ── Ecosystem filter ─────────────────────────────────────────────────────
+    # Discard Apple Music candidates whose artist genre maps to an ecosystem
+    # that is completely outside the source song's neighbourhood.  This prevents
+    # chart-dominant genres (e.g. hip-hop or country) from flooding the quality
+    # pool simply because their mood/energy scores are adequate.
+    source_eco   = source_profile.get('ecosystem', 'pop_synth')
+    adj_ecos     = ECOSYSTEM_ADJACENT.get(source_eco, frozenset({source_eco}))
+    pre_filter   = len(scored)
+    scored = [(s, c, g) for s, c, g in scored
+              if POOL_ECOSYSTEM.get(g, 'pop_synth') in adj_ecos]
+    if len(scored) < pre_filter:
+        logger.info(f"[REC] Apple ecosystem filter ({source_eco}): "
+                    f"{pre_filter - len(scored)} FAR-ecosystem candidates removed "
+                    f"({len(scored)} remain)")
+
     # Quality gate: each candidate must individually exceed the threshold.
     # Songs below the threshold are dropped from the pool entirely — this
     # prevents a low-scoring outlier from being jittered into the final 5
@@ -2420,22 +2477,35 @@ def _get_curated_recommendations(artist: str, song: str,
     logger.info(f"Curated recs: genre='{genre}' style='{source_style}' "
                 f"mood='{source_profile['mood']}' for '{artist} - {song}'")
 
-    pool_genres: set = {genre}
-
-    # If the song's style belongs to a different curated pool, include that pool
-    # too (e.g. The Weeknd "Blinding Lights" = synth_pop → add pop pool).
-    style_genre = STYLE_GENRE_AFFINITY.get(source_style)
-    if style_genre and style_genre != genre:
-        pool_genres.add(style_genre)
-        logger.info(f"[REC] style '{source_style}' pulls in extra pool: '{style_genre}'")
-
-    # Determine the source song's ecosystem and its adjacent set.
-    # All pool expansion below is bounded to this adjacent set — pools outside
-    # the source's ecosystem neighbourhood are never added as candidates.
+    # Determine the source song's ecosystem and its adjacent set first —
+    # the pool seeding logic below uses adjacent_ecos to decide whether
+    # the artist-level genre pool belongs in the candidate neighbourhood.
     source_ecosystem = source_profile.get('ecosystem',
                            POOL_ECOSYSTEM.get(genre, 'pop_synth'))
     adjacent_ecos    = ECOSYSTEM_ADJACENT.get(source_ecosystem,
                            frozenset({source_ecosystem}))
+
+    # ── Style-first pool seeding ────────────────────────────────────────────
+    # Use the style's genre pool as the primary seed when style is known.
+    # This prevents the artist-level genre (e.g. 'rnb' for The Weeknd) from
+    # contaminating the pool when the track's production identity (e.g. synth_pop)
+    # points to a completely different sonic territory.
+    # The original genre is added back only when its ecosystem is adjacent to the
+    # source song's ecosystem — keeping it as a secondary option, not the seed.
+    style_genre = STYLE_GENRE_AFFINITY.get(source_style)
+    if style_genre:
+        pool_genres: set = {style_genre}
+        if genre != style_genre:
+            genre_eco = POOL_ECOSYSTEM.get(genre, 'pop_synth')
+            if genre_eco in adjacent_ecos:
+                pool_genres.add(genre)
+                logger.info(f"[REC] style='{source_style}' seeds '{style_genre}'; "
+                            f"genre='{genre}' re-added (ecosystem-adjacent)")
+            else:
+                logger.info(f"[REC] style='{source_style}' seeds '{style_genre}'; "
+                            f"genre='{genre}' EXCLUDED (eco '{genre_eco}' ∉ adjacency)")
+    else:
+        pool_genres: set = {genre}
 
     # Expand with mood-related genres only when the style is unknown.
     # Known styles already route to the correct pool via STYLE_GENRE_AFFINITY;
@@ -2455,11 +2525,26 @@ def _get_curated_recommendations(artist: str, song: str,
     # fingerprint, but only when the hinted pool belongs to the source song's
     # adjacent ecosystem.  This prevents a mood+production coincidence from
     # pulling in candidates from an unrelated musical world.
+    #
+    # Additional guard — prod_sig veto:
+    # When the production signature indicates definitively electronic production
+    # ('electronic_synth' / 'disco_funk'), block any sonic hint that would add a
+    # non-electronic pool.  This prevents the mood-driven production *softening*
+    # rule (e.g. electronic+romantic+low → cinematic) from leaking the resulting
+    # softer feel into pool expansion and pulling in indie/folk candidates for
+    # tracks that are structurally synth-pop or dance-electronic.
+    _ELECTRONIC_SIGS: frozenset = frozenset({'electronic_synth', 'disco_funk'})
     source_prod = source_profile.get('production', 'mixed')
+    prod_sig    = source_profile.get('prod_sig', '')
     sonic_hint  = SONIC_POOL_HINT.get((mood, source_prod))
     if sonic_hint and sonic_hint not in pool_genres:
-        hint_eco = POOL_ECOSYSTEM.get(sonic_hint, source_ecosystem)
-        if hint_eco in adjacent_ecos:
+        hint_eco         = POOL_ECOSYSTEM.get(sonic_hint, source_ecosystem)
+        sig_blocks_hint  = (prod_sig in _ELECTRONIC_SIGS and
+                            hint_eco not in ('electronic_synth',))
+        if sig_blocks_hint:
+            logger.info(f"[REC] sonic hint ({mood}×{source_prod}) → '{sonic_hint}' "
+                        f"BLOCKED by prod_sig='{prod_sig}' (structural electronic identity)")
+        elif hint_eco in adjacent_ecos:
             pool_genres.add(sonic_hint)
             logger.info(f"[REC] sonic hint ({mood}×{source_prod}) → '{sonic_hint}' "
                         f"[{hint_eco} ∈ {source_ecosystem} adjacency]")
