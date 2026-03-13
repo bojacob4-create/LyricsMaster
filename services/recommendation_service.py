@@ -45,6 +45,13 @@ ARTIST_GENRE_MAP = {
     'bad bunny': 'latin', 'rosalia': 'latin', 'karol g': 'latin', 'rauw alejandro': 'latin',
     'ozuna': 'latin', 'j balvin': 'latin', 'daddy yankee': 'latin', 'peso pluma': 'latin',
     'shakira': 'latin', 'myke towers': 'latin', 'feid': 'latin', 'anitta': 'latin',
+    'jhay cortez': 'latin', 'sech': 'latin', 'anuel aa': 'latin', 'tainy': 'latin',
+    'mora': 'latin', 'boza': 'latin', 'quevedo': 'latin', 'maluma': 'latin',
+    'nicky jam': 'latin', 'wisin': 'latin', 'yandel': 'latin', 'don omar': 'latin',
+    'arcangel': 'latin', 'farruko': 'latin', 'lunay': 'latin', 'darell': 'latin',
+    'el alfa': 'latin', 'natanael cano': 'latin', 'junior h': 'latin',
+    'becky g': 'latin', 'natti natasha': 'latin', 'sebastian yatra': 'latin',
+    'camilo': 'latin', 'dei v': 'latin', 'plan b': 'latin',
     'queen': 'rock', 'the beatles': 'rock', 'led zeppelin': 'rock', 'pink floyd': 'rock',
     'nirvana': 'rock', 'foo fighters': 'rock', 'arctic monkeys': 'rock',
     'imagine dragons': 'rock', 'coldplay': 'rock', 'u2': 'rock', 'the killers': 'rock',
@@ -509,20 +516,42 @@ GENRE_RECOMMENDATIONS = {
         {'artist': 'Nick Cave', 'name': 'Into My Arms', 'reason': 'Dark post-punk piano ballad'},
     ],
     'latin': [
-        {'artist': 'Bad Bunny', 'name': 'Titi Me Pregunto', 'reason': 'Latin trap/reggaeton vibes'},
-        {'artist': 'Rosalía', 'name': 'DESPECHA', 'reason': 'Spanish pop innovation'},
-        {'artist': 'Karol G', 'name': 'BICHOTA', 'reason': 'Reggaeton with attitude'},
-        {'artist': 'Rauw Alejandro', 'name': 'Todo de Ti', 'reason': 'Modern Latin pop'},
-        {'artist': 'Ozuna', 'name': 'Taki Taki', 'reason': 'Reggaeton dance energy'},
-        {'artist': 'Bad Bunny', 'name': 'Monaco', 'reason': 'Latin trap from 2024'},
-        {'artist': 'Karol G', 'name': 'Mañana Será Bonito', 'reason': 'Latin pop 2023'},
-        {'artist': 'Peso Pluma', 'name': 'Ella Baila Sola', 'reason': 'Regional Mexican breakout 2023'},
-        {'artist': 'Shakira', 'name': 'Bzrp Music Sessions #53', 'reason': 'Viral Latin pop 2023'},
+        # ── Reggaeton / urbano core ───────────────────────────────────────────
+        {'artist': 'Bad Bunny', 'name': 'Titi Me Pregunto', 'reason': 'Dembow reggaeton energy'},
+        {'artist': 'Bad Bunny', 'name': 'Monaco', 'reason': 'Latin trap minimalism'},
+        {'artist': 'Bad Bunny', 'name': 'Un Verano Sin Ti', 'reason': 'Chill Latin summer feel'},
+        {'artist': 'Karol G', 'name': 'BICHOTA', 'reason': 'Reggaeton confidence anthem'},
+        {'artist': 'Karol G', 'name': 'Provenza', 'reason': 'Latin urban club energy'},
+        {'artist': 'Rauw Alejandro', 'name': 'Todo de Ti', 'reason': 'Modern Latin pop-reggaeton'},
+        {'artist': 'Rauw Alejandro', 'name': 'Lokera', 'reason': 'Uptempo reggaeton flow'},
+        {'artist': 'Feid', 'name': 'Chorrito Pa Las Animas', 'reason': 'Chill urbano groove'},
+        {'artist': 'Feid', 'name': 'Normal', 'reason': 'Latin R&B-urbano fusion'},
         {'artist': 'Myke Towers', 'name': 'La Inocente', 'reason': 'Smooth reggaeton flow'},
-        {'artist': 'Feid', 'name': 'Chorrito Pa Las Animas', 'reason': 'Chill reggaeton 2023'},
-        {'artist': 'Anitta', 'name': 'Funk Rave', 'reason': 'Brazilian funk crossover'},
-        {'artist': 'Rauw Alejandro', 'name': 'Lokera', 'reason': 'Uptempo reggaeton 2022'},
+        {'artist': 'Myke Towers', 'name': 'Almas Gemelas', 'reason': 'Latin trap romance'},
+        {'artist': 'Jhay Cortez', 'name': 'Dakiti', 'reason': 'Atmospheric Latin trap'},
+        {'artist': 'Jhay Cortez', 'name': 'No Me Conoce', 'reason': 'Slow-burn Latin urban'},
+        {'artist': 'Ozuna', 'name': 'Taki Taki', 'reason': 'Global reggaeton anthem'},
         {'artist': 'J Balvin', 'name': 'Con Altura', 'reason': 'Classic reggaeton crossover'},
+        {'artist': 'J Balvin', 'name': 'Mi Gente', 'reason': 'Latin club floor-filler'},
+        {'artist': 'Daddy Yankee', 'name': 'Gasolina', 'reason': 'Foundational reggaeton energy'},
+        {'artist': 'Daddy Yankee', 'name': 'Dura', 'reason': 'High-tempo reggaeton anthem'},
+        {'artist': 'Sech', 'name': 'Otro Trago', 'reason': 'Tropical reggaeton groove'},
+        {'artist': 'Anuel AA', 'name': 'China', 'reason': 'Hard Latin trap/reggaeton'},
+        {'artist': 'Tainy', 'name': 'Lo Siento BB://', 'reason': 'Experimental Latin urban'},
+        {'artist': 'Mora', 'name': 'Colombia', 'reason': 'Melodic Latin urban'},
+        {'artist': 'Quevedo', 'name': 'Columbia', 'reason': 'Spanish-urban crossover'},
+        {'artist': 'Boza', 'name': 'Hecha Pa Mi', 'reason': 'Smooth urbano Caribbean feel'},
+        {'artist': 'Maluma', 'name': 'Hawái', 'reason': 'Chill Latin pop-reggaeton'},
+        # ── Latin pop / crossover ─────────────────────────────────────────────
+        {'artist': 'Rosalía', 'name': 'DESPECHA', 'reason': 'Spanish flamenco-urban fusion'},
+        {'artist': 'Shakira', 'name': 'Bzrp Music Sessions #53', 'reason': 'Global Latin pop moment'},
+        {'artist': 'Karol G', 'name': 'Mañana Será Bonito', 'reason': 'Latin pop anthem 2023'},
+        {'artist': 'Anitta', 'name': 'Funk Rave', 'reason': 'Brazilian funk-urban crossover'},
+        {'artist': 'Becky G', 'name': 'Mamiii', 'reason': 'Empowerment Latin pop'},
+        # ── Regional Mexican / corridos ───────────────────────────────────────
+        {'artist': 'Peso Pluma', 'name': 'Ella Baila Sola', 'reason': 'Corridos tumbados breakout'},
+        {'artist': 'Peso Pluma', 'name': 'BZRP Music Sessions #55', 'reason': 'Corridos crossover moment'},
+        {'artist': 'Natanael Cano', 'name': 'Amor Tumbado', 'reason': 'Trap-corridos fusion'},
     ],
     'classic': [
         {'artist': 'Fleetwood Mac', 'name': 'Dreams', 'reason': 'Timeless classic rock'},
@@ -836,10 +865,38 @@ ARTIST_STYLE = {
     'daddy yankee': 'reggaeton',
     'feid': 'reggaeton',
     'myke towers': 'reggaeton',
+    'jhay cortez': 'reggaeton',
+    'sech': 'reggaeton',
+    'anuel aa': 'reggaeton',
+    'arcangel': 'reggaeton',
+    'mora': 'reggaeton',
+    'boza': 'reggaeton',
+    'dei v': 'reggaeton',
+    'quevedo': 'reggaeton',
+    'maluma': 'reggaeton',
+    'nicky jam': 'reggaeton',
+    'wisin': 'reggaeton',
+    'wisin & yandel': 'reggaeton',
+    'yandel': 'reggaeton',
+    'plan b': 'reggaeton',
+    'don omar': 'reggaeton',
+    'tainy': 'reggaeton',
+    'el alfa': 'reggaeton',
+    'lunay': 'reggaeton',
+    'darell': 'reggaeton',
+    'farruko': 'reggaeton',
+    'zion & lennox': 'reggaeton',
     'peso pluma': 'regional_mexican',
+    'natanael cano': 'regional_mexican',
+    'junior h': 'regional_mexican',
     'shakira': 'latin_pop',
     'anitta': 'latin_pop',
     'rosalia': 'latin_pop',
+    'becky g': 'latin_pop',
+    'natti natasha': 'latin_pop',
+    'sebastian yatra': 'latin_pop',
+    'camilo': 'latin_pop',
+    'sofia carson': 'latin_pop',
     # ── Dream pop / Cinematic pop ─────────────────────────────────────────────
     'lana del rey': 'dream_pop',
     'cigarettes after sex': 'dream_pop',
@@ -1541,6 +1598,13 @@ _PROD_POOL_ECOSYSTEM: Dict[tuple, str] = {
     ('minimal', 'pop'):           'rnb_soul',            # minimal pop leans R&B
     ('minimal', 'indie'):         'indie_alt',
     ('minimal', ''):              'rnb_soul',
+    # Latin urban production — reggaeton/dembow beat is electronic in construction
+    # but belongs to the Latin urban ecosystem, NOT electronic_synth.
+    # This entry fires when style_pool='latin' and production='electronic'
+    # (which is the path for reggaeton / latin trap / dembow).
+    ('electronic', 'latin'):  'afrobeats_world',
+    ('mixed',      'latin'):  'afrobeats_world',  # latin_pop, regional_mexican
+    ('trap',       'latin'):  'afrobeats_world',  # latin trap
     # Mixed production — no strong production identity; falls through to genre.
     # (no entries intentionally — let style_pool → genre fallback handle it)
 }
@@ -1635,6 +1699,16 @@ _PROD_SIGNATURE_MAP: Dict[tuple, str] = {
     ('cinematic_score', 'classic'): 'cinematic',
     ('cinematic_pop',   'indie'):   'cinematic',
     ('dream_pop',       'indie'):   'cinematic',
+    # Latin urban — reggaeton / latin trap / dembow share a distinct rhythmic
+    # identity (808-driven dembow pattern) that is structurally different from
+    # EDM/synth-pop despite also using electronic production tools.
+    # All Latin styles with a 'latin' genre context map to 'latin_urban'.
+    ('reggaeton',        'latin'):  'latin_urban',
+    ('latin_pop',        'latin'):  'latin_urban',
+    ('latin_trap',       'latin'):  'latin_urban',
+    ('dembow',           'latin'):  'latin_urban',
+    ('regional_mexican', 'latin'):  'latin_urban',
+    ('afrobeats',        'latin'):  'latin_urban',  # Afro-Latin crossover
 }
 
 # Maps production signature → ecosystem directly.
@@ -1648,6 +1722,9 @@ _PROD_SIG_ECOSYSTEM: Dict[str, str] = {
     'trap_beats':        'hiphop_trap',
     'rnb_soul':          'rnb_soul',
     'indie_alt':         'indie_alt',
+    # Latin urban: reggaeton / latin trap / dembow always map to afrobeats_world
+    # regardless of the coarse production-feel value.
+    'latin_urban':       'afrobeats_world',
 }
 
 # Maps coarse production-feel values to signature vocabulary for fallback.
@@ -1795,12 +1872,24 @@ _TAG_STYLE_MAP: Dict[str, str] = {
     'afropop':             'afrobeats',
     'amapiano':            'amapiano',
     'afro fusion':         'afro_fusion',
-    # ── Latin ───────────────────────────────────────────────────────────────
+    # ── Latin urban ──────────────────────────────────────────────────────────
     'reggaeton':           'reggaeton',
+    'latin':               'latin_pop',
     'latin pop':           'latin_pop',
+    'latin urban':         'reggaeton',
+    'urbano latino':       'reggaeton',
+    'latin trap':          'reggaeton',    # latin trap = reggaeton family
+    'dembow':              'reggaeton',
+    'perreo':              'reggaeton',
+    'trap latino':         'reggaeton',
+    'musica urbana':       'reggaeton',
+    'spanish':             'latin_pop',    # spanish-language signal
     'tropical':            'latin_pop',
     'bachata':             'latin_pop',
     'salsa':               'latin_pop',
+    'cumbia':              'latin_pop',
+    'corridos tumbados':   'regional_mexican',
+    'regional mexicano':   'regional_mexican',
     # ── Classical / cinematic ───────────────────────────────────────────────
     'classical':           'cinematic_score',
     'orchestral':          'cinematic_score',
