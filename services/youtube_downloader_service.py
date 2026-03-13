@@ -298,13 +298,38 @@ def _search_archive_org(artist: str, song: str) -> Optional[str]:
 
 def _download_url_to_mp3(download_url: str, file_prefix: str, label: str) -> str:
     """
-    Download audio from a resolved URL and convert to MP3.
-    Returns the local mp3 file path on success. Raises on failure.
+    Download audio from a resolved URL without requiring ffmpeg.
+
+    Format priority:
+      1. Direct HTTP MP3 (protocol=http, ext=mp3) — no ffmpeg, single file download
+      2. Direct HTTP any audio — no ffmpeg
+      3. Any bestaudio — may require ffmpeg; only used if nothing else found
+
+    Postprocessors are intentionally omitted to avoid ffmpeg dependency on
+    the deployed Reserved VM where ffmpeg is not in PATH.
     """
     logger.info(f"[MP3][DOWNLOAD] Starting | provider={label} | url='{download_url}'")
     output_template = f'{file_prefix}.%(ext)s'
     dl_opts = {
-        'format': 'bestaudio/best',
+        # Format priority — no ffmpeg required at any tier:
+        #
+        #  1. protocol=http, ext=mp3   — single-file direct HTTP MP3 (best, no merger)
+        #     e.g. SoundCloud cf-media.sndcdn.com/*.128.mp3
+        #  2. protocol=http, any       — direct HTTP audio (ogg/aac), still no merger
+        #  3. protocol=m3u8_native, ext=mp3
+        #     — HLS with MP3 audio frames in TS segments.
+        #     yt-dlp's NativeHlsFD concatenates these natively; the result
+        #     is a valid MP3 file even without ffmpeg.
+        #  4. protocol=m3u8_native, any mp3 — same merger, any m3u8 mp3
+        #  5. bestaudio fallback (last resort; may produce opus)
+        'format': (
+            'bestaudio[protocol=http][ext=mp3]'
+            '/bestaudio[protocol=http]'
+            '/bestaudio[protocol=m3u8_native][ext=mp3]'
+            '/bestaudio[protocol=m3u8][ext=mp3]'
+            '/bestaudio[ext=mp3]'
+            '/bestaudio'
+        ),
         'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
@@ -312,13 +337,7 @@ def _download_url_to_mp3(download_url: str, file_prefix: str, label: str) -> str
         'restrictfilenames': True,
         'socket_timeout': 30,
         'retries': 3,
-        'fragment_retries': 5,
-        'skip_unavailable_fragments': False,
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '128',
-        }],
+        # No postprocessors — no ffmpeg dependency
     }
     try:
         with yt_dlp.YoutubeDL(dl_opts) as ydl:
@@ -332,21 +351,28 @@ def _download_url_to_mp3(download_url: str, file_prefix: str, label: str) -> str
         logger.warning(f"[MP3][DOWNLOAD] Error | provider={label}: {type(e).__name__}: {e}")
         raise
 
-    mp3_path = os.path.join(os.getcwd(), f'{file_prefix}.mp3')
-    if not os.path.exists(mp3_path):
+    # Find the downloaded file — ext varies (mp3, opus, m4a, etc.)
+    audio_path = None
+    for ext in ('mp3', 'opus', 'm4a', 'aac', 'ogg', 'webm'):
+        candidate = os.path.join(os.getcwd(), f'{file_prefix}.{ext}')
+        if os.path.exists(candidate):
+            audio_path = candidate
+            break
+
+    if not audio_path:
         matches = [m for m in globmod.glob(os.path.join(os.getcwd(), f'{file_prefix}.*'))
                    if not m.endswith('.part')]
         if matches:
-            mp3_path = matches[0]
-            logger.info(f"[MP3][FILE] Found at alternate path: '{mp3_path}'")
+            audio_path = matches[0]
+            logger.info(f"[MP3][FILE] Found at alternate path: '{audio_path}'")
         else:
             logger.warning(f"[MP3][FILE] No file found after download | provider={label}")
-            raise FileNotFoundError(f"mp3 not found after download via {label}")
+            raise FileNotFoundError(f"audio file not found after download via {label}")
 
-    size_bytes = os.path.getsize(mp3_path)
-    logger.info(f"[MP3][FILE] OK | provider={label} | path='{mp3_path}' "
+    size_bytes = os.path.getsize(audio_path)
+    logger.info(f"[MP3][FILE] OK | provider={label} | path='{audio_path}' "
                 f"| size={round(size_bytes/1024/1024, 2)}MB")
-    return mp3_path
+    return audio_path
 
 
 def _build_success_msg(title: str, uploader: str, duration: int, file_size_mb: float) -> str:
