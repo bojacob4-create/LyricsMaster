@@ -1,0 +1,89 @@
+The architecture is now correct and the introduction of Last.fm track tags was the right structural improvement. The system is finally using song-level metadata instead of relying only on artist-level style.
+
+However, recent tests show that some production-driven songs are still being misclassified. Examples include tracks like synth-pop or disco-funk songs still drifting into R&B or generic pop recommendation pools.
+
+This indicates that the remaining weakness is not the metadata source, but the interpretation layer that converts tags into internal style families.
+
+Please improve the tag interpretation logic without changing the existing recommendation architecture.
+
+Important constraints:
+	•	Do NOT modify ecosystem adjacency
+	•	Do NOT modify pool gating
+	•	Do NOT modify scoring weights
+	•	Do NOT change the recommendation algorithm
+	•	Do NOT introduce artist-specific or song-specific overrides
+	•	Keep all existing handlers, commands, and outputs unchanged
+
+The only goal is to improve how Last.fm tags are translated into internal style identities.
+
+Required improvements:
+	1.	Expand the TAG_STYLE_MAP coverage.
+
+Add mappings for common production-defining tags that are currently missing or too generic, including patterns such as:
+	•	synthwave
+	•	retro pop
+	•	nu disco
+	•	disco funk
+	•	french house
+	•	electro house
+	•	indie electronic
+	•	dark pop
+	•	dream pop
+	•	alt pop
+	•	bedroom pop
+	•	future bass
+	•	chillwave
+	•	synthwave pop
+
+These should map into the existing internal style families such as:
+	•	synth_pop
+	•	dance_pop
+	•	indie_alt
+	•	electronic
+	•	downtempo
+	•	alt_rnb
+
+Do not create new ecosystem categories — only map tags into the existing style families already used by the system.
+	2.	Improve the tag voting system.
+
+Currently, a tag must exceed a fixed threshold to override artist style. This sometimes prevents valid song-level signals from taking effect.
+
+Modify the voting logic so that:
+	•	The top tag always receives a normalized score of 1.0
+	•	Specific multi-word tags (e.g. “synth-pop”, “nu disco”, “alt r&b”) receive higher weight than single-word tags
+	•	Broad tags such as “pop”, “rock”, “electronic”, “indie” should continue to be treated as weak signals
+	•	If the top specific tag strongly indicates a style family, it should override artist_style even if the total vote share is slightly below the current threshold
+
+	3.	Improve production-driven tag detection.
+
+Certain tags should directly imply production signatures even if genre is broad. For example:
+	•	synthwave / synth-pop / new wave → synth_pop → electronic_synth ecosystem
+	•	disco / nu disco / funk → dance_pop → disco_funk signature
+	•	trip hop / downtempo → downtempo → cinematic electronic ecosystem
+	•	dream pop / indie pop → indie_alt
+	•	neo soul / alternative r&b → rnb_soul ecosystem
+
+This mapping should remain rule-based and general, not song-specific.
+	4.	Keep graceful fallback behavior.
+
+If no strong tag signal exists, the pipeline should continue to fall back to the previous logic:
+
+artist_style → production_signature → ecosystem assignment.
+
+This ensures stability when tags are unavailable.
+	5.	Add logging for debugging.
+
+When tag_style overrides artist_style, log:
+	•	artist
+	•	song
+	•	top tags detected
+	•	selected style family
+	•	final ecosystem assigned
+
+This will make future debugging easier without affecting runtime behavior.
+
+Goal:
+
+Strengthen the tag-to-style translation layer so that song-level metadata from Last.fm correctly identifies production-driven tracks such as synth-pop, disco-funk, and electronic crossover songs.
+
+The recommendation architecture itself should remain unchanged

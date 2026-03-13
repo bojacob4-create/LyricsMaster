@@ -1545,21 +1545,32 @@ _PROD_FEEL_TO_SIG: Dict[str, str] = {
 # are included — broad labels like 'pop' or 'rock' are omitted here because
 # they carry no production-level information and would dilute signal.
 _TAG_STYLE_MAP: Dict[str, str] = {
-    # Synth / electronic pop
+    # ── Synth / electronic pop ──────────────────────────────────────────────
     'synth-pop':           'synth_pop',
     'synthpop':            'synth_pop',
     'synthwave':           'synth_pop',
     'synth pop':           'synth_pop',
+    'synthwave pop':       'synth_pop',
     'electropop':          'synth_pop',
     'electro pop':         'synth_pop',
     'new wave':            'synth_pop',
-    # Dance / disco / funk
+    'retro pop':           'synth_pop',
+    'retrowave':           'synth_pop',
+    'indie electronic':    'synth_pop',   # electronic production, indie feel
+    'future bass':         'synth_pop',   # melodic/synth-driven electronic
+    'chillwave':           'synth_pop',   # atmospheric synth pop
+    '80s':                 'synth_pop',   # strong production-era signal
+    # ── Dance / disco / funk ────────────────────────────────────────────────
     'dance-pop':           'dance_pop',
     'dance pop':           'dance_pop',
     'disco':               'dance_pop',
     'funk':                'dance_pop',
     'nu-disco':            'dance_pop',
-    # Pure electronic genres
+    'nu disco':            'dance_pop',
+    'disco funk':          'dance_pop',
+    'french house':        'house',       # specific dance-electronic sub-genre
+    'electro house':       'house',
+    # ── Pure electronic genres ──────────────────────────────────────────────
     'edm':                 'festival_edm',
     'electronic dance music': 'festival_edm',
     'big room':            'festival_edm',
@@ -1581,7 +1592,7 @@ _TAG_STYLE_MAP: Dict[str, str] = {
     'idm':                 'idm',
     'intelligent dance music': 'idm',
     'electronica':         'idm',
-    # Cinematic / ambient / trip-hop
+    # ── Cinematic / ambient / trip-hop / chill ──────────────────────────────
     'ambient':             'ambient',
     'ambient electronic':  'ambient',
     'trip-hop':            'downtempo',
@@ -1589,25 +1600,38 @@ _TAG_STYLE_MAP: Dict[str, str] = {
     'downtempo':           'downtempo',
     'chillout':            'downtempo',
     'chill out':           'downtempo',
-    # R&B / soul
+    'lo-fi':               'downtempo',
+    'lo fi':               'downtempo',
+    'lo-fi hip hop':       'downtempo',
+    # ── R&B / soul ──────────────────────────────────────────────────────────
     'r&b':                 'alt_rnb',
     'rnb':                 'alt_rnb',
     'rhythm and blues':    'alt_rnb',
     'alternative r&b':     'alt_rnb',
+    'alt r&b':             'alt_rnb',
     'contemporary r&b':    'smooth_rnb',
     'smooth r&b':          'smooth_rnb',
     'soul':                'soul',
+    'soul music':          'soul',
     'neo soul':            'neo_soul',
     'neo-soul':            'neo_soul',
-    # Hip-hop / trap
+    'funk soul':           'neo_soul',
+    'pop soul':            'soul',
+    # ── Hip-hop / trap ──────────────────────────────────────────────────────
     'hip-hop':             'lyrical_rap',
     'hip hop':             'lyrical_rap',
     'rap':                 'lyrical_rap',
+    'conscious hip-hop':   'lyrical_rap',
+    'conscious hip hop':   'lyrical_rap',
+    'alternative hip-hop': 'lyrical_rap',
+    'west coast hip-hop':  'lyrical_rap',
+    'east coast hip-hop':  'lyrical_rap',
+    'jazz hop':            'lyrical_rap',
     'trap':                'trap',
     'trap music':          'trap',
     'melodic rap':         'melodic_rap',
     'melodic trap':        'melodic_rap',
-    # Rock / indie rock
+    # ── Rock / indie rock ───────────────────────────────────────────────────
     'indie rock':          'indie_rock',
     'alternative rock':    'alt_rock',
     'alt-rock':            'alt_rock',
@@ -1616,26 +1640,44 @@ _TAG_STYLE_MAP: Dict[str, str] = {
     'shoegaze':            'shoegaze',
     'art rock':            'art_rock',
     'punk rock':           'punk_pop',
-    # Acoustic / folk / singer-songwriter
-    'acoustic':            'acoustic_pop',
-    'folk':                'singer_songwriter',
-    'singer-songwriter':   'singer_songwriter',
-    'folk rock':           'folk_rock',
-    # Indie pop and crossover
+    'pop punk':            'punk_pop',
+    'post-punk':           'art_rock',
+    'post punk':           'art_rock',
+    'britpop':             'indie_rock',
+    'post-britpop':        'indie_rock',
+    'math rock':           'post_rock',
+    'glam rock':           'art_rock',
+    # ── Indie pop crossover ─────────────────────────────────────────────────
     'indie pop':           'indie_rock',
     'dream pop':           'dream_pop',
+    'dark pop':            'cinematic_pop',
+    'alt pop':             'cinematic_pop',
     'art pop':             'cinematic_pop',
-    # World / Afrobeats
+    'bedroom pop':         'indie_rock',
+    'pop rock':            'indie_rock',
+    'power pop':           'indie_rock',
+    # ── Acoustic / folk / singer-songwriter ─────────────────────────────────
+    'acoustic':            'acoustic_pop',
+    'acoustic pop':        'acoustic_pop',
+    'folk':                'singer_songwriter',
+    'indie folk':          'singer_songwriter',
+    'folk rock':           'folk_rock',
+    'singer-songwriter':   'singer_songwriter',
+    'soft rock':           'acoustic_pop',
+    # ── World / Afrobeats ───────────────────────────────────────────────────
     'afrobeats':           'afrobeats',
     'afrobeat':            'afrobeats',
     'afro pop':            'afrobeats',
     'afropop':             'afrobeats',
     'amapiano':            'amapiano',
     'afro fusion':         'afro_fusion',
-    # Latin
+    # ── Latin ───────────────────────────────────────────────────────────────
     'reggaeton':           'reggaeton',
     'latin pop':           'latin_pop',
-    # Classical / cinematic
+    'tropical':            'latin_pop',
+    'bachata':             'latin_pop',
+    'salsa':               'latin_pop',
+    # ── Classical / cinematic ───────────────────────────────────────────────
     'classical':           'cinematic_score',
     'orchestral':          'cinematic_score',
     'film score':          'cinematic_score',
@@ -1960,13 +2002,19 @@ def _resolve_style_from_tags(tag_pairs: tuple) -> Optional[str]:
 
     Algorithm:
       • Each tag mapped by _TAG_STYLE_MAP contributes a weighted vote equal to
-        count / max_count (so the top tag always contributes 1.0).
-      • Tags in _BROAD_TAGS (single-word generics like 'pop', 'rock') are
-        skipped unless they are the ONLY mapped tag, because specific multi-word
-        tags like 'synth-pop' carry more sonic information.
+        (count / max_count) * specificity_multiplier.
+      • Multi-word or hyphenated tags ('synth-pop', 'nu disco', 'alternative r&b')
+        receive a 1.3× specificity boost because they encode more precise
+        production information than single-word labels.
+      • Tags in _BROAD_TAGS ('pop', 'rock', 'electronic', 'indie') are skipped
+        in the first pass; they are only used if no specific tag matches at all.
       • The style with the highest total weighted vote wins.
-      • A minimum threshold of 0.25 weighted votes is required; below this the
-        function returns None and the pipeline falls back to artist-level style.
+      • Two thresholds control override confidence:
+          – strong single:  a specific multi-word tag whose raw weight ≥ 0.50
+            (i.e. at least 50 % of the top-tag listener count) overrides
+            artist_style even without cumulative consensus.
+          – cumulative:     total votes for the winning style ≥ 0.25 (as before).
+        Either condition is sufficient.
 
     Returns the winning style string, or None if confidence is too low.
     """
@@ -1976,13 +2024,23 @@ def _resolve_style_from_tags(tag_pairs: tuple) -> Optional[str]:
     max_count = max(c for _, c in tag_pairs) or 1
 
     votes: Dict[str, float] = {}
+    top_specific_weight: float = 0.0   # highest raw weight seen for any specific tag
+
     for tag, count in tag_pairs[:15]:
         style = _TAG_STYLE_MAP.get(tag)
         if not style:
             continue
         if tag in _BROAD_TAGS:
             continue   # skip broad single-word tags; specific ones dominate
-        weight = count / max_count
+
+        raw_weight = count / max_count
+        # Multi-word or hyphenated tags carry more production specificity
+        is_specific = (' ' in tag or '-' in tag)
+        weight = raw_weight * 1.3 if is_specific else raw_weight
+
+        if is_specific and raw_weight > top_specific_weight:
+            top_specific_weight = raw_weight
+
         votes[style] = votes.get(style, 0.0) + weight
 
     # If no specific tags matched, try broad tags as last resort
@@ -1997,10 +2055,17 @@ def _resolve_style_from_tags(tag_pairs: tuple) -> Optional[str]:
         return None
 
     best_style = max(votes, key=lambda s: votes[s])
-    if votes[best_style] < 0.25:
+    best_votes  = votes[best_style]
+
+    # Accept override if cumulative confidence OR a single strong specific tag
+    strong_single = (top_specific_weight >= 0.50)
+    if best_votes < 0.25 and not strong_single:
         return None
 
-    logger.debug(f"[TAG] style resolved: {best_style} (votes={votes})")
+    logger.debug(
+        f"[TAG] style resolved: {best_style} "
+        f"(votes={votes}, top_specific_weight={top_specific_weight:.2f})"
+    )
     return best_style
 
 
@@ -2035,10 +2100,14 @@ def _build_song_profile(artist: str, song: str, handler_mood: str, genre: str) -
     prod_sig   = _classify_production_signature(style, genre)
 
     if tag_style:
+        raw_tags   = _fetch_track_tags(artist, song)          # already cached
+        top_tags   = [t for t, _ in raw_tags[:5]]
+        final_eco  = _infer_ecosystem(production, style, genre, prod_sig)
         logger.info(
             f"[IDENTITY] {artist} — {song}: "
-            f"tag_style={tag_style} (overrides artist_style={artist_style}) "
-            f"prod={production} eco={_infer_ecosystem(production, style, genre, prod_sig)}"
+            f"tag_style={tag_style!r} overrides artist_style={artist_style!r} | "
+            f"top_tags={top_tags} | "
+            f"production={production!r} ecosystem={final_eco!r}"
         )
 
     return {
