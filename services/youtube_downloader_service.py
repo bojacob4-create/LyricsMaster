@@ -177,14 +177,18 @@ def _clean_song_title(title: str) -> str:
     return title.strip()
 
 
-def _sc_search_best(query: str, n: int = 5, artist_hint: str = '') -> Optional[dict]:
+def _clean_artist_hint(artist: str) -> str:
+    """Strip 'feat. ...' from artist name so 'Rihanna feat. JAY-Z' matches 'Rihanna'."""
+    return re.sub(r'\s*(feat\.|ft\.|featuring).*$', '', artist, flags=re.IGNORECASE).strip()
+
+
+def _sc_search_ranked(query: str, n: int = 5, artist_hint: str = '') -> list:
     """
-    Search SoundCloud for top N results and return the best entry:
-      1. Among entries with duration >= _MIN_SONG_SECS, prefer official artist uploads
-         (uploader name contains artist_hint, case-insensitive)
-      2. If no artist match, pick the longest full-length entry
-      3. Fall back to the longest available entry if none are full-length
-    Returns yt-dlp entry dict or None.
+    Search SoundCloud for top N results and return a RANKED LIST of candidates to try.
+    Priority order:
+      1. Official artist uploads (uploader matches artist_hint) with duration >= _MIN_SONG_SECS
+      2. Other full-length uploads (duration >= _MIN_SONG_SECS), sorted longest-first
+    Returns a list of yt-dlp entry dicts (may be empty).
     """
     logger.info(f"[MP3][SEARCH] SoundCloud scsearch{n}: '{query}'")
     opts = {'quiet': True, 'no_warnings': True, 'extract_flat': True, 'socket_timeout': 15}
@@ -193,7 +197,7 @@ def _sc_search_best(query: str, n: int = 5, artist_hint: str = '') -> Optional[d
             meta = ydl.extract_info(f'scsearch{n}:{query}', download=False)
     except Exception as e:
         logger.warning(f"[MP3][SEARCH] SoundCloud search error: {type(e).__name__}: {e}")
-        return None
+        return []
 
     entries = []
     if isinstance(meta, dict):
@@ -203,7 +207,7 @@ def _sc_search_best(query: str, n: int = 5, artist_hint: str = '') -> Optional[d
 
     if not entries:
         logger.warning(f"[MP3][SEARCH] No results for '{query}'")
-        return None
+        return []
 
     logger.info(f"[MP3][SEARCH] Got {len(entries)} result(s):")
     for i, e in enumerate(entries):
@@ -212,31 +216,24 @@ def _sc_search_best(query: str, n: int = 5, artist_hint: str = '') -> Optional[d
                     f"| {dur}s | {e.get('webpage_url', e.get('url', '?'))}")
 
     full_entries = [e for e in entries if int(e.get('duration', 0) or 0) >= _MIN_SONG_SECS]
-    if full_entries:
-        # Prefer official artist upload if artist_hint given
-        if artist_hint:
-            hint_low = artist_hint.lower()
-            official = [e for e in full_entries
-                        if hint_low in (e.get('uploader') or '').lower()]
-            if official:
-                best = official[0]
-                logger.info(f"[MP3][SEARCH] Selected official artist upload: "
-                            f"'{best.get('title')}' ({int(best.get('duration', 0))}s)")
-                return best
-        best = max(full_entries, key=lambda e: int(e.get('duration', 0) or 0))
-        logger.info(f"[MP3][SEARCH] Selected full-length (no artist match): "
-                    f"'{best.get('title')}' ({int(best.get('duration', 0))}s)")
-        return best
+    if not full_entries:
+        logger.warning(f"[MP3][SEARCH] No full-length results (all < {_MIN_SONG_SECS}s) for '{query}'")
+        return []
 
-    best = max(entries, key=lambda e: int(e.get('duration', 0) or 0))
-    dur = int(best.get('duration', 0) or 0)
-    if dur > 0:
-        logger.warning(f"[MP3][SEARCH] No full song found — best: '{best.get('title')}' "
-                       f"({dur}s, may be a preview)")
-        return best
+    hint_low = artist_hint.lower() if artist_hint else ''
+    official, others = [], []
+    for e in full_entries:
+        uploader_low = (e.get('uploader') or '').lower()
+        if hint_low and (hint_low in uploader_low or uploader_low in hint_low):
+            official.append(e)
+        else:
+            others.append(e)
 
-    logger.warning(f"[MP3][SEARCH] All entries have zero duration for '{query}'")
-    return None
+    others_sorted = sorted(others, key=lambda e: int(e.get('duration', 0) or 0), reverse=True)
+    ranked = official + others_sorted
+    logger.info(f"[MP3][SEARCH] Ranked {len(ranked)} candidates "
+                f"({len(official)} official, {len(others_sorted)} others)")
+    return ranked
 
 
 def _search_audiomack_url(artist: str, song: str) -> Optional[str]:
@@ -367,70 +364,84 @@ def _build_success_msg(title: str, uploader: str, duration: int, file_size_mb: f
 def download_audio_for_song(artist: str, song: str) -> Tuple[bool, any]:
     """
     Download MP3. Providers in order:
-      1. SoundCloud multi-result (scsearch5) — picks best non-preview result
-      2. Audiomack
-      3. Archive.org
-    No YouTube. Full stage logging for each step.
+      1. SoundCloud — searches 5 results, tries EACH candidate until one succeeds
+         (official artist upload first, then others sorted by length)
+      2. Audiomack fallback
+
+    Key design: if a SC track downloads too small (preview), we continue to the
+    NEXT candidate in the same search result set — not just the next query.
+    This ensures fan uploads / remixes are tried when the official track is preview-only.
     """
     import hashlib
     query = f"{artist} - {song}" if song else artist
     file_prefix = 'audio_' + hashlib.md5(query.encode()).hexdigest()[:10]
     simple_song = _clean_song_title(song) if song else ''
+    # Strip 'feat. ...' so 'Rihanna feat. JAY-Z' matches uploader 'Rihanna'
+    artist_hint = _clean_artist_hint(artist)
 
-    logger.info(f"[MP3][START] artist='{artist}' | song='{song}' | query='{query}'")
+    logger.info(f"[MP3][START] artist='{artist}' | song='{song}' | "
+                f"artist_hint='{artist_hint}' | query='{query}'")
 
     # ── Provider 1: SoundCloud ────────────────────────────────────────────────
     sc_queries = [query]
     if song:
-        sc_queries.append(f"{song} {artist}")
+        sc_queries.append(f"{song} {artist_hint}")
     if simple_song and simple_song != song:
-        sc_queries.append(f"{artist} - {simple_song}")
-        sc_queries.append(f"{simple_song} {artist}")
+        sc_queries.append(f"{artist_hint} - {simple_song}")
+        sc_queries.append(f"{simple_song} {artist_hint}")
+
+    tried_urls: set = set()
 
     for sc_q in sc_queries:
-        logger.info(f"[MP3][P1-SC] Trying query: '{sc_q}'")
-        best = _sc_search_best(sc_q, n=5, artist_hint=artist)
+        logger.info(f"[MP3][P1-SC] Query: '{sc_q}'")
+        candidates = _sc_search_ranked(sc_q, n=5, artist_hint=artist_hint)
 
-        if not best:
-            logger.info(f"[MP3][P1-SC] No usable result for '{sc_q}'")
+        if not candidates:
+            logger.info(f"[MP3][P1-SC] No candidates from '{sc_q}'")
             continue
 
-        dur = int(best.get('duration', 0) or 0)
-        if dur > 600:
-            logger.warning(f"[MP3][P1-SC] Rejected: too long ({dur}s) — aborting")
-            return False, (
-                "❌ Audio Too Long\n"
-                "━━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"This track is {dur//60}:{dur%60:02d}.\n"
-                "Max allowed: 10 minutes."
-            )
+        for idx, candidate in enumerate(candidates):
+            dl_url = candidate.get('webpage_url') or candidate.get('url')
+            if not dl_url:
+                logger.warning(f"[MP3][P1-SC] Candidate {idx+1}: no URL, skipping")
+                continue
+            if dl_url in tried_urls:
+                logger.info(f"[MP3][P1-SC] Candidate {idx+1}: already tried '{dl_url}', skipping")
+                continue
+            tried_urls.add(dl_url)
 
-        dl_url = best.get('webpage_url') or best.get('url')
-        if not dl_url:
-            logger.warning(f"[MP3][P1-SC] No download URL for '{sc_q}'")
-            continue
+            dur = int(candidate.get('duration', 0) or 0)
+            title_c = candidate.get('title', song)
+            uploader_c = candidate.get('uploader', artist)
+            logger.info(f"[MP3][P1-SC] Trying candidate {idx+1}/{len(candidates)}: "
+                        f"'{title_c}' by '{uploader_c}' ({dur}s)")
 
-        try:
-            mp3_path = _download_url_to_mp3(dl_url, file_prefix, label='SoundCloud')
-        except Exception:
-            logger.info(f"[MP3][P1-SC] Download failed for '{sc_q}', trying next query")
-            continue
+            try:
+                mp3_path = _download_url_to_mp3(dl_url, file_prefix, label=f'SC[{idx+1}]')
+            except Exception as e:
+                logger.info(f"[MP3][P1-SC] Candidate {idx+1} download failed: "
+                            f"{type(e).__name__}: {e}")
+                continue
 
-        file_size = os.path.getsize(mp3_path)
-        if file_size < _MIN_SONG_BYTES:
-            logger.warning(f"[MP3][P1-SC] File too small ({file_size} bytes) — likely preview, skipping")
-            cleanup_video(mp3_path)
-            continue
+            file_size = os.path.getsize(mp3_path)
+            if file_size < _MIN_SONG_BYTES:
+                logger.warning(f"[MP3][P1-SC] Candidate {idx+1} too small "
+                               f"({file_size} bytes < {_MIN_SONG_BYTES}) — preview, skipping")
+                cleanup_video(mp3_path)
+                continue
 
-        if file_size > 50 * 1024 * 1024:
-            cleanup_video(mp3_path)
-            return False, ("❌ File Too Large\n━━━━━━━━━━━━━━━━━━━━━\n\nTelegram limit: 50MB.")
+            if file_size > 50 * 1024 * 1024:
+                cleanup_video(mp3_path)
+                return False, ("❌ File Too Large\n━━━━━━━━━━━━━━━━━━━━━\n\nTelegram limit: 50MB.")
 
-        file_size_mb = round(file_size / 1024 / 1024, 1)
-        title = best.get('title', song)
-        uploader = best.get('uploader', artist)
-        logger.info(f"[MP3][P1-SC] SUCCESS | title='{title}' | {file_size_mb}MB")
-        return True, (mp3_path, _build_success_msg(title, uploader, dur, file_size_mb), title, uploader)
+            file_size_mb = round(file_size / 1024 / 1024, 1)
+            logger.info(f"[MP3][P1-SC] SUCCESS | candidate={idx+1} | "
+                        f"title='{title_c}' | {file_size_mb}MB")
+            return True, (mp3_path,
+                          _build_success_msg(title_c, uploader_c, dur, file_size_mb),
+                          title_c, uploader_c)
+
+        logger.info(f"[MP3][P1-SC] All candidates from '{sc_q}' exhausted")
 
     logger.info(f"[MP3][P1-SC] All SC queries exhausted — moving to Provider 2")
 
@@ -453,19 +464,6 @@ def download_audio_for_song(artist: str, song: str) -> Tuple[bool, any]:
             logger.warning(f"[MP3][P2-AM] Failed: {type(e).__name__}: {e}")
     else:
         logger.info(f"[MP3][P2-AM] No Audiomack URL — skipping")
-
-    # ── Provider 3: Archive.org ───────────────────────────────────────────────
-    ao_url = _search_archive_org(artist, song)
-    if ao_url:
-        try:
-            mp3_path = _download_url_to_mp3(ao_url, file_prefix, label='Archive.org')
-            file_size_mb = round(os.path.getsize(mp3_path) / 1024 / 1024, 1)
-            logger.info(f"[MP3][P3-AO] SUCCESS | {file_size_mb}MB")
-            return True, (mp3_path, _build_success_msg(song, artist, 0, file_size_mb), song, artist)
-        except Exception as e:
-            logger.warning(f"[MP3][P3-AO] Failed: {type(e).__name__}: {e}")
-    else:
-        logger.info(f"[MP3][P3-AO] No Archive.org match — skipping")
 
     # ── All providers exhausted ───────────────────────────────────────────────
     logger.error(f"[MP3][FAIL] All providers exhausted for '{artist} - {song}'")
