@@ -43,6 +43,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+IS_PRODUCTION = os.environ.get('REPLIT_DEPLOYMENT') == '1'
+
+
 class TelegramBotWorker:
     def __init__(self, token):
         self.token = token
@@ -56,7 +59,7 @@ class TelegramBotWorker:
         self.lock_file = "/tmp/telegram_bot.lock"
         self.scheduler = None
         self._conflict_count = 0
-        self._max_conflicts = 10  # Exit if another instance is consistently winning
+        self._max_conflicts = 10  # Dev only: exit after this many consecutive conflicts
         
         # Check if another instance is running
         if self._is_another_instance_running():
@@ -74,22 +77,45 @@ class TelegramBotWorker:
         signal.signal(signal.SIGTERM, self.signal_handler)
         
     def _is_another_instance_running(self):
-        """Check if another instance is running by attempting to create a lock file."""
-        if os.path.exists(self.lock_file):
-            # Check if the process with this PID is still running
-            try:
-                with open(self.lock_file, 'r') as f:
-                    pid = int(f.read().strip())
-                
-                # Try to check if process exists
-                os.kill(pid, 0)
-                return True  # Process exists
-            except (OSError, ValueError):
-                # Process doesn't exist or invalid PID, remove stale lock file
-                try:
+        """Check if another instance is running by attempting to create a lock file.
+
+        Validates both that the PID is alive AND that it belongs to a bot.py
+        process — not a reused PID from a completely different process.
+        """
+        if not os.path.exists(self.lock_file):
+            return False
+
+        try:
+            with open(self.lock_file, 'r') as f:
+                pid = int(f.read().strip())
+
+            # Check process exists
+            os.kill(pid, 0)
+
+            # Verify the process is actually a bot.py instance, not a reused PID
+            cmdline_path = f'/proc/{pid}/cmdline'
+            if os.path.exists(cmdline_path):
+                with open(cmdline_path, 'rb') as f:
+                    cmdline = f.read().decode('utf-8', errors='replace').replace('\x00', ' ')
+                if 'bot.py' not in cmdline and 'bot' not in cmdline.lower():
+                    # PID is alive but it's not our bot — stale lock from PID reuse
+                    logger.warning(
+                        f"Lock file PID {pid} exists but belongs to a different "
+                        f"process ({cmdline[:60]!r}). Removing stale lock."
+                    )
                     os.remove(self.lock_file)
-                except OSError:
-                    pass
+                    return False
+
+            return True  # Process exists and appears to be a bot
+
+        except (OSError, ValueError):
+            # Process doesn't exist or invalid PID — stale lock file
+            pass
+
+        try:
+            os.remove(self.lock_file)
+        except OSError:
+            pass
         return False
         
     def _create_lock_file(self):
@@ -158,10 +184,25 @@ class TelegramBotWorker:
 
             if 'Conflict' in error_str and 'getUpdates' in error_str:
                 self._conflict_count += 1
+
+                if IS_PRODUCTION:
+                    # Production instance must never yield — back off briefly and
+                    # let the polling library retry.  Another process (the dev
+                    # editor bot) will detect conflicts and self-terminate first.
+                    if self._conflict_count % 5 == 0:
+                        logger.warning(
+                            f"[PROD] Polling conflict #{self._conflict_count} — "
+                            "dev instance present, backing off 10 s then retrying."
+                        )
+                    time.sleep(10)
+                    self._conflict_count = 0   # reset so we keep retrying indefinitely
+                    return
+
+                # Dev instance: yield after max_conflicts so production wins.
                 if self._conflict_count >= self._max_conflicts:
-                    logger.error(
+                    logger.warning(
                         f"Detected {self._conflict_count} consecutive polling conflicts — "
-                        "a deployed instance has priority. This dev instance is shutting down."
+                        "production instance has priority. Dev instance standing down."
                     )
                     self.running = False
                     if self.updater:
