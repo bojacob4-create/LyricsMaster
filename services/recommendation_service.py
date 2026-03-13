@@ -323,14 +323,18 @@ def format_recommendations(recommendations: List[Dict], based_on: str = None) ->
         header = f"🎵 If you like \"{based_on}\", try these:\n"
 
     header += "━━━━━━━━━━━━━━━━━━━━━\n\n"
-    lines = []
 
+    APPLE_REASON = 'Trending on Apple Music Top 100'
+    all_apple = all(s.get('reason') == APPLE_REASON for s in recommendations)
+
+    lines = []
     for i, song in enumerate(recommendations, 1):
         emoji = ['🔥', '✨', '💫', '🎶', '⭐'][i - 1] if i <= 5 else '🎵'
         line = f"{emoji} {song['artist']} — {song['name']}"
 
-        if song.get('reason'):
-            line += f"\n   ↳ {song['reason']}"
+        reason = song.get('reason', '')
+        if reason and reason != APPLE_REASON:
+            line += f"\n   ↳ {reason}"
         elif song.get('match'):
             line += f" ({song['match']}% match)"
 
@@ -338,8 +342,9 @@ def format_recommendations(recommendations: List[Dict], based_on: str = None) ->
 
     body = '\n\n'.join(lines)
 
+    source_note = "\n🍎 Source: Apple Music Top 100" if all_apple else ""
     footer = (
-        "\n\n━━━━━━━━━━━━━━━━━━━━━\n"
+        f"\n\n━━━━━━━━━━━━━━━━━━━━━{source_note}\n"
         "🎤 /lyrics to see any song's lyrics\n"
         "📊 /analyze for deeper insights"
     )

@@ -1,0 +1,99 @@
+please fix the following issues carefully.
+
+Several features are already working well, so please do not break the current working systems.
+
+Keep unchanged:
+	•	subscribe / unsubscribe flow
+	•	button placement rules
+	•	working artist/song dashboards
+	•	YouTube artist-only flow
+	•	current direct song-entry buttons for recommendations
+
+However, the latest tests revealed the following issues:
+
+1 — Manual song typing after Similar picker is too loose
+
+Test case:
+	•	analyze Rihanna
+	•	press Similar Songs
+	•	type hello
+
+Current behavior:
+The bot treats it as Rihanna - hello and generates recommendations.
+
+This is incorrect.
+
+Required fix:
+When the user types a manual song after the Similar picker, validate that the song is a plausible match for the selected artist before continuing.
+
+If the song cannot be found or is too weak a match:
+	•	do not generate recommendations
+	•	instead reply with a graceful message such as:
+	•	“I couldn’t find that Rihanna song. Please try another title.”
+	•	optionally keep the picker available
+
+Do not accept arbitrary random text as a valid song.
+
+2 — MP3 is still failing in actual bot usage
+
+In real usage, the MP3 button still often returns:
+	•	MP3 Not Available
+	•	Couldn't find a working audio source for this song
+
+So the MP3 system is still not reliable enough inside the bot.
+
+Please investigate the real in-bot MP3 flow, not just isolated function tests.
+
+Required:
+	•	improve reliability of the MP3 button in actual bot usage
+	•	verify that it works on multiple real songs from the bot interface
+	•	keep non-YouTube sources only
+	•	prioritize speed and stability
+
+3 — Recommend output formatting needs cleanup
+
+Currently each recommended song shows the repeated line:
+	•	Trending on Apple Music Top 100
+
+This is visually repetitive and unnecessary.
+
+Required fix:
+Show the Apple Music source note only once in a clean way, for example in the header or once above the list.
+
+Do not repeat the same source line under every recommended song.
+
+4 — Similar flow should show song dashboard first
+
+Current issue:
+After the user chooses a song from the Similar picker, the bot immediately shows recommendations.
+
+Preferred behavior:
+	•	user chooses a song
+	•	bot opens the full /song-style dashboard for that chosen song
+	•	the dashboard includes the normal Similar button
+	•	only if the user presses Similar should the recommendations be shown
+
+This is cleaner and more logical.
+
+Please update the flow accordingly.
+
+5 — Keep recommendation song buttons
+
+The direct buttons for each recommended song are good and should remain.
+
+Do not remove them.
+
+Only improve the flow and formatting.
+
+Please manually test before reporting completion
+
+Manually test:
+	1.	analyze Rihanna → Similar Songs → type hello
+	2.	MP3 on at least 3 real songs from the bot UI
+	3.	recommendation output formatting
+	4.	Similar picker → choose song → confirm it opens song dashboard first
+
+When finished, report:
+	•	exact files modified
+	•	what you manually tested
+	•	confirmation that unrelated working systems were not changed

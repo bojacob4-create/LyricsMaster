@@ -150,7 +150,7 @@ def recommend_pick_buttons(artist_name, top_songs):
     rows = []
     for s in top_songs[:5]:
         song_query = f"{artist_name} - {s}"
-        rows.append([InlineKeyboardButton(f"🎵 {s}", callback_data=_cb("recommend", song_query))])
+        rows.append([InlineKeyboardButton(f"🎵 {s}", callback_data=_cb("song", song_query))])
     return InlineKeyboardMarkup(rows)
 
 

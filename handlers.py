@@ -227,10 +227,28 @@ def natural_language_handler(update: Update, context: CallbackContext):
         return
 
     if user_id in _pending_recommend_artist:
-        artist_name = _pending_recommend_artist.pop(user_id)
-        constructed_query = f"{artist_name} - {text}"
-        context.args = constructed_query.split()
-        recommend_command(update, context)
+        artist_name = _pending_recommend_artist[user_id]
+        from services.lyrics_service import search_song_info
+        update.message.chat.send_action(action="typing")
+        result = search_song_info(artist_name, text)
+        valid = False
+        song_query = None
+        if result:
+            found_artist, found_song, _ = result
+            a1 = artist_name.lower().strip()
+            a2 = found_artist.lower().strip()
+            if a1 in a2 or a2 in a1:
+                valid = True
+                song_query = f"{found_artist} - {found_song}"
+        if not valid:
+            update.message.reply_text(
+                f"❌ I couldn't find \"{text}\" by {artist_name}.\n\n"
+                f"Please try another {artist_name} song title, or pick one from the buttons above."
+            )
+            return
+        _pending_recommend_artist.pop(user_id)
+        context.args = song_query.split()
+        song_command(update, context)
         return
 
     quiz_data = active_quizzes.get(user_id)

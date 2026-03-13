@@ -231,15 +231,23 @@ def _try_sc_download(source_query: str, file_prefix: str) -> Tuple[bool, any]:
         'outtmpl': output_template,
         'restrictfilenames': True,
         'socket_timeout': 30,
-        'retries': 1,
+        'retries': 3,
+        'fragment_retries': 5,
+        'skip_unavailable_fragments': False,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '128',
         }],
     }
-    with yt_dlp.YoutubeDL(dl_opts) as ydl:
-        ydl.download([download_url])
+    try:
+        with yt_dlp.YoutubeDL(dl_opts) as ydl:
+            ret = ydl.download([download_url])
+        if ret != 0:
+            raise RuntimeError(f"yt-dlp returned non-zero exit code: {ret}")
+    except yt_dlp.utils.DownloadError as de:
+        logger.warning(f"SC download error for {download_url}: {de}")
+        raise
 
     mp3_path = os.path.join(os.getcwd(), f'{file_prefix}.mp3')
     if not os.path.exists(mp3_path):
@@ -253,22 +261,39 @@ def _try_sc_download(source_query: str, file_prefix: str) -> Tuple[bool, any]:
     return True, (mp3_path, title, uploader, duration)
 
 
+def _clean_song_title(title: str) -> str:
+    """Strip features/parenthetical info from a song title for simpler searching."""
+    import re
+    title = re.sub(r'\s*[\(\[](feat|ft|with|prod|remix)[^\)\]]*[\)\]]', '', title, flags=re.IGNORECASE)
+    title = re.sub(r'\s*-\s*(feat|ft)\.?\s+.+$', '', title, flags=re.IGNORECASE)
+    return title.strip()
+
+
 def download_audio_for_song(artist: str, song: str) -> Tuple[bool, any]:
-    """Download MP3 for a song: SoundCloud first, then Audiomack. No YouTube."""
+    """Download MP3 for a song: SoundCloud primary with multiple fallbacks. No YouTube."""
     import hashlib
     query = f"{artist} - {song}" if song else artist
     file_prefix = 'audio_' + hashlib.md5(query.encode()).hexdigest()[:10]
 
-    # Build source list: SoundCloud primary, Audiomack via URL, SC alt query
-    sources = []
-    sources.append(('sc', f"scsearch1:{query}"))
+    simple_song = _clean_song_title(song) if song else ''
+    simple_query = f"{artist} - {simple_song}" if simple_song and simple_song != song else ''
+
+    sources = [
+        f"scsearch1:{query}",
+    ]
+    if song:
+        sources.append(f"scsearch1:{song} {artist}")
+    if simple_query:
+        sources.append(f"scsearch1:{simple_query}")
+    if song and simple_song and simple_song != song:
+        sources.append(f"scsearch1:{simple_song} {artist}")
+
+    # Audiomack URL as a middle fallback (non-blocking search)
     am_url = _search_audiomack_url(artist, song)
     if am_url:
-        sources.append(('sc', am_url))
-    if song:
-        sources.append(('sc', f"scsearch1:{song} {artist}"))
+        sources.insert(1, am_url)
 
-    for _kind, source in sources:
+    for source in sources:
         try:
             logger.info(f"MP3: trying source '{source}'")
             ok, data = _try_sc_download(source, file_prefix)
@@ -283,26 +308,27 @@ def download_audio_for_song(artist: str, song: str) -> Tuple[bool, any]:
                         "━━━━━━━━━━━━━━━━━━━━━\n\n"
                         f"MP3 is {file_size_mb}MB (Telegram limit: 50MB)."
                     )
+                dur_str = f"{duration//60}:{duration%60:02d}" if duration else "?"
                 success_msg = (
                     f"🎵 MP3 Ready!\n"
                     f"━━━━━━━━━━━━━━━━━━━━━\n\n"
                     f"🎤 {title}\n"
                     f"👤 {uploader}\n"
-                    f"⏱️ {duration//60}:{duration%60:02d}  •  📦 {file_size_mb}MB\n\n"
+                    f"⏱️ {dur_str}  •  📦 {file_size_mb}MB\n\n"
                     f"🚀 Uploading..."
                 )
                 return True, (mp3_path, success_msg, title, uploader)
         except ValueError as e:
             if str(e).startswith("too_long:"):
-                duration = int(str(e).split(":")[1])
+                secs = int(str(e).split(":")[1])
                 return False, (
                     "❌ Audio Too Long\n"
                     "━━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"This track is {duration//60}:{duration%60:02d}.\n"
+                    f"This track is {secs//60}:{secs%60:02d}.\n"
                     "Max allowed: 10 minutes."
                 )
         except Exception as e:
-            logger.warning(f"MP3 source '{source}' failed: {e}")
+            logger.warning(f"MP3 source '{source}' failed: {type(e).__name__}: {e}")
             continue
 
     return False, (
