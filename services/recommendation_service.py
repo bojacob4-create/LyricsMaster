@@ -1325,6 +1325,46 @@ SONIC_POOL_HINT: Dict[tuple, str] = {
     ('energetic', 'electronic'): 'electronic',
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Ecosystem map — structural hierarchy for cross-genre leakage prevention
+# ──────────────────────────────────────────────────────────────────────────────
+# Every curated pool belongs to one broad musical ecosystem.  All pool
+# expansion (sonic hint, mood expansion) and constellation-bonus gating
+# check this map to ensure candidates stay within the source song's
+# musical family.  Adjacency is symmetric in effect but explicit in direction:
+# including ecosystem B in A's adjacent set means an A-source song may cross
+# into B's pool; the reverse is also defined where it makes musical sense.
+
+POOL_ECOSYSTEM: Dict[str, str] = {
+    'pop':        'pop_synth',
+    'electronic': 'electronic_synth',
+    'hiphop':     'hiphop_trap',
+    'rnb':        'rnb_soul',
+    'rock':       'rock_band',
+    'indie':      'indie_alt',
+    'afrobeats':  'afrobeats_world',
+    'latin':      'afrobeats_world',
+    'classic':    'classical_cinematic',
+}
+
+# Each ecosystem's adjacent set (always includes itself).
+# Pools whose ecosystem is NOT in this set are blocked from entering the
+# candidate list via hint/expansion, and from receiving the constellation bonus.
+ECOSYSTEM_ADJACENT: Dict[str, frozenset] = {
+    'pop_synth':          frozenset({'pop_synth', 'electronic_synth',
+                                     'indie_alt',  'rnb_soul'}),
+    'electronic_synth':   frozenset({'electronic_synth', 'pop_synth',
+                                     'indie_alt',  'classical_cinematic'}),
+    'hiphop_trap':        frozenset({'hiphop_trap', 'rnb_soul', 'pop_synth'}),
+    'rnb_soul':           frozenset({'rnb_soul',    'hiphop_trap', 'pop_synth'}),
+    'rock_band':          frozenset({'rock_band',   'indie_alt'}),
+    'indie_alt':          frozenset({'indie_alt',   'rock_band',
+                                     'pop_synth',   'electronic_synth'}),
+    'afrobeats_world':    frozenset({'afrobeats_world', 'rnb_soul', 'pop_synth'}),
+    'classical_cinematic':frozenset({'classical_cinematic', 'indie_alt',
+                                     'electronic_synth'}),
+}
+
 
 def _get_song_style(artist: str, song: str) -> str:
     """
@@ -1545,6 +1585,7 @@ def _build_song_profile(artist: str, song: str, handler_mood: str, genre: str) -
         'production': production,
         'vocal':      ap.get('vocal', 'male'),
         'era':        ap.get('era', 'modern'),
+        'ecosystem':  POOL_ECOSYSTEM.get(genre, 'pop_synth'),
     }
 
 
@@ -1587,33 +1628,63 @@ def _score_candidate(candidate_artist: str, candidate_name: str,
     vocal_score      = 100.0 if cp.get('vocal') == source['vocal'] else 40.0
     era_score        = 100.0 if cp.get('era')   == source['era']   else 30.0
 
+    # ── Ecosystem alignment score ──────────────────────────────────────────────
+    # Explicit structural signal: how well does the candidate's broad musical
+    # family align with the source song's ecosystem?  Three tiers:
+    #   100 — same ecosystem (primary domain)
+    #    60 — adjacent ecosystem (musically neighbouring, e.g. rnb↔pop)
+    #     0 — non-adjacent (different musical world)
+    # This prevents mood-only coincidences from elevating candidates that are
+    # fundamentally outside the source song's musical ecosystem, and ensures
+    # style + production + ecosystem together clearly outweigh mood alone.
+    source_ecosystem  = source.get('ecosystem', POOL_ECOSYSTEM.get(source['genre'], 'pop_synth'))
+    adjacent_ecos     = ECOSYSTEM_ADJACENT.get(source_ecosystem, frozenset({source_ecosystem}))
+    c_ecosystem       = POOL_ECOSYSTEM.get(candidate_genre, 'pop_synth')
+
+    if c_ecosystem == source_ecosystem:
+        ecosystem_score = 100.0
+    elif c_ecosystem in adjacent_ecos:
+        ecosystem_score = 60.0
+    else:
+        ecosystem_score = 0.0
+
+    # Weight distribution (v4 — ecosystem-aware):
+    #   20% mood           primary emotional tone of the song
+    #   20% style          subgenre family
+    #   18% energy         level inferred from the song
+    #   15% production     sonic texture
+    #   11% genre          broad pool match (reduced: ecosystem now carries 8%)
+    #    8% ecosystem      musical-family alignment — guards against cross-genre
+    #    5% vocal          artist-level tiebreaker
+    #    3% era            artist-level tiebreaker
+    # Song-first signals (mood + energy + production = 53%) outweigh
+    # identity signals (style + genre + ecosystem + vocal + era = 47%).
+    # Within identity signals, ecosystem (8%) explicitly bounds cross-genre
+    # drift that style + genre scores alone cannot prevent.
     score = (
-        0.22 * mood_score       +
+        0.20 * mood_score       +
         0.20 * style_score      +
         0.18 * energy_score     +
         0.15 * production_score +
-        0.15 * genre_score      +
-        0.06 * vocal_score      +
-        0.04 * era_score
+        0.11 * genre_score      +
+        0.08 * ecosystem_score  +
+        0.05 * vocal_score      +
+        0.03 * era_score
     )
 
-    # ── Constellation bonus ────────────────────────────────────────────────────
-    # When ≥2 of the three core song-first dimensions align simultaneously,
-    # the candidate likely belongs to the same sonic family as the source.
-    # This rewards multi-dimensional fingerprint overlap beyond what the
-    # independent weighted scores can capture — a candidate scoring 80 on
-    # mood AND 80 on energy AND 80 on production is fundamentally more
-    # similar than three separate candidates each scoring 80 on one axis.
-    # Thresholds are set so that exact matches (100) always qualify, and
-    # near-matches do too, while cross-family coincidences (e.g. same mood
-    # but completely different production) do not.
-    n_core = (int(mood_score >= 80) +
-              int(energy_score >= 72) +
-              int(production_score >= 75))
-    if n_core == 3:
-        score += 12.0   # all three core dimensions align → strong sonic match
-    elif n_core == 2:
-        score += 5.0    # two of three align → partial sonic match
+    # ── Constellation bonus — ecosystem-gated ─────────────────────────────────
+    # Reward simultaneous alignment across all three core song-first dimensions.
+    # Gated: bonus only applies when the candidate is already within the source
+    # song's adjacent ecosystem — mood+energy coincidences cannot boost a
+    # fundamentally unrelated candidate into the results.
+    if c_ecosystem in adjacent_ecos:
+        n_core = (int(mood_score >= 80) +
+                  int(energy_score >= 72) +
+                  int(production_score >= 75))
+        if n_core == 3:
+            score += 12.0   # all three core dimensions align
+        elif n_core == 2:
+            score += 5.0    # two of three align
 
     return score
 
@@ -1825,30 +1896,43 @@ def _get_curated_recommendations(artist: str, song: str,
         pool_genres.add(style_genre)
         logger.info(f"[REC] style '{source_style}' pulls in extra pool: '{style_genre}'")
 
+    # Determine the source song's ecosystem and its adjacent set.
+    # All pool expansion below is bounded to this adjacent set — pools outside
+    # the source's ecosystem neighbourhood are never added as candidates.
+    source_ecosystem = source_profile.get('ecosystem',
+                           POOL_ECOSYSTEM.get(genre, 'pop_synth'))
+    adjacent_ecos    = ECOSYSTEM_ADJACENT.get(source_ecosystem,
+                           frozenset({source_ecosystem}))
+
     # Expand with mood-related genres only when the style is unknown.
     # Known styles already route to the correct pool via STYLE_GENRE_AFFINITY;
     # mood expansion would add unrelated genre pools (e.g. rnb into dream_pop queries).
+    # Ecosystem gate: only add pools whose ecosystem is within the adjacent set.
     if source_style == 'unknown':
         for rg in MOOD_GENRE_WEIGHTS.get(mood, ['pop']):
             if rg not in pool_genres:
-                pool_genres.add(rg)
-                if len(pool_genres) >= 4:
-                    break
+                rg_eco = POOL_ECOSYSTEM.get(rg, source_ecosystem)
+                if rg_eco in adjacent_ecos:
+                    pool_genres.add(rg)
+                    if len(pool_genres) >= 4:
+                        break
 
-    # ── Sonic pool hint: song-first candidate expansion ────────────────────────
-    # After artist-genre routing and style routing, add one further pool based
-    # purely on the song's combined mood × production fingerprint.
-    # This fires for ALL queries (known and unknown style alike) and ensures
-    # the right sonic family is represented in candidates even when the artist's
-    # genre classification doesn't point there.
-    # Example: a slow, melancholic synth-pop track (softened to 'cinematic')
-    # adds the electronic pool — giving downtempo/trip-hop candidates a chance
-    # to compete — without changing anything about the scoring or output format.
+    # ── Sonic pool hint: ecosystem-bounded song-first candidate expansion ──────
+    # Add one further pool based on the song's combined mood × production
+    # fingerprint, but only when the hinted pool belongs to the source song's
+    # adjacent ecosystem.  This prevents a mood+production coincidence from
+    # pulling in candidates from an unrelated musical world.
     source_prod = source_profile.get('production', 'mixed')
     sonic_hint  = SONIC_POOL_HINT.get((mood, source_prod))
     if sonic_hint and sonic_hint not in pool_genres:
-        pool_genres.add(sonic_hint)
-        logger.info(f"[REC] sonic pool hint ({mood}×{source_prod}) → adding '{sonic_hint}'")
+        hint_eco = POOL_ECOSYSTEM.get(sonic_hint, source_ecosystem)
+        if hint_eco in adjacent_ecos:
+            pool_genres.add(sonic_hint)
+            logger.info(f"[REC] sonic hint ({mood}×{source_prod}) → '{sonic_hint}' "
+                        f"[{hint_eco} ∈ {source_ecosystem} adjacency]")
+        else:
+            logger.info(f"[REC] sonic hint ({mood}×{source_prod}) → '{sonic_hint}' "
+                        f"BLOCKED (ecosystem {hint_eco} ∉ {source_ecosystem} adjacency)")
 
     # Build flat candidate list (candidate_dict, pool_genre)
     pool: List[tuple] = []

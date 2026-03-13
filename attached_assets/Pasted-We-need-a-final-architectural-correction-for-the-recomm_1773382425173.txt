@@ -1,0 +1,83 @@
+We need a final architectural correction for the recommendation engine.
+
+Please do NOT apply another incremental fix or a narrow patch.
+This must be a one-time structural solution inside recommendation_service.py that stabilizes the recommender and preserves everything that is already working.
+
+Current root problem:
+the engine now has strong song-first components, but the hierarchy between signals is not fully controlled. In some cases, mood-based or hint-based routing is still able to pull recommendations away from the source song’s actual musical ecosystem. This causes cross-genre leakage.
+
+We do NOT want more artist-specific rules, song-specific patches, blacklist logic, or gradual micro-fixes.
+
+We want a durable final hierarchy for recommendation logic.
+
+Required final design:
+
+1) The recommender must be SONG-FIRST, not ARTIST-FIRST.
+A recommendation must follow the searched track’s actual sonic identity, not the artist’s broad catalog identity.
+
+2) The engine must enforce a strict signal hierarchy:
+   - STYLE / SUBSTYLE / MUSICAL FAMILY define the primary ecosystem.
+   - PRODUCTION identity refines that ecosystem.
+   - ENERGY refines movement inside that ecosystem.
+   - MOOD is a secondary ranking signal.
+   - Any pool-hint / expansion mechanism must be exploratory only, never dominant.
+
+3) Introduce explicit ecosystem-level control.
+Each style family / pool must belong to a broader ecosystem group, such as:
+   - electronic / synth / dance
+   - rnb / soul
+   - hiphop / trap
+   - indie / alternative
+   - rock / band
+   - latin
+   - classical / cinematic
+The source song must first be assigned to one primary ecosystem.
+Recommendations should remain inside that ecosystem by default.
+Cross-ecosystem candidates should only be allowed when there is strong multi-signal justification.
+
+4) Pool expansion must be bounded.
+Any hint-based or mood-based expansion must only search adjacent pools, not unrelated pools.
+Expansion must never override the source song’s primary ecosystem.
+It may widen the search, but it must not redirect the identity.
+
+5) Style / production compatibility must dominate mood-only similarity.
+A candidate from the wrong ecosystem must not outrank a correct-ecosystem candidate just because mood is similar.
+Ensure that STYLE + PRODUCTION together clearly outweigh MOOD in the final outcome.
+
+6) Constellation bonus must be gated.
+Do not allow mood+energy coincidences to boost candidates from unrelated ecosystems.
+Constellation bonus should only apply when the candidate already has sufficient style or production alignment with the source song.
+
+7) Keep the current production-softening idea, but only as a song-level refinement.
+That part is valuable because it helps distinguish different songs by the same artist.
+However, it must not cause the song to leave its correct musical ecosystem.
+
+8) Preserve everything that already works:
+   - keep current command behavior
+   - keep current UI and output format
+   - keep buttons unchanged
+   - keep existing recommendation service architecture as much as possible
+   - do not modify unrelated files or systems
+   - keep performance lightweight and fast
+
+9) Do NOT solve this with manual entries for specific artists or songs.
+No hard-coded fixes.
+No accumulating special cases.
+This must be a generalized structural solution.
+
+Implementation goal:
+The final recommender should behave like this:
+- first determine the source track’s true musical ecosystem
+- then generate candidates mainly from that ecosystem
+- then refine using production, energy, and mood
+- then rank with the existing song-first logic
+- only allow cross-ecosystem recommendations when there is strong evidence, not because of a mood match alone
+
+Please implement this as a final architecture correction in recommendation_service.py only.
+
+After implementation, report clearly:
+- what exact structural hierarchy you enforced
+- how ecosystem gating is implemented
+- how hint/pool expansion was bounded
+- how you prevented cross-genre leakage in a generalized way
+- confirmation that no unrelated working part of the bot was changed
