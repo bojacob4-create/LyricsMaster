@@ -120,10 +120,11 @@ def help_command(update: Update, context: CallbackContext):
         "▫️ */unsubscribe* — Stop daily updates\n\n"
         "*💡 How to use:*\n"
         "• /song Adele - Hello\n"
-        "• /lyrics Counting Stars\n"
+        "• /lyrics The Weeknd - Blinding Lights\n"
+        "• /recommend Bad Bunny - Tití Me Preguntó\n"
         "• /top pop\n"
         "• /random\n\n"
-        "No strict format needed — I'll figure it out! 🚀"
+        "Use *Artist - Song* format for best results! 🚀"
     )
 
     try:
