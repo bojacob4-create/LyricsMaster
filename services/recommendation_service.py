@@ -2685,16 +2685,186 @@ def _get_curated_recommendations(artist: str, song: str,
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Last.fm track.getSimilar — primary candidate discovery
+# ──────────────────────────────────────────────────────────────────────────────
+
+@lru_cache(maxsize=256)
+def _get_lastfm_similar_candidates(artist: str, song: str) -> tuple:
+    """
+    Call Last.fm track.getSimilar and return raw candidates as a frozen tuple
+    of dicts (hashable for lru_cache).
+
+    Returns up to 30 candidates sorted by Last.fm's own match score.
+    Returns () when the API key is absent, the track is not found, or any
+    network error occurs — callers must handle the empty case.
+    """
+    api_key = os.environ.get('LASTFM_API_KEY', '')
+    if not api_key:
+        logger.debug('[LASTFM] LASTFM_API_KEY not set — skipping getSimilar')
+        return ()
+    try:
+        r = requests.get(
+            'https://ws.audioscrobbler.com/2.0/',
+            params={
+                'method':      'track.getSimilar',
+                'artist':      artist,
+                'track':       song,
+                'api_key':     api_key,
+                'format':      'json',
+                'limit':       30,
+                'autocorrect': '1',
+            },
+            timeout=6,
+        )
+        data = r.json()
+
+        if 'error' in data:
+            logger.debug(f"[LASTFM] getSimilar error {data['error']}: {data.get('message','')}")
+            return ()
+
+        tracks = data.get('similartracks', {}).get('track', [])
+        if not tracks:
+            logger.info(f"[LASTFM] No similar tracks found for '{artist} - {song}'")
+            return ()
+
+        candidates = []
+        for t in tracks:
+            try:
+                a_name = t['artist']['name'].strip()
+                t_name = t['name'].strip()
+                match  = float(t.get('match', 0))
+                if a_name and t_name and match > 0.02:
+                    candidates.append({
+                        'artist':        a_name,
+                        'name':          t_name,
+                        'reason':        '',   # generated later
+                        'lastfm_match':  match,
+                    })
+            except (KeyError, ValueError, TypeError):
+                continue
+
+        logger.info(
+            f"[LASTFM] getSimilar: {len(candidates)} candidates "
+            f"for '{artist} - {song}'"
+        )
+        # Return as tuple of frozensets so lru_cache can hash it
+        return tuple(candidates)
+
+    except Exception as e:
+        logger.debug(f"[LASTFM] getSimilar network error: {e}")
+        return ()
+
+
+def _get_lastfm_recommendations(artist: str, song: str,
+                                 source_profile: Dict) -> Optional[List[Dict]]:
+    """
+    Score + rank Last.fm similar tracks by vibe similarity to the source profile.
+
+    Scoring blends our internal multi-dimensional score (mood, style, energy,
+    production, ecosystem) with Last.fm's listener-overlap match score:
+        blended = internal_score * 0.82 + lastfm_match * 18
+
+    The lastfm_match weight (18 pts max) acts as a soft tiebreaker that rewards
+    actual listener co-occurrence — songs that Last.fm listeners play together —
+    without overriding the musical-coherence signals from internal scoring.
+
+    Returns None when fewer than 3 ecosystem-passing candidates are found, so
+    the caller can fall back to the curated pool.
+    """
+    raw = _get_lastfm_similar_candidates(artist, song)
+    if not raw:
+        return None
+
+    source_eco  = source_profile.get('ecosystem', 'pop_synth')
+    adj_ecos    = ECOSYSTEM_ADJACENT.get(source_eco, frozenset({source_eco}))
+
+    scored = []
+    for c in raw:
+        c_genre  = _detect_genre_fast(c['artist'])
+        c_eco    = POOL_ECOSYSTEM.get(c_genre, 'pop_synth')
+
+        # Ecosystem gate — skip candidates from incompatible musical worlds
+        if c_eco not in adj_ecos:
+            continue
+
+        internal  = _score_candidate(c['artist'], c['name'], c_genre, source_profile)
+        blended   = internal * 0.82 + c['lastfm_match'] * 18
+        scored.append((blended, c, c_genre))
+
+    if len(scored) < 3:
+        logger.info(
+            f"[LASTFM] Only {len(scored)} ecosystem-passing candidates — "
+            "falling back to curated"
+        )
+        return None
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    # Jitter top-12 pool for freshness, then deduplicate by artist
+    top_pool = scored[:12]
+    jittered = [(s + random.uniform(-1.5, 1.5), c, g) for s, c, g in top_pool]
+    jittered.sort(key=lambda x: x[0], reverse=True)
+
+    result       = []
+    seen_artists: set = set()
+    for _, c, c_genre in jittered:
+        ak = c['artist'].lower()
+        if ak not in seen_artists and ak != artist.lower():
+            seen_artists.add(ak)
+            rec          = dict(c)
+            rec['reason'] = _generate_reason(
+                c['artist'], c['name'], c_genre, source_profile, ''
+            )
+            result.append(rec)
+        if len(result) == 5:
+            break
+
+    # Safety pad from the broader scored list if we're still short
+    if len(result) < 5:
+        for _, c, c_genre in scored:
+            ak = c['artist'].lower()
+            if ak not in seen_artists and ak != artist.lower():
+                seen_artists.add(ak)
+                rec           = dict(c)
+                rec['reason'] = _generate_reason(
+                    c['artist'], c['name'], c_genre, source_profile, ''
+                )
+                result.append(rec)
+            if len(result) == 5:
+                break
+
+    if len(result) < 3:
+        return None
+
+    logger.info(
+        f"[LASTFM] Returning {len(result)} recommendations "
+        f"for '{artist} - {song}'"
+    )
+    return result
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Public API (unchanged signatures)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def get_similar_songs(artist: str, song: str, mood: str) -> List[Dict]:
     """
     Return 5 recommended songs similar in vibe to the source.
-    Unchanged signature — drop-in replacement.
+
+    Candidate discovery priority (song-first architecture):
+      1. Last.fm track.getSimilar  — live, listener-overlap similarity graph.
+                                     Up to 30 candidates, scored + ecosystem-filtered.
+                                     Used when ≥ 3 candidates pass the ecosystem gate.
+      2. Curated pool              — static GENRE_RECOMMENDATIONS per genre.
+                                     Deterministic, always available, ~15-20 per genre.
+      3. Blend                     — when Last.fm returns 3-4 songs, curated fills the
+                                     remaining slots (avoiding duplicate artists).
+
+    Apple Music is NOT used in this path.  It remains active only in
+    artist_service.py for /trending and /top chart features.
     """
     try:
-        genre = _detect_genre(artist, song, mood)
+        genre          = _detect_genre(artist, song, mood)
         source_profile = _build_song_profile(artist, song, mood, genre)
         logger.info(
             f"[REC] profile for '{artist} - {song}': "
@@ -2703,12 +2873,41 @@ def get_similar_songs(artist: str, song: str, mood: str) -> List[Dict]:
             f"vocal={source_profile['vocal']} era={source_profile['era']}"
         )
 
+        # ── 1. Last.fm similarity graph ──────────────────────────────────────
+        lastfm_recs = _get_lastfm_recommendations(artist, song, source_profile)
+
+        if lastfm_recs and len(lastfm_recs) >= 5:
+            # Full Last.fm result set — return directly
+            return lastfm_recs
+
+        # ── 2. Curated pool ──────────────────────────────────────────────────
         logger.info(f"[REC] Curated (scored) for '{artist} - {song}'")
-        return _get_curated_recommendations(artist, song, mood, source_profile)
+        curated = _get_curated_recommendations(artist, song, mood, source_profile)
+
+        if not lastfm_recs:
+            # No Last.fm data (key absent, track not found, or too few results)
+            return curated
+
+        # ── 3. Blend — Last.fm partial + curated fill ────────────────────────
+        # Last.fm gave 3-4 songs; pad to 5 from the curated pool, no duplicates.
+        merged       = list(lastfm_recs)
+        seen_artists = {r['artist'].lower() for r in merged}
+        for rec in curated:
+            if rec['artist'].lower() not in seen_artists:
+                seen_artists.add(rec['artist'].lower())
+                merged.append(rec)
+            if len(merged) == 5:
+                break
+
+        logger.info(
+            f"[REC] Blend: {len(lastfm_recs)} Last.fm + "
+            f"{len(merged) - len(lastfm_recs)} curated for '{artist} - {song}'"
+        )
+        return merged
 
     except Exception as e:
-        logger.error(f"[REC] Error: {e}")
-        genre = _detect_genre_fast(artist)
+        logger.error(f"[REC] Error in get_similar_songs: {e}", exc_info=True)
+        genre          = _detect_genre_fast(artist)
         source_profile = _build_song_profile(artist, song, mood, genre)
         return _get_curated_recommendations(artist, song, mood, source_profile)
 
@@ -2723,24 +2922,18 @@ def format_recommendations(recommendations: List[Dict], based_on: str = None) ->
         header = f"🎵 If you like \"{based_on}\", try these:\n"
     header += "━━━━━━━━━━━━━━━━━━━━━\n\n"
 
-    APPLE_REASON = 'Trending on Apple Music Top 100'
-    all_apple = all(s.get('reason') == APPLE_REASON for s in recommendations)
-
     lines = []
     for i, song in enumerate(recommendations, 1):
         emoji = ['🔥', '✨', '💫', '🎶', '⭐'][i - 1] if i <= 5 else '🎵'
         line = f"{emoji} {song['artist']} — {song['name']}"
         reason = song.get('reason', '')
-        if reason and reason != APPLE_REASON:
+        if reason:
             line += f"\n   ↳ {reason}"
-        elif song.get('match'):
-            line += f" ({song['match']}% match)"
         lines.append(line)
 
-    body = '\n\n'.join(lines)
-    source_note = "\n🍎 Source: Apple Music Top 100" if all_apple else ""
+    body   = '\n\n'.join(lines)
     footer = (
-        f"\n\n━━━━━━━━━━━━━━━━━━━━━{source_note}\n"
+        "\n\n━━━━━━━━━━━━━━━━━━━━━\n"
         "🎤 /lyrics to see any song's lyrics\n"
         "📊 /analyze for deeper insights"
     )
