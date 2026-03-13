@@ -4,6 +4,7 @@ import logging
 import random
 import requests
 import time
+from functools import lru_cache
 from typing import List, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -1536,6 +1537,118 @@ _PROD_FEEL_TO_SIG: Dict[str, str] = {
     'mixed':      'mixed',
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Last.fm tag → internal style family
+# ──────────────────────────────────────────────────────────────────────────────
+# Maps crowd-sourced Last.fm tag strings (lowercased) to the style family vocab
+# used throughout the recommendation pipeline.  Only specific, unambiguous tags
+# are included — broad labels like 'pop' or 'rock' are omitted here because
+# they carry no production-level information and would dilute signal.
+_TAG_STYLE_MAP: Dict[str, str] = {
+    # Synth / electronic pop
+    'synth-pop':           'synth_pop',
+    'synthpop':            'synth_pop',
+    'synthwave':           'synth_pop',
+    'synth pop':           'synth_pop',
+    'electropop':          'synth_pop',
+    'electro pop':         'synth_pop',
+    'new wave':            'synth_pop',
+    # Dance / disco / funk
+    'dance-pop':           'dance_pop',
+    'dance pop':           'dance_pop',
+    'disco':               'dance_pop',
+    'funk':                'dance_pop',
+    'nu-disco':            'dance_pop',
+    # Pure electronic genres
+    'edm':                 'festival_edm',
+    'electronic dance music': 'festival_edm',
+    'big room':            'festival_edm',
+    'progressive house':   'festival_edm',
+    'house':               'house',
+    'deep house':          'house',
+    'tech house':          'house',
+    'tropical house':      'house',
+    'techno':              'techno',
+    'trance':              'trance',
+    'progressive trance':  'trance',
+    'vocal trance':        'trance',
+    'drum and bass':       'drum_bass',
+    'drum & bass':         'drum_bass',
+    'dnb':                 'drum_bass',
+    'liquid dnb':          'drum_bass',
+    'uk garage':           'uk_garage',
+    '2-step':              'uk_garage',
+    'idm':                 'idm',
+    'intelligent dance music': 'idm',
+    'electronica':         'idm',
+    # Cinematic / ambient / trip-hop
+    'ambient':             'ambient',
+    'ambient electronic':  'ambient',
+    'trip-hop':            'downtempo',
+    'trip hop':            'downtempo',
+    'downtempo':           'downtempo',
+    'chillout':            'downtempo',
+    'chill out':           'downtempo',
+    # R&B / soul
+    'r&b':                 'alt_rnb',
+    'rnb':                 'alt_rnb',
+    'rhythm and blues':    'alt_rnb',
+    'alternative r&b':     'alt_rnb',
+    'contemporary r&b':    'smooth_rnb',
+    'smooth r&b':          'smooth_rnb',
+    'soul':                'soul',
+    'neo soul':            'neo_soul',
+    'neo-soul':            'neo_soul',
+    # Hip-hop / trap
+    'hip-hop':             'lyrical_rap',
+    'hip hop':             'lyrical_rap',
+    'rap':                 'lyrical_rap',
+    'trap':                'trap',
+    'trap music':          'trap',
+    'melodic rap':         'melodic_rap',
+    'melodic trap':        'melodic_rap',
+    # Rock / indie rock
+    'indie rock':          'indie_rock',
+    'alternative rock':    'alt_rock',
+    'alt-rock':            'alt_rock',
+    'post-rock':           'post_rock',
+    'post rock':           'post_rock',
+    'shoegaze':            'shoegaze',
+    'art rock':            'art_rock',
+    'punk rock':           'punk_pop',
+    # Acoustic / folk / singer-songwriter
+    'acoustic':            'acoustic_pop',
+    'folk':                'singer_songwriter',
+    'singer-songwriter':   'singer_songwriter',
+    'folk rock':           'folk_rock',
+    # Indie pop and crossover
+    'indie pop':           'indie_rock',
+    'dream pop':           'dream_pop',
+    'art pop':             'cinematic_pop',
+    # World / Afrobeats
+    'afrobeats':           'afrobeats',
+    'afrobeat':            'afrobeats',
+    'afro pop':            'afrobeats',
+    'afropop':             'afrobeats',
+    'amapiano':            'amapiano',
+    'afro fusion':         'afro_fusion',
+    # Latin
+    'reggaeton':           'reggaeton',
+    'latin pop':           'latin_pop',
+    # Classical / cinematic
+    'classical':           'cinematic_score',
+    'orchestral':          'cinematic_score',
+    'film score':          'cinematic_score',
+    'neoclassical':        'cinematic_score',
+    'modern classical':    'cinematic_score',
+    'neo-classical':       'cinematic_score',
+}
+
+# Tags too broad to carry meaningful production information on their own.
+# Multi-word or specific tags ('synth-pop', 'trip-hop', 'neo soul') dominate;
+# these single-word genre labels are only used when no specific tag matches.
+_BROAD_TAGS: frozenset = frozenset({'rock', 'pop', 'electronic', 'indie'})
+
 
 def _classify_production_signature(style: str, genre: str) -> str:
     """
@@ -1797,6 +1910,100 @@ def _infer_tempo(mood: str, genre: str) -> str:
     return base
 
 
+@lru_cache(maxsize=512)
+def _fetch_track_tags(artist: str, song: str) -> tuple:
+    """
+    Fetch Last.fm crowd-sourced top tags for a specific track.
+
+    Returns a tuple of (tag_name_lower, count) pairs sorted by count
+    descending, ready for _resolve_style_from_tags.
+
+    Song-level: tags reflect THIS track's sonic character, not the artist's
+    genre label.  For example 'Blinding Lights' returns ('synth-pop', 100),
+    ('new wave', 82), ('80s', 60) … not just 'r&b' because The Weeknd is
+    classified as R&B.
+
+    Cached with lru_cache(512) so repeated identical queries are free.
+    Returns () on any network failure or missing API key — callers must
+    handle the empty case gracefully.
+    """
+    api_key = os.environ.get('LASTFM_API_KEY', '')
+    if not api_key:
+        return ()
+    try:
+        r = requests.get(
+            'https://ws.audioscrobbler.com/2.0/',
+            params={
+                'method':      'track.getTopTags',
+                'artist':      artist,
+                'track':       song,
+                'api_key':     api_key,
+                'format':      'json',
+                'autocorrect': '1',
+            },
+            timeout=4,
+        )
+        if r.status_code == 200:
+            raw = r.json().get('toptags', {}).get('tag', [])
+            return tuple(
+                (t['name'].lower().strip(), int(t.get('count', 0)))
+                for t in raw if t.get('name')
+            )
+    except Exception:
+        pass
+    return ()
+
+
+def _resolve_style_from_tags(tag_pairs: tuple) -> Optional[str]:
+    """
+    Vote-tally Last.fm (tag, count) pairs into a single internal style family.
+
+    Algorithm:
+      • Each tag mapped by _TAG_STYLE_MAP contributes a weighted vote equal to
+        count / max_count (so the top tag always contributes 1.0).
+      • Tags in _BROAD_TAGS (single-word generics like 'pop', 'rock') are
+        skipped unless they are the ONLY mapped tag, because specific multi-word
+        tags like 'synth-pop' carry more sonic information.
+      • The style with the highest total weighted vote wins.
+      • A minimum threshold of 0.25 weighted votes is required; below this the
+        function returns None and the pipeline falls back to artist-level style.
+
+    Returns the winning style string, or None if confidence is too low.
+    """
+    if not tag_pairs:
+        return None
+
+    max_count = max(c for _, c in tag_pairs) or 1
+
+    votes: Dict[str, float] = {}
+    for tag, count in tag_pairs[:15]:
+        style = _TAG_STYLE_MAP.get(tag)
+        if not style:
+            continue
+        if tag in _BROAD_TAGS:
+            continue   # skip broad single-word tags; specific ones dominate
+        weight = count / max_count
+        votes[style] = votes.get(style, 0.0) + weight
+
+    # If no specific tags matched, try broad tags as last resort
+    if not votes:
+        for tag, count in tag_pairs[:15]:
+            style = _TAG_STYLE_MAP.get(tag)
+            if style:
+                weight = count / max_count
+                votes[style] = votes.get(style, 0.0) + weight
+
+    if not votes:
+        return None
+
+    best_style = max(votes, key=lambda s: votes[s])
+    if votes[best_style] < 0.25:
+        return None
+
+    logger.debug(f"[TAG] style resolved: {best_style} (votes={votes})")
+    return best_style
+
+
 def _build_song_profile(artist: str, song: str, handler_mood: str, genre: str) -> Dict:
     """
     Build a song-first profile dict.
@@ -1805,20 +2012,34 @@ def _build_song_profile(artist: str, song: str, handler_mood: str, genre: str) -
       mood       — from title keywords + handler hint
       energy     — from title keywords, with mood as fallback
       production — from style/subgenre mapping
-      style      — from SONG_STYLE_OVERRIDE → ARTIST_STYLE (weak hint)
+      style      — Last.fm track tags (song-level) → SONG_STYLE_OVERRIDE
+                   → ARTIST_STYLE (artist-level, weakest signal)
 
     Secondary signals (artist-level, kept as weak context):
       vocal, era — from ARTIST_PROFILE
     """
-    ap    = _get_artist_profile(artist)
-    mood  = _infer_mood_from_title(song, genre, handler_mood)
-    style = _get_song_style(artist, song)
+    ap           = _get_artist_profile(artist)
+    mood         = _infer_mood_from_title(song, genre, handler_mood)
+
+    # Style: song-level Last.fm tags override artist-level lookup.
+    # _fetch_track_tags() is cached; returns () when API key is absent or call
+    # fails, so the pipeline degrades gracefully to artist-level style.
+    artist_style = _get_song_style(artist, song)
+    tag_style    = _resolve_style_from_tags(_fetch_track_tags(artist, song))
+    style        = tag_style if tag_style else artist_style
 
     energy     = _infer_energy(song, mood, genre)
     production = _infer_production(style, genre, mood, energy)  # song-aware softening
     # Production signature: mood-free, style+genre-driven, finer than production feel.
     # Used only for ecosystem assignment — does not affect scoring compatibility.
     prod_sig   = _classify_production_signature(style, genre)
+
+    if tag_style:
+        logger.info(
+            f"[IDENTITY] {artist} — {song}: "
+            f"tag_style={tag_style} (overrides artist_style={artist_style}) "
+            f"prod={production} eco={_infer_ecosystem(production, style, genre, prod_sig)}"
+        )
 
     return {
         'genre':      genre,
