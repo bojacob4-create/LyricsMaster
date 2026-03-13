@@ -1,0 +1,43 @@
+After additional testing we observed that the remaining errors are not caused by individual songs or artists, but by incomplete coverage of musical style families in the candidate pool architecture.
+
+This indicates that the system currently supports only a subset of musical families. When a song belongs to a style family that is not explicitly represented, the routing logic falls back to unrelated pools (for example hip-hop or mainstream rock), which produces incorrect recommendations.
+
+This should not be solved case-by-case. Instead, the system should support a comprehensive set of style families so that routing always has a musically appropriate destination.
+
+Please review the architecture and ensure that the candidate pool layer is built around a broad taxonomy of major music families rather than a small fixed set.
+
+The goal is not to patch specific artists, but to ensure structural coverage across the full spectrum of modern music.
+
+In addition to the existing families (pop, rnb, hiphop, rock, afrobeats, latin, electronic, indie), please verify that the system has representation and routing coverage for families such as:
+
+• ambient electronic  
+• IDM / experimental electronic  
+• downtempo / chill electronic  
+• techno / minimal techno  
+• trance / progressive trance  
+• house / deep house  
+• drum & bass  
+• garage / UK garage  
+
+• experimental rock  
+• art rock  
+• post-rock  
+• shoegaze  
+• dream pop  
+
+• alternative R&B  
+• neo-soul  
+• lo-fi / bedroom pop  
+
+• indie folk  
+• acoustic / singer-songwriter  
+
+• classical / orchestral crossover  
+• cinematic / soundtrack style  
+
+These families do not all need separate scoring logic, but the system should be able to route songs belonging to them toward musically appropriate candidate pools rather than defaulting to unrelated genres.
+
+The existing song-first scoring system (mood, energy, production, etc.) should remain unchanged. The objective is simply to ensure that the candidate space being evaluated is structurally complete and musically representative.
+
+In short:
+The system should operate on a comprehensive style-family taxonomy so that routing always has a correct musical destination, instead of falling back to unrelated genres when encountering less common styles.

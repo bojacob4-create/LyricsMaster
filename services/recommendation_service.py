@@ -84,6 +84,49 @@ ARTIST_GENRE_MAP = {
     'lorde': 'indie',                'aurora': 'indie',
     'birdy': 'indie',                'sigrid': 'indie',
     'halsey': 'indie',               'florence + the machine': 'indie',
+    # Downtempo / Trip-hop
+    'massive attack': 'electronic',  'portishead': 'electronic',
+    'bonobo': 'electronic',          'bjork': 'electronic',
+    'tricky': 'electronic',          'thievery corporation': 'electronic',
+    'moby': 'electronic',            'jon hopkins': 'electronic',
+    # Ambient / Atmospheric electronic
+    'brian eno': 'electronic',       'max richter': 'classic',
+    'nils frahm': 'classic',         'olafur arnalds': 'classic',
+    'tycho': 'electronic',           'hammock': 'electronic',
+    # IDM / Experimental electronic
+    'aphex twin': 'electronic',      'boards of canada': 'electronic',
+    'burial': 'electronic',          'arca': 'electronic',
+    # Drum & Bass / UK Garage
+    'pendulum': 'electronic',        'chase & status': 'electronic',
+    'goldie': 'electronic',          'craig david': 'electronic',
+    # Trance
+    'armin van buuren': 'electronic','paul van dyk': 'electronic',
+    'above & beyond': 'electronic',
+    # Neo-soul
+    "d'angelo": 'rnb',              'erykah badu': 'rnb',
+    'anderson .paak': 'rnb',         'lauryn hill': 'rnb',
+    'maxwell': 'rnb',                'india arie': 'rnb',
+    'jill scott': 'rnb',             'hiatus kaiyote': 'rnb',
+    'gary clark jr.': 'rnb',
+    # Post-rock / Art-rock
+    'explosions in the sky': 'rock', 'sigur ros': 'rock',
+    'sigur rós': 'rock',             'godspeed you! black emperor': 'rock',
+    'mogwai': 'rock',                'the national': 'rock',
+    'arcade fire': 'rock',           'nick cave': 'rock',
+    'st. vincent': 'rock',           'pj harvey': 'rock',
+    # Shoegaze
+    'my bloody valentine': 'indie',  'slowdive': 'indie',
+    'ride': 'indie',                 'cocteau twins': 'indie',
+    'nothing': 'indie',              'shoegaze': 'indie',
+    # Singer-songwriter / Indie folk
+    'noah kahan': 'indie',           'nick drake': 'indie',
+    'iron & wine': 'indie',          'damien rice': 'indie',
+    'gregory alan isakov': 'indie',  'father john misty': 'indie',
+    'simon & garfunkel': 'indie',    'sufjan stevens': 'indie',
+    # Cinematic / Orchestral
+    'hans zimmer': 'classic',        'ennio morricone': 'classic',
+    'ludovico einaudi': 'classic',   'yann tiersen': 'classic',
+    'john williams': 'classic',
 }
 
 # iTunes genre → internal genre
@@ -373,6 +416,13 @@ GENRE_RECOMMENDATIONS = {
         {'artist': 'H.E.R.', 'name': 'Focus', 'reason': 'Soulful guitar-driven R&B'},
         {'artist': 'Chlöe', 'name': 'Pray It Away', 'reason': 'Powerful contemporary R&B'},
         {'artist': 'Brent Faiyaz', 'name': 'Loose Change', 'reason': 'Introspective modern R&B'},
+        # Neo-soul representatives
+        {"artist": "D'Angelo", 'name': 'Untitled (How Does It Feel)', 'reason': 'Neo-soul masterpiece'},
+        {'artist': 'Erykah Badu', 'name': 'On & On', 'reason': 'Neo-soul founding voice'},
+        {'artist': 'Anderson .Paak', 'name': 'Come Down', 'reason': 'Neo-soul funk energy'},
+        {'artist': 'Lauryn Hill', 'name': 'Ex-Factor', 'reason': 'Neo-soul emotional rawness'},
+        {'artist': 'Maxwell', 'name': "Ascension (Don't Ever Wonder)", 'reason': 'Silky neo-soul romance'},
+        {'artist': 'Hiatus Kaiyote', 'name': 'Nakamarra', 'reason': 'Neo-soul polyrhythmic wonder'},
     ],
     'hiphop': [
         {'artist': 'Kendrick Lamar', 'name': 'HUMBLE.', 'reason': 'Hard-hitting lyrical mastery'},
@@ -411,6 +461,13 @@ GENRE_RECOMMENDATIONS = {
         {'artist': 'Radiohead', 'name': 'Creep', 'reason': 'Defining 90s alternative rock'},
         {'artist': 'Linkin Park', 'name': 'The Emptiness Machine', 'reason': 'Rock comeback 2024'},
         {'artist': 'Arctic Monkeys', 'name': 'R U Mine?', 'reason': 'Garage rock energy'},
+        # Post-rock / art-rock representatives
+        {'artist': 'Explosions in the Sky', 'name': 'The Birth and Death of the Day', 'reason': 'Cinematic post-rock sweep'},
+        {'artist': 'Sigur Rós', 'name': 'Svefn-g-englar', 'reason': 'Post-rock ethereal grandeur'},
+        {'artist': 'The National', 'name': 'About Today', 'reason': 'Art-rock emotional restraint'},
+        {'artist': 'Arcade Fire', 'name': 'Wake Up', 'reason': 'Anthemic art-rock sweep'},
+        {'artist': 'St. Vincent', 'name': 'New York', 'reason': 'Art-rock sophistication'},
+        {'artist': 'Nick Cave', 'name': 'Into My Arms', 'reason': 'Dark post-punk piano ballad'},
     ],
     'latin': [
         {'artist': 'Bad Bunny', 'name': 'Titi Me Pregunto', 'reason': 'Latin trap/reggaeton vibes'},
@@ -442,6 +499,13 @@ GENRE_RECOMMENDATIONS = {
         {'artist': 'Michael Jackson', 'name': 'Billie Jean', 'reason': 'Pop-funk perfection'},
         {'artist': 'Elton John', 'name': 'Rocket Man', 'reason': 'Classic piano-pop ballad'},
         {'artist': 'Rolling Stones', 'name': 'Paint It Black', 'reason': 'Psychedelic rock edge'},
+        # Cinematic / neoclassical / orchestral representatives
+        {'artist': 'Hans Zimmer', 'name': 'Time', 'reason': 'Cinematic orchestral masterpiece'},
+        {'artist': 'Ludovico Einaudi', 'name': 'Experience', 'reason': 'Neoclassical piano meditation'},
+        {'artist': 'Max Richter', 'name': 'On the Nature of Daylight', 'reason': 'Contemporary classical beauty'},
+        {'artist': 'Nils Frahm', 'name': 'Says', 'reason': 'Minimalist piano electronic blend'},
+        {'artist': 'Ólafur Arnalds', 'name': 'Near Light', 'reason': 'Ambient neoclassical warmth'},
+        {'artist': 'Yann Tiersen', 'name': 'La Valse d\'Amélie', 'reason': 'Cinematic French piano poetry'},
     ],
     'electronic': [
         {'artist': 'Avicii', 'name': 'Wake Me Up', 'reason': 'Festival EDM with folk-pop crossover'},
@@ -462,6 +526,15 @@ GENRE_RECOMMENDATIONS = {
         {'artist': 'Flume', 'name': 'Never Be Like You', 'reason': 'Electronic R&B crossover'},
         {'artist': 'Deadmau5', 'name': 'Strobe', 'reason': 'Progressive house masterpiece'},
         {'artist': 'Tiësto', 'name': 'The Business', 'reason': 'Dance floor EDM 2020'},
+        # Downtempo / trip-hop representatives (low-energy cinematic end of electronic)
+        {'artist': 'Massive Attack', 'name': 'Teardrop', 'reason': 'Trip-hop atmospheric depth'},
+        {'artist': 'Portishead', 'name': 'Glory Box', 'reason': 'Dark atmospheric trip-hop tension'},
+        {'artist': 'Bonobo', 'name': 'Kiara', 'reason': 'Lush cinematic downtempo groove'},
+        {'artist': 'Burial', 'name': 'Archangel', 'reason': 'UK garage electronic soul'},
+        {'artist': 'Jon Hopkins', 'name': 'Emerald Rush', 'reason': 'Melodic electronic introspection'},
+        {'artist': 'Moby', 'name': 'Porcelain', 'reason': 'Ambient electronic atmosphere'},
+        # Drum & bass / IDM
+        {'artist': 'Pendulum', 'name': 'Watercolour', 'reason': 'Drum & bass with rock crossover'},
     ],
     'indie': [
         {'artist': 'Joji', 'name': 'Glimpse of Us', 'reason': 'Emotional lo-fi indie pop'},
@@ -482,6 +555,16 @@ GENRE_RECOMMENDATIONS = {
         {'artist': 'Men I Trust', 'name': 'Show Me How', 'reason': 'Dream pop synth softness'},
         {'artist': 'Cigarettes After Sex', 'name': 'Apocalypse', 'reason': 'Slowcore dream pop atmosphere'},
         {'artist': 'The Japanese House', 'name': 'Saw It Coming', 'reason': 'Electronic indie pop'},
+        # Shoegaze / dream-pop texture
+        {'artist': 'Slowdive', 'name': 'When the Sun Hits', 'reason': 'Shoegaze luminous wash'},
+        {'artist': 'Cocteau Twins', 'name': 'Heaven or Las Vegas', 'reason': 'Dream pop ethereal shimmer'},
+        # Singer-songwriter / indie folk
+        {'artist': 'Noah Kahan', 'name': 'Stick Season', 'reason': 'Singer-songwriter grounded emotion'},
+        {'artist': 'Iron & Wine', 'name': 'Naked As We Came', 'reason': 'Indie folk whisper-quiet intimacy'},
+        {'artist': 'Damien Rice', 'name': 'The Blower\'s Daughter', 'reason': 'Raw singer-songwriter ache'},
+        {'artist': 'Nick Drake', 'name': 'Pink Moon', 'reason': 'Intimate indie folk classic'},
+        # Art-rock adjacent
+        {'artist': 'Sigur Rós', 'name': 'Hoppípolla', 'reason': 'Post-rock emotional sweep'},
     ],
 }
 
@@ -536,6 +619,15 @@ _PROD_FROM_STYLE: Dict[str, str] = {
     'soul': 'minimal',
     'afrobeats': 'mixed',        'afro_fusion': 'mixed',
     'latin_pop': 'mixed',        'regional_mexican': 'mixed',
+    # New style families
+    'downtempo': 'cinematic',    'ambient': 'cinematic',
+    'idm': 'electronic',         'techno': 'electronic',
+    'trance': 'electronic',      'drum_bass': 'electronic',
+    'uk_garage': 'electronic',
+    'post_rock': 'band',         'art_rock': 'band',
+    'shoegaze': 'band',          'neo_soul': 'minimal',
+    'singer_songwriter': 'acoustic',
+    'cinematic_score': 'cinematic',
 }
 _PROD_FROM_GENRE: Dict[str, str] = {
     'hiphop': 'trap',  'rnb': 'minimal',  'pop': 'electronic',
@@ -780,6 +872,84 @@ ARTIST_STYLE = {
     'elton john': 'classic_rock',
     'eagles': 'classic_rock',
     'u2': 'classic_rock',
+    # ── Downtempo / Trip-hop ──────────────────────────────────────────────────
+    'massive attack': 'downtempo',
+    'portishead': 'downtempo',
+    'bonobo': 'downtempo',
+    'bjork': 'downtempo',
+    'tricky': 'downtempo',
+    'thievery corporation': 'downtempo',
+    'archive': 'downtempo',
+    # ── Ambient / Atmospheric electronic ─────────────────────────────────────
+    'moby': 'ambient',
+    'brian eno': 'ambient',
+    'jon hopkins': 'ambient',
+    'tycho': 'ambient',
+    'hammock': 'ambient',
+    # ── IDM / Experimental electronic ────────────────────────────────────────
+    'aphex twin': 'idm',
+    'boards of canada': 'idm',
+    'burial': 'idm',
+    'arca': 'idm',
+    # ── Techno / Minimal techno ───────────────────────────────────────────────
+    'nina kraviz': 'techno',
+    'charlotte de witte': 'techno',
+    'objekt': 'techno',
+    # ── Trance / Progressive trance ───────────────────────────────────────────
+    'armin van buuren': 'trance',
+    'paul van dyk': 'trance',
+    'ferry corsten': 'trance',
+    # ── Drum & Bass ───────────────────────────────────────────────────────────
+    'pendulum': 'drum_bass',
+    'chase & status': 'drum_bass',
+    'goldie': 'drum_bass',
+    # ── UK Garage ─────────────────────────────────────────────────────────────
+    'craig david': 'uk_garage',
+    # ── Post-rock ─────────────────────────────────────────────────────────────
+    'explosions in the sky': 'post_rock',
+    'godspeed you! black emperor': 'post_rock',
+    'mogwai': 'post_rock',
+    'sigur ros': 'post_rock',
+    'sigur rós': 'post_rock',
+    'russian circles': 'post_rock',
+    # ── Art-rock / Experimental rock ─────────────────────────────────────────
+    'the national': 'art_rock',
+    'arcade fire': 'art_rock',
+    'nick cave': 'art_rock',
+    'st. vincent': 'art_rock',
+    'pj harvey': 'art_rock',
+    'talking heads': 'art_rock',
+    # ── Shoegaze ──────────────────────────────────────────────────────────────
+    'my bloody valentine': 'shoegaze',
+    'slowdive': 'shoegaze',
+    'ride': 'shoegaze',
+    'cocteau twins': 'shoegaze',
+    # ── Neo-soul ──────────────────────────────────────────────────────────────
+    "d'angelo": 'neo_soul',
+    'erykah badu': 'neo_soul',
+    'anderson .paak': 'neo_soul',
+    'lauryn hill': 'neo_soul',
+    'maxwell': 'neo_soul',
+    'india arie': 'neo_soul',
+    'jill scott': 'neo_soul',
+    'hiatus kaiyote': 'neo_soul',
+    # ── Singer-songwriter / Folk ──────────────────────────────────────────────
+    'noah kahan': 'singer_songwriter',
+    'nick drake': 'singer_songwriter',
+    'iron & wine': 'singer_songwriter',
+    'damien rice': 'singer_songwriter',
+    'gregory alan isakov': 'singer_songwriter',
+    'father john misty': 'singer_songwriter',
+    'simon & garfunkel': 'singer_songwriter',
+    # ── Cinematic score / Orchestral ──────────────────────────────────────────
+    'hans zimmer': 'cinematic_score',
+    'ennio morricone': 'cinematic_score',
+    'ludovico einaudi': 'cinematic_score',
+    'max richter': 'cinematic_score',
+    'nils frahm': 'cinematic_score',
+    'olafur arnalds': 'cinematic_score',
+    'yann tiersen': 'cinematic_score',
+    'john williams': 'cinematic_score',
 }
 
 # Per-song style overrides for well-known tracks where the song style
@@ -1100,11 +1270,26 @@ STYLE_GENRE_AFFINITY: Dict[str, str] = {
     'dance_electronic': 'electronic',
     'festival_edm': 'electronic',
     'house': 'electronic',
-    # Indie / art-pop families → dedicated indie pool
+    'downtempo': 'electronic',
+    'ambient': 'electronic',
+    'idm': 'electronic',
+    'techno': 'electronic',
+    'trance': 'electronic',
+    'drum_bass': 'electronic',
+    'uk_garage': 'electronic',
+    # Rock sub-families → rock pool
+    'post_rock': 'rock',
+    'art_rock': 'rock',
+    # Indie / art-pop / shoegaze / folk families → indie pool
     'dream_pop': 'indie',    'cinematic_pop': 'indie',
     'alt_pop': 'indie',      'acoustic_pop': 'indie',
     'lo_fi': 'indie',        'art_pop': 'indie',
-    'indie_folk': 'indie',
+    'indie_folk': 'indie',   'shoegaze': 'indie',
+    'singer_songwriter': 'indie',
+    # Neo-soul → rnb pool
+    'neo_soul': 'rnb',
+    # Cinematic / orchestral → classic pool
+    'cinematic_score': 'classic',
 }
 
 
