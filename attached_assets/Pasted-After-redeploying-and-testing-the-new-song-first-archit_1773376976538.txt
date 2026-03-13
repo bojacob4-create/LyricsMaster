@@ -1,0 +1,33 @@
+After redeploying and testing the new song-first architecture, the results show a consistent pattern that suggests the core issue is no longer the scoring logic, but the candidate pool composition.
+
+Several tests (for example Avicii – Wake Me Up, FKA twigs – Cellophane, Joji – Slow Dancing in the Dark) are still producing recommendations dominated by R&B / pop artists even when the input song clearly belongs to very different styles such as EDM, experimental pop, or alternative.
+
+This indicates that the candidate pools feeding the scoring system are heavily biased toward R&B / pop, so when the scoring system evaluates candidates it repeatedly receives similar types of songs and ends up selecting them even if they are not musically appropriate for the input track.
+
+Important clarification:
+This is NOT a request to fix individual artists or songs.
+
+Do NOT introduce case-by-case patches or artist-specific rules.
+
+Instead, please investigate the candidate pool layer and ensure that it is properly diversified and aligned with the detected song profile.
+
+Specifically:
+
+1) Ensure that candidate pools contain sufficient coverage for major style families such as:
+   - electronic / EDM
+   - dance / festival electronic
+   - alternative / art pop
+   - indie rock / alternative rock
+   - afro / afrobeats
+   - rap / hip-hop
+   - R&B / soul
+   - acoustic / singer-songwriter
+
+2) The detected song profile (style, energy, production) should influence which candidate pools are searched or prioritized.
+
+3) Avoid default fallbacks that always push the system toward the same pop/R&B candidates when the style detection is uncertain.
+
+4) The scoring system that was just implemented (song-first with mood, energy, production) should remain intact. The goal is to improve the diversity and relevance of the candidate sources feeding that scoring system.
+
+In short:
+The recommendation intelligence is now stronger, but the candidate input space appears biased. Please adjust the candidate pool selection so that the system receives musically appropriate candidates for the detected song profile rather than repeatedly drawing from the same R&B/pop-heavy pool.

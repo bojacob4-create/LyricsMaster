@@ -54,14 +54,47 @@ ARTIST_GENRE_MAP = {
     'david bowie': 'classic', 'stevie wonder': 'classic', 'marvin gaye': 'classic',
     'eagles': 'classic', 'prince': 'classic', 'elton john': 'classic',
     'rolling stones': 'classic',
+    # Electronic / dance
+    'avicii': 'electronic',          'calvin harris': 'electronic',
+    'kygo': 'electronic',            'zedd': 'electronic',
+    'marshmello': 'electronic',      'the chainsmokers': 'electronic',
+    'martin garrix': 'electronic',   'david guetta': 'electronic',
+    'disclosure': 'electronic',      'daft punk': 'electronic',
+    'fred again..': 'electronic',    'fred again': 'electronic',
+    'skrillex': 'electronic',        'tiesto': 'electronic',
+    'tiësto': 'electronic',          'swedish house mafia': 'electronic',
+    'deadmau5': 'electronic',        'clean bandit': 'electronic',
+    'duke dumont': 'electronic',     'dj snake': 'electronic',
+    'diplo': 'electronic',           'flume': 'electronic',
+    'odesza': 'electronic',          'bicep': 'electronic',
+    'four tet': 'electronic',        'fisher': 'electronic',
+    'dom dolla': 'electronic',       'chris lake': 'electronic',
+    'caribou': 'electronic',         'tycho': 'electronic',
+    # Indie / art-pop / bedroom pop
+    'joji': 'indie',                 'omar apollo': 'indie',
+    'rex orange county': 'indie',    'still woozy': 'indie',
+    'clairo': 'indie',               'surfaces': 'indie',
+    'boy pablo': 'indie',            'conan gray': 'indie',
+    'phoebe bridgers': 'indie',      'mitski': 'indie',
+    'japanese breakfast': 'indie',   'fka twigs': 'indie',
+    'bon iver': 'indie',             'james blake': 'indie',
+    'sufjan stevens': 'indie',       'beach house': 'indie',
+    'the japanese house': 'indie',   'cigarettes after sex': 'indie',
+    'snail mail': 'indie',           'men i trust': 'indie',
+    'lorde': 'indie',                'aurora': 'indie',
+    'birdy': 'indie',                'sigrid': 'indie',
+    'halsey': 'indie',               'florence + the machine': 'indie',
 }
 
 # iTunes genre → internal genre
 _ITUNES_GENRE_MAP = {
     'hip-hop/rap': 'hiphop', 'hip hop/rap': 'hiphop', 'hip-hop': 'hiphop',
     'r&b/soul': 'rnb', 'r&b': 'rnb', 'soul': 'rnb',
-    'pop': 'pop', 'dance': 'pop', 'electronic': 'pop',
-    'rock': 'rock', 'alternative': 'rock', 'indie': 'rock',
+    'pop': 'pop',
+    'electronic': 'electronic', 'dance': 'electronic', 'techno': 'electronic',
+    'house': 'electronic', 'trance': 'electronic', 'edm': 'electronic',
+    'rock': 'rock', 'alternative': 'rock',
+    'indie': 'indie', 'indie pop': 'indie', 'art pop': 'indie',
     'latin': 'latin', 'reggaeton': 'latin', 'latin urban': 'latin',
     'country': 'pop', 'jazz': 'classic', 'classical': 'classic',
     'k-pop': 'pop', 'afrobeats': 'afrobeats', 'reggae': 'afrobeats',
@@ -410,14 +443,54 @@ GENRE_RECOMMENDATIONS = {
         {'artist': 'Elton John', 'name': 'Rocket Man', 'reason': 'Classic piano-pop ballad'},
         {'artist': 'Rolling Stones', 'name': 'Paint It Black', 'reason': 'Psychedelic rock edge'},
     ],
+    'electronic': [
+        {'artist': 'Avicii', 'name': 'Wake Me Up', 'reason': 'Festival EDM with folk-pop crossover'},
+        {'artist': 'Calvin Harris', 'name': 'Feel So Close', 'reason': 'Dance-electronic euphoria'},
+        {'artist': 'Kygo', 'name': 'Firestone', 'reason': 'Chilled tropical EDM'},
+        {'artist': 'Zedd', 'name': 'The Middle', 'reason': 'Pop-EDM crossover energy'},
+        {'artist': 'Daft Punk', 'name': 'Get Lucky', 'reason': 'Funk-electronic classic'},
+        {'artist': 'Disclosure', 'name': 'Latch', 'reason': 'UK garage meets dance pop'},
+        {'artist': 'The Chainsmokers', 'name': 'Something Just Like This', 'reason': 'Electronic-pop ballad'},
+        {'artist': 'Martin Garrix', 'name': 'Animals', 'reason': 'Big room EDM power'},
+        {'artist': 'David Guetta', 'name': 'Titanium', 'reason': 'Anthemic electronic production'},
+        {'artist': 'Swedish House Mafia', 'name': "Don't You Worry Child", 'reason': 'Melodic progressive house'},
+        {'artist': 'Clean Bandit', 'name': 'Rather Be', 'reason': 'Classical-electronic crossover'},
+        {'artist': 'Duke Dumont', 'name': 'Ocean Drive', 'reason': 'Deep house summer anthem'},
+        {'artist': 'Marshmello', 'name': 'Alone', 'reason': 'Future bass emotional drive'},
+        {'artist': 'Fred again..', 'name': 'Bleed', 'reason': 'UK dance-electronic intimacy'},
+        {'artist': 'ODESZA', 'name': 'A Moment Apart', 'reason': 'Indie-electronic cinematic sweep'},
+        {'artist': 'Flume', 'name': 'Never Be Like You', 'reason': 'Electronic R&B crossover'},
+        {'artist': 'Deadmau5', 'name': 'Strobe', 'reason': 'Progressive house masterpiece'},
+        {'artist': 'Tiësto', 'name': 'The Business', 'reason': 'Dance floor EDM 2020'},
+    ],
+    'indie': [
+        {'artist': 'Joji', 'name': 'Glimpse of Us', 'reason': 'Emotional lo-fi indie pop'},
+        {'artist': 'Rex Orange County', 'name': 'Loving Is Easy', 'reason': 'Sunny indie pop warmth'},
+        {'artist': 'Clairo', 'name': 'Sofia', 'reason': 'Soft bedroom pop intimacy'},
+        {'artist': 'Surfaces', 'name': 'Sunday Best', 'reason': 'Feel-good indie pop'},
+        {'artist': 'Conan Gray', 'name': 'Heather', 'reason': 'Indie pop storytelling'},
+        {'artist': 'Omar Apollo', 'name': 'Evergreen', 'reason': 'Indie R&B with lush production'},
+        {'artist': 'Still Woozy', 'name': 'Goodie Bag', 'reason': 'Indie bedroom pop energy'},
+        {'artist': 'Phoebe Bridgers', 'name': 'Savior Complex', 'reason': 'Alt-folk emotional depth'},
+        {'artist': 'Bon Iver', 'name': 'Skinny Love', 'reason': 'Indie folk minimalism'},
+        {'artist': 'James Blake', 'name': 'Retrograde', 'reason': 'Electronic indie soul'},
+        {'artist': 'FKA twigs', 'name': 'cellophane', 'reason': 'Avant-garde art pop'},
+        {'artist': 'Mitski', 'name': 'Nobody', 'reason': 'Indie rock with art-pop drama'},
+        {'artist': 'Beach House', 'name': 'Space Song', 'reason': 'Dream pop haze'},
+        {'artist': 'Japanese Breakfast', 'name': 'Paprika', 'reason': 'Indie pop with orchestral lift'},
+        {'artist': 'Lorde', 'name': 'Royals', 'reason': 'Minimalist indie pop anthem'},
+        {'artist': 'Men I Trust', 'name': 'Show Me How', 'reason': 'Dream pop synth softness'},
+        {'artist': 'Cigarettes After Sex', 'name': 'Apocalypse', 'reason': 'Slowcore dream pop atmosphere'},
+        {'artist': 'The Japanese House', 'name': 'Saw It Coming', 'reason': 'Electronic indie pop'},
+    ],
 }
 
 MOOD_GENRE_WEIGHTS = {
-    'energetic': ['afrobeats', 'pop', 'hiphop', 'rock'],
-    'romantic': ['rnb', 'pop', 'latin'],
-    'happy': ['pop', 'afrobeats', 'latin'],
-    'sad': ['rnb', 'pop', 'rock'],
-    'relaxed': ['rnb', 'pop', 'classic'],
+    'energetic': ['afrobeats', 'pop', 'hiphop', 'rock', 'electronic'],
+    'romantic':  ['rnb', 'pop', 'latin', 'indie'],
+    'happy':     ['pop', 'afrobeats', 'latin', 'electronic'],
+    'sad':       ['rnb', 'pop', 'rock', 'indie'],
+    'relaxed':   ['rnb', 'pop', 'classic', 'indie'],
 }
 
 
@@ -1006,23 +1079,32 @@ STYLE_COMPAT: Dict[tuple, float] = {
 # Maps each style to the curated genre pool that contains the best candidates.
 # Used to cross-search the right pool even when detected genre differs.
 STYLE_GENRE_AFFINITY: Dict[str, str] = {
-    'dance_pop': 'pop',   'synth_pop': 'pop',   'alt_pop': 'pop',
-    'emotional_pop': 'pop', 'acoustic_pop': 'pop', 'pop_rnb': 'rnb',
-    'alt_rnb': 'rnb',     'smooth_rnb': 'rnb',  'emotional_rnb': 'rnb',
-    'sensual_rnb': 'rnb', 'soul': 'rnb',
+    # Pop families
+    'dance_pop': 'pop',      'synth_pop': 'pop',      'emotional_pop': 'pop',
+    'pop_rnb': 'rnb',
+    # R&B families
+    'alt_rnb': 'rnb',        'smooth_rnb': 'rnb',     'emotional_rnb': 'rnb',
+    'sensual_rnb': 'rnb',    'soul': 'rnb',
+    # Afrobeats families
     'afrobeats': 'afrobeats', 'afro_fusion': 'afrobeats', 'amapiano': 'afrobeats',
-    'trap': 'hiphop',     'melodic_rap': 'hiphop', 'lyrical_rap': 'hiphop',
+    # Hip-hop families
+    'trap': 'hiphop',        'melodic_rap': 'hiphop', 'lyrical_rap': 'hiphop',
     'female_rap': 'hiphop',
-    'reggaeton': 'latin', 'latin_pop': 'latin', 'regional_mexican': 'latin',
-    'indie_rock': 'rock', 'alt_rock': 'rock',   'anthemic_rock': 'rock',
-    'folk_rock': 'rock',  'punk_pop': 'rock',   'psychedelic_rock': 'rock',
+    # Latin families
+    'reggaeton': 'latin',    'latin_pop': 'latin',    'regional_mexican': 'latin',
+    # Rock families
+    'indie_rock': 'rock',    'alt_rock': 'rock',      'anthemic_rock': 'rock',
+    'folk_rock': 'rock',     'punk_pop': 'rock',      'psychedelic_rock': 'rock',
     'classic_rock': 'classic',
-    # New style families → best curated pool to cross-search
-    'dream_pop': 'rock',        # Hozier, Tame Impala, Radiohead in rock pool
-    'cinematic_pop': 'rock',    # same — indie/alt artists closest match
-    'dance_electronic': 'pop',  # dance_pop artists in pop pool are closest
-    'festival_edm': 'pop',      # same
-    'house': 'pop',             # same
+    # Electronic families → dedicated electronic pool
+    'dance_electronic': 'electronic',
+    'festival_edm': 'electronic',
+    'house': 'electronic',
+    # Indie / art-pop families → dedicated indie pool
+    'dream_pop': 'indie',    'cinematic_pop': 'indie',
+    'alt_pop': 'indie',      'acoustic_pop': 'indie',
+    'lo_fi': 'indie',        'art_pop': 'indie',
+    'indie_folk': 'indie',
 }
 
 
@@ -1495,7 +1577,7 @@ def _get_curated_recommendations(artist: str, song: str,
         for rg in MOOD_GENRE_WEIGHTS.get(mood, ['pop']):
             if rg not in pool_genres:
                 pool_genres.add(rg)
-                if len(pool_genres) >= 3:
+                if len(pool_genres) >= 4:
                     break
 
     # Build flat candidate list (candidate_dict, pool_genre)

@@ -1,0 +1,42 @@
+After redeploying and testing the new song-first recommendation architecture, the results suggest that the scoring system itself is functioning correctly, but the candidate pool selection and routing appear to be the limiting factors.
+
+In multiple tests (for example Avicii – Wake Me Up, FKA twigs – Cellophane, Joji – Slow Dancing in the Dark), the recommendations still tend to converge toward similar R&B / pop style candidates even when the input song clearly belongs to a different musical family such as electronic, experimental pop, or alternative.
+
+This does not appear to be caused by the scoring logic. Instead, it suggests that the candidate pools feeding the scoring system may not be sufficiently diversified or properly routed according to the detected song profile.
+
+Important clarification:
+
+This is NOT a request to reduce or suppress R&B / pop recommendations.
+
+R&B and pop should remain fully supported when they are musically appropriate.
+
+The goal is to ensure that the recommendation engine has balanced and properly routed candidate coverage across all major music families, so that the scoring system receives relevant candidates for the detected song profile.
+
+Please do NOT introduce case-by-case fixes, artist-specific patches, or song-specific rules.
+
+Instead, please review the candidate pool selection and routing logic.
+
+Specifically:
+
+1) Ensure that candidate pools contain strong and representative coverage across the major musical families, including for example:
+
+   - electronic / EDM
+   - dance / festival electronic
+   - alternative / art pop
+   - indie / alternative rock
+   - rap / hip-hop
+   - afrobeats / afro-fusion
+   - R&B / soul
+   - acoustic / singer-songwriter
+
+2) The detected song profile (style, energy, production, mood) should directly influence which candidate pools are searched or prioritized. The routing should be driven primarily by the song profile rather than broad genre fallbacks.
+
+3) Avoid fallback behavior where uncertain style detection repeatedly routes the system toward the same limited candidate groups.
+
+4) The current song-first scoring system (mood, energy, production, etc.) should remain intact. The objective is to improve the diversity and appropriateness of the candidate sources feeding that scoring system rather than modifying the scoring itself.
+
+5) If possible, ensure that the final candidate set evaluated by the scoring system contains a healthy diversity of musically relevant candidates so that the recommender is not repeatedly choosing from the same narrow subset of artists.
+
+In short:
+
+The recommendation logic has improved, but the candidate input space may still be biased or insufficiently routed. Please focus on improving candidate pool coverage and song-profile routing so that each detected song profile receives musically appropriate candidates rather than repeatedly drawing from the same subset of artists.
