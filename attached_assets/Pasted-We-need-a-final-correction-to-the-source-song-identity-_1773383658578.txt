@@ -1,0 +1,81 @@
+We need a final correction to the source-song identity inference layer.
+
+Important: the new ecosystem architecture, pool gating, and scoring hierarchy are working correctly and must NOT be changed. The remaining problem is upstream: the system sometimes assigns the wrong ecosystem to the source song itself.
+
+Evidence from testing shows that some hybrid or production-driven songs are classified primarily from mood or vocal style instead of their true sonic identity. This causes the entire recommendation pipeline to start in the wrong ecosystem.
+
+Examples of the pattern (not to be hard-coded):
+- disco / funk electronic tracks being treated as generic pop
+- synthpop tracks drifting into R&B
+- alternative pop being treated as R&B ballads
+
+This must be solved structurally, not by adding song overrides or artist exceptions.
+
+Required architectural change:
+
+1) Rebuild the source-song identity hierarchy in `_build_song_profile()`.
+
+The inference order must be strictly:
+
+   PRODUCTION SIGNATURE
+   → STYLE FAMILY
+   → ECOSYSTEM
+   → ENERGY
+   → MOOD
+   → VOCAL CHARACTER
+
+Production signature must dominate mood in determining the ecosystem.
+
+2) Introduce a small internal production taxonomy to stabilize ecosystem detection.
+
+Production categories should include patterns such as:
+
+   electronic_synth
+   disco_funk
+   band_rock
+   acoustic_minimal
+   trap_beats
+   rnb_soul
+   indie_alt
+   cinematic
+
+The production category should be inferred from the song’s style + genre signals and then mapped deterministically to an ecosystem.
+
+Example principle (not specific rules):
+- disco / funk production → electronic_synth or pop_synth ecosystem
+- synthwave / synthpop → electronic_synth
+- trap beat patterns → hiphop_trap
+- guitar-band production → rock_band
+- orchestral / ambient → classical_cinematic
+
+3) Ecosystem assignment must come from production + style, not mood.
+
+Mood should only refine scoring later, never determine the ecosystem itself.
+
+4) Hybrid songs must remain stable.
+
+If a song has mixed signals (for example alt-pop + rock or electronic + funk), the system should choose the ecosystem that matches the dominant production signature rather than averaging mood signals.
+
+5) Do NOT introduce:
+- manual artist rules
+- song overrides
+- hardcoded song cases
+- blacklist logic
+
+The fix must remain generalized and data-driven.
+
+6) Do NOT modify:
+- ecosystem adjacency system
+- pool gating
+- scoring weights
+- constellation bonus
+- handlers, commands, or UI.
+
+Only improve the source-song identity inference inside `recommendation_service.py`.
+
+After implementing, clearly report:
+
+- the new production inference logic
+- how production determines ecosystem
+- how mood influence was reduced in identity detection
+- confirmation that the rest of the architecture was preserved.

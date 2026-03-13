@@ -1365,6 +1365,96 @@ ECOSYSTEM_ADJACENT: Dict[str, frozenset] = {
                                      'electronic_synth'}),
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Production → Ecosystem priority table
+# ──────────────────────────────────────────────────────────────────────────────
+# Maps (production_signature, style_pool_hint) → ecosystem.
+# style_pool_hint = STYLE_GENRE_AFFINITY.get(style, '') — the curated pool that
+# the song's style family routes to.  This refines ambiguous production values
+# (e.g. 'cinematic' can be orchestral OR electronic downtempo, distinguished by
+# whether the style routes to 'classic' or 'electronic').
+#
+# Design principle: production is the PRIMARY signal for ecosystem identity;
+# it overrides the artist's broad genre classification.  A disco/funk track
+# classified as 'pop' genre gets electronic_synth ecosystem because its
+# production signature IS electronic.  Mood is never consulted here.
+_PROD_POOL_ECOSYSTEM: Dict[tuple, str] = {
+    # Electronic production — ALWAYS electronic_synth regardless of origin genre.
+    # Covers synth-pop, dance-electronic, disco, house, EDM, trance, etc.
+    ('electronic', 'electronic'): 'electronic_synth',
+    ('electronic', 'pop'):        'electronic_synth',   # synth-pop crossover
+    ('electronic', 'indie'):      'electronic_synth',   # electronic indie
+    ('electronic', 'rnb'):        'electronic_synth',   # electronic R&B
+    ('electronic', 'hiphop'):     'electronic_synth',   # electronic rap
+    ('electronic', ''):           'electronic_synth',   # any unrouted style
+    # Trap production — always hiphop territory.
+    ('trap', 'hiphop'):           'hiphop_trap',
+    ('trap', 'rnb'):              'hiphop_trap',         # melodic rap
+    ('trap', 'pop'):              'hiphop_trap',         # pop-rap
+    ('trap', ''):                 'hiphop_trap',
+    # Band/guitar production — rock or indie based on style routing.
+    ('band', 'rock'):             'rock_band',
+    ('band', 'indie'):            'indie_alt',
+    ('band', 'pop'):              'pop_synth',           # pop-rock crossover
+    ('band', ''):                 'rock_band',
+    # Acoustic production — indie/folk territory; classical for classical styles.
+    ('acoustic', 'indie'):        'indie_alt',
+    ('acoustic', 'rock'):         'indie_alt',           # acoustic rock = indie-adjacent
+    ('acoustic', 'classic'):      'classical_cinematic',
+    ('acoustic', 'pop'):          'indie_alt',           # acoustic pop → indie pool
+    ('acoustic', ''):             'indie_alt',
+    # Cinematic production — electronic downtempo vs classical vs indie-cinematic.
+    # Resolved by which pool the style routes to.
+    ('cinematic', 'electronic'):  'electronic_synth',    # trip-hop, downtempo, ambient
+    ('cinematic', 'classic'):     'classical_cinematic', # orchestral, neoclassical
+    ('cinematic', 'indie'):       'indie_alt',           # cinematic indie, dream-pop
+    ('cinematic', 'pop'):         'pop_synth',           # cinematic pop
+    ('cinematic', ''):            'classical_cinematic', # safety net — rarely fires
+    # Minimal production — stripped R&B/soul or melodic hiphop.
+    ('minimal', 'rnb'):           'rnb_soul',
+    ('minimal', 'hiphop'):        'hiphop_trap',         # melodic/sad rap
+    ('minimal', 'pop'):           'rnb_soul',            # minimal pop leans R&B
+    ('minimal', 'indie'):         'indie_alt',
+    ('minimal', ''):              'rnb_soul',
+    # Mixed production — no strong production identity; falls through to genre.
+    # (no entries intentionally — let style_pool → genre fallback handle it)
+}
+
+
+def _infer_ecosystem(production: str, style: str, genre: str) -> str:
+    """
+    Derive the source song's musical ecosystem from production + style,
+    with genre as final fallback.
+
+    Production is the PRIMARY identity signal — it overrides the artist's
+    broad genre classification.  The same artist's electronic and acoustic
+    tracks land in different ecosystems.  Style refines ambiguous production
+    values (e.g. 'cinematic' = orchestral vs electronic downtempo depends on
+    whether the style routes to 'classic' or 'electronic').  Mood is never
+    consulted — ecosystem is a structural, production-driven assignment.
+
+    Lookup order:
+      1. (production, style_pool)  — most specific
+      2. (production, genre)       — production + genre fallback
+      3. (production, '')          — production alone
+      4. style_pool → POOL_ECOSYSTEM   — style-based fallback
+      5. genre → POOL_ECOSYSTEM       — genre final fallback
+    """
+    style_pool = STYLE_GENRE_AFFINITY.get(style, '')
+
+    eco = (_PROD_POOL_ECOSYSTEM.get((production, style_pool)) or
+           _PROD_POOL_ECOSYSTEM.get((production, genre)) or
+           _PROD_POOL_ECOSYSTEM.get((production, '')))
+    if eco:
+        return eco
+
+    if style_pool:
+        eco = POOL_ECOSYSTEM.get(style_pool)
+        if eco:
+            return eco
+
+    return POOL_ECOSYSTEM.get(genre, 'pop_synth')
+
 
 def _get_song_style(artist: str, song: str) -> str:
     """
@@ -1585,7 +1675,7 @@ def _build_song_profile(artist: str, song: str, handler_mood: str, genre: str) -
         'production': production,
         'vocal':      ap.get('vocal', 'male'),
         'era':        ap.get('era', 'modern'),
-        'ecosystem':  POOL_ECOSYSTEM.get(genre, 'pop_synth'),
+        'ecosystem':  _infer_ecosystem(production, style, genre),
     }
 
 
