@@ -1420,26 +1420,176 @@ _PROD_POOL_ECOSYSTEM: Dict[tuple, str] = {
     # (no entries intentionally — let style_pool → genre fallback handle it)
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Production signature classifier — finer-grained taxonomy for ecosystem id
+# ──────────────────────────────────────────────────────────────────────────────
+# The production-feel taxonomy (electronic/trap/band/…) is coarse-grained and
+# ignores genre context.  The production signature taxonomy below is finer,
+# using (style, genre) pairs to resolve ambiguous styles such as alt_pop or
+# emotional_pop where the genre context changes the correct sonic identity.
+# Mood is NEVER used here; this is a structural assignment only.
+#
+# Signature vocabulary:
+#   electronic_synth  — synth/electronic textures (synth-pop, EDM, house, etc.)
+#   disco_funk        — disco/funk-influenced electronic (high-BPM dance-pop)
+#   band_rock         — live guitar-band production
+#   acoustic_minimal  — organic acoustic/singer-songwriter production
+#   trap_beats        — trap and hip-hop beat production
+#   rnb_soul          — R&B / soul texture production
+#   indie_alt         — indie / alternative production
+#   cinematic         — orchestral/ambient/cinematic (resolved downstream)
 
-def _infer_ecosystem(production: str, style: str, genre: str) -> str:
+# (style, genre) → production_signature
+_PROD_SIGNATURE_MAP: Dict[tuple, str] = {
+    # Alt-pop disambiguation: alt_pop maps to 'mixed' feel, but genre context
+    # reveals the true sonic territory.
+    ('alt_pop', 'pop'):   'electronic_synth',  # modern synth-flavoured alt-pop
+    ('alt_pop', 'rnb'):   'rnb_soul',           # R&B-flavoured alt-pop
+    ('alt_pop', 'indie'): 'indie_alt',           # indie-flavoured alt-pop
+    ('alt_pop', 'rock'):  'band_rock',           # rock-flavoured alt-pop
+    # Emotional-pop disambiguation
+    ('emotional_pop', 'pop'):   'acoustic_minimal',  # piano/acoustic ballad
+    ('emotional_pop', 'rnb'):   'rnb_soul',           # R&B ballad
+    ('emotional_pop', 'indie'): 'indie_alt',          # indie ballad
+    # Dance-pop: disco/funk texture vs straight electronic
+    ('dance_pop', 'pop'):   'disco_funk',        # disco-funk influenced pop
+    ('dance_pop', 'rnb'):   'electronic_synth',  # electronic R&B dance
+    # Synth-pop: always electronic regardless of the artist's origin genre
+    ('synth_pop', 'pop'):   'electronic_synth',
+    ('synth_pop', 'rnb'):   'electronic_synth',  # e.g. synth-pop R&B artists
+    ('synth_pop', 'indie'): 'electronic_synth',
+    # Pop-R&B crossover: electronic in both directions
+    ('pop_rnb', 'rnb'):   'electronic_synth',
+    ('pop_rnb', 'pop'):   'electronic_synth',
+    # Pure electronic styles (confirming by genre)
+    ('festival_edm', 'electronic'): 'electronic_synth',
+    ('festival_edm', 'pop'):        'disco_funk',
+    ('house',        'electronic'): 'electronic_synth',
+    ('techno',       'electronic'): 'electronic_synth',
+    ('trance',       'electronic'): 'electronic_synth',
+    ('idm',          'electronic'): 'electronic_synth',
+    ('drum_bass',    'electronic'): 'electronic_synth',
+    ('uk_garage',    'electronic'): 'electronic_synth',
+    # Downtempo / trip-hop / ambient: cinematic feel, electronic ecosystem
+    ('downtempo', 'electronic'): 'cinematic',
+    ('ambient',   'electronic'): 'cinematic',
+    # Trap / hip-hop beats
+    ('trap',         'hiphop'): 'trap_beats',
+    ('lyrical_rap',  'hiphop'): 'trap_beats',
+    ('melodic_rap',  'hiphop'): 'trap_beats',
+    ('female_rap',   'hiphop'): 'trap_beats',
+    # R&B / soul families
+    ('alt_rnb',      'rnb'): 'rnb_soul',
+    ('smooth_rnb',   'rnb'): 'rnb_soul',
+    ('emotional_rnb','rnb'): 'rnb_soul',
+    ('sensual_rnb',  'rnb'): 'rnb_soul',
+    ('soul',         'rnb'): 'rnb_soul',
+    ('neo_soul',     'rnb'): 'rnb_soul',
+    # Guitar-band production
+    ('indie_rock',      'rock'):    'band_rock',
+    ('alt_rock',        'rock'):    'band_rock',
+    ('anthemic_rock',   'rock'):    'band_rock',
+    ('post_rock',       'rock'):    'band_rock',
+    ('art_rock',        'rock'):    'band_rock',
+    ('psychedelic_rock','rock'):    'band_rock',
+    ('classic_rock',    'classic'): 'band_rock',
+    ('punk_pop',        'rock'):    'band_rock',
+    # Indie production (same instruments, indie pool)
+    ('shoegaze',    'indie'): 'indie_alt',
+    ('shoegaze',    'rock'):  'band_rock',
+    ('indie_rock',  'indie'): 'indie_alt',
+    ('art_rock',    'indie'): 'indie_alt',
+    ('folk_rock',   'indie'): 'indie_alt',
+    ('folk_rock',   'rock'):  'band_rock',
+    # Acoustic / organic
+    ('acoustic_pop',       'indie'): 'acoustic_minimal',
+    ('acoustic_pop',       'pop'):   'acoustic_minimal',
+    ('singer_songwriter',  'indie'): 'acoustic_minimal',
+    ('singer_songwriter',  'rock'):  'acoustic_minimal',
+    # Cinematic / classical
+    ('cinematic_score', 'classic'): 'cinematic',
+    ('cinematic_pop',   'indie'):   'cinematic',
+    ('dream_pop',       'indie'):   'cinematic',
+}
+
+# Maps production signature → ecosystem directly.
+# 'cinematic' is intentionally absent: it requires downstream style-pool
+# resolution to distinguish electronic downtempo from orchestral classical.
+_PROD_SIG_ECOSYSTEM: Dict[str, str] = {
+    'electronic_synth': 'electronic_synth',
+    'disco_funk':        'electronic_synth',  # disco/funk = electronic territory
+    'band_rock':         'rock_band',
+    'acoustic_minimal':  'indie_alt',
+    'trap_beats':        'hiphop_trap',
+    'rnb_soul':          'rnb_soul',
+    'indie_alt':         'indie_alt',
+}
+
+# Maps coarse production-feel values to signature vocabulary for fallback.
+_PROD_FEEL_TO_SIG: Dict[str, str] = {
+    'electronic': 'electronic_synth',
+    'trap':       'trap_beats',
+    'band':       'band_rock',
+    'acoustic':   'acoustic_minimal',
+    'minimal':    'rnb_soul',
+    'cinematic':  'cinematic',
+    'mixed':      'mixed',
+}
+
+
+def _classify_production_signature(style: str, genre: str) -> str:
+    """
+    Classify the source song's production signature using style + genre.
+
+    More granular than the production-feel taxonomy used for scoring.
+    Mood is NEVER consulted — this is a structural, sonic-identity assignment.
+
+    Lookup order:
+      1. (style, genre) → _PROD_SIGNATURE_MAP  (most specific)
+      2. style alone    → _PROD_FROM_STYLE feel → _PROD_FEEL_TO_SIG
+      3. genre alone    → _PROD_FROM_GENRE feel → _PROD_FEEL_TO_SIG
+      4. 'mixed'        (no signal strong enough to classify)
+    """
+    if style and style != 'unknown':
+        sig = _PROD_SIGNATURE_MAP.get((style, genre))
+        if sig:
+            return sig
+        feel = _PROD_FROM_STYLE.get(style)
+        if feel:
+            return _PROD_FEEL_TO_SIG.get(feel, 'mixed')
+
+    feel = _PROD_FROM_GENRE.get(genre)
+    if feel:
+        return _PROD_FEEL_TO_SIG.get(feel, 'mixed')
+
+    return 'mixed'
+
+
+def _infer_ecosystem(production: str, style: str, genre: str,
+                     prod_sig: str = '') -> str:
     """
     Derive the source song's musical ecosystem from production + style,
     with genre as final fallback.
 
-    Production is the PRIMARY identity signal — it overrides the artist's
-    broad genre classification.  The same artist's electronic and acoustic
-    tracks land in different ecosystems.  Style refines ambiguous production
-    values (e.g. 'cinematic' = orchestral vs electronic downtempo depends on
-    whether the style routes to 'classic' or 'electronic').  Mood is never
-    consulted — ecosystem is a structural, production-driven assignment.
+    When prod_sig is provided (from _classify_production_signature), it is
+    checked first against _PROD_SIG_ECOSYSTEM for a direct, unambiguous answer.
+    Signatures that are deliberately absent ('cinematic', 'mixed') fall through
+    to the existing production-feel × style-pool resolution below.
 
     Lookup order:
-      1. (production, style_pool)  — most specific
-      2. (production, genre)       — production + genre fallback
-      3. (production, '')          — production alone
-      4. style_pool → POOL_ECOSYSTEM   — style-based fallback
-      5. genre → POOL_ECOSYSTEM       — genre final fallback
+      1. prod_sig → _PROD_SIG_ECOSYSTEM   (unambiguous direct mapping)
+      2. (production, style_pool) → _PROD_POOL_ECOSYSTEM
+      3. (production, genre)      → _PROD_POOL_ECOSYSTEM
+      4. (production, '')         → _PROD_POOL_ECOSYSTEM
+      5. style_pool → POOL_ECOSYSTEM
+      6. genre → POOL_ECOSYSTEM
     """
+    if prod_sig:
+        eco = _PROD_SIG_ECOSYSTEM.get(prod_sig)
+        if eco:
+            return eco
+        # 'cinematic' and 'mixed' intentionally fall through to style resolution
+
     style_pool = STYLE_GENRE_AFFINITY.get(style, '')
 
     eco = (_PROD_POOL_ECOSYSTEM.get((production, style_pool)) or
@@ -1666,6 +1816,9 @@ def _build_song_profile(artist: str, song: str, handler_mood: str, genre: str) -
 
     energy     = _infer_energy(song, mood, genre)
     production = _infer_production(style, genre, mood, energy)  # song-aware softening
+    # Production signature: mood-free, style+genre-driven, finer than production feel.
+    # Used only for ecosystem assignment — does not affect scoring compatibility.
+    prod_sig   = _classify_production_signature(style, genre)
 
     return {
         'genre':      genre,
@@ -1675,7 +1828,7 @@ def _build_song_profile(artist: str, song: str, handler_mood: str, genre: str) -
         'production': production,
         'vocal':      ap.get('vocal', 'male'),
         'era':        ap.get('era', 'modern'),
-        'ecosystem':  _infer_ecosystem(production, style, genre),
+        'ecosystem':  _infer_ecosystem(production, style, genre, prod_sig),
     }
 
 

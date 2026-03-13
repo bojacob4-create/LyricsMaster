@@ -1,0 +1,53 @@
+The ecosystem architecture is working correctly. Pool gating, adjacency logic, and scoring hierarchy must remain unchanged.
+
+However, testing shows that the source-song ecosystem is still incorrect for several modern hybrid tracks because the production signature inference is too weak.
+
+Examples observed during testing include disco/funk electronic tracks being treated as generic pop, synthpop tracks drifting into R&B, and alt-pop songs classified as R&B ballads.
+
+The problem is upstream of ecosystem inference: production_signature detection is currently inferred indirectly from genre/style pools, which is insufficient for hybrid or modern production-driven music.
+
+We need a structural improvement to production signature inference before ecosystem assignment.
+
+Required change:
+
+1) Introduce a dedicated production signature classifier step inside `_build_song_profile`.
+
+The classifier should infer a production category before ecosystem assignment using available style/genre signals.
+
+Production categories should include at minimum:
+
+- electronic_synth
+- disco_funk
+- band_rock
+- acoustic_minimal
+- trap_beats
+- rnb_soul
+- indie_alt
+- cinematic
+
+2) Production signature must be determined before ecosystem inference and must dominate ecosystem assignment.
+
+Example principles (do not hardcode specific songs):
+
+- disco/funk rhythm patterns → disco_funk → electronic_synth ecosystem
+- synthwave / synthpop textures → electronic_synth
+- guitar-band instrumentation → band_rock
+- trap beat patterns → hiphop_trap
+- minimal acoustic singer-songwriter production → indie_alt
+- orchestral/ambient soundscapes → classical_cinematic
+
+3) Production detection should rely on style + genre combinations and fall back gracefully when signals are weak.
+
+4) Mood must never influence production classification.
+
+5) Do NOT introduce song overrides, artist exceptions, or special cases.
+
+6) Do NOT modify ecosystem adjacency, pool gating, scoring weights, or constellation bonus.
+
+Only improve production signature inference inside `recommendation_service.py` so that ecosystem assignment receives a correct production signal.
+
+After implementing, clearly explain:
+
+- how production signatures are inferred
+- how they map to ecosystems
+- confirmation that the rest of the architecture remained unchanged.
