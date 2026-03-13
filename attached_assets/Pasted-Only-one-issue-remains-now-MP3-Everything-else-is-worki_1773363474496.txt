@@ -1,0 +1,129 @@
+Only one issue remains now: MP3.
+
+Everything else is working correctly and should remain untouched.
+
+Please do not modify:
+	•	Similar Songs
+	•	recommend flow
+	•	song/analyze/lyrics dashboards
+	•	subscribe/unsubscribe
+	•	button placement
+	•	Apple Music recommendation logic
+	•	YouTube behavior
+
+Only focus on the MP3 system.
+
+⸻
+
+Current problem
+
+When pressing the MP3 button, the bot still often returns:
+
+❌ MP3 Not Available
+Couldn't find a working audio source for this song.
+Please try again later.
+
+This is now the only remaining issue.
+
+⸻
+
+Required task
+
+Please debug and improve the MP3 pipeline only.
+
+At this point, I do not want broad changes.
+I want a focused MP3-only fix.
+
+⸻
+
+What to do
+
+1. Add detailed logging for the MP3 pipeline
+
+Please log each stage clearly, for example:
+	•	normalized artist/song query
+	•	provider 1 search result
+	•	provider 1 rejected / accepted
+	•	provider 2 search result
+	•	provider 2 rejected / accepted
+	•	download started
+	•	download failed
+	•	exact exception type
+
+Right now the final error is too generic.
+
+We need to know whether the failure happens in:
+	•	search
+	•	matching
+	•	source resolution
+	•	download
+	•	conversion
+	•	file sending
+
+⸻
+
+2. Manually test MP3 from inside the bot UI
+
+Please test the actual MP3 button from real bot outputs, not just isolated function calls.
+
+Test at least these 3 songs:
+	•	Adele - Hello
+	•	Rihanna - Umbrella
+	•	Tyla - Water
+
+Then report exactly:
+	•	which provider succeeded
+	•	which provider failed
+	•	at what step any failure occurred
+
+⸻
+
+3. Expand non-YouTube providers slightly
+
+The current provider set still seems too narrow.
+
+Please keep YouTube excluded.
+
+But add at least one or two more non-YouTube fallback sources if possible, such as:
+	•	Bandcamp
+	•	Jamendo
+	•	Archive.org
+
+Only if they can be integrated cleanly without slowing the bot too much.
+
+⸻
+
+4. Improve fallback logic without adding lag
+
+Please keep the MP3 system:
+	•	fast
+	•	simple
+	•	fail-fast
+
+Do not add long retry chains.
+
+But make the fallback path strong enough that common songs can succeed reliably.
+
+⸻
+
+5. Better failure classification
+
+Instead of always returning the same generic message, please internally distinguish:
+	•	no provider result found
+	•	result found but rejected by matching
+	•	source found but failed to download
+	•	source downloaded but failed to process
+
+The user-facing message can stay simple, but the internal logs must clearly show which case happened.
+
+⸻
+
+Important
+
+Do not change anything except the MP3 system.
+
+After finishing, please report:
+	•	exact files modified
+	•	exact manual tests performed
+	•	what the logs revealed
+	•	whether the issue was search, matching, source resolution, or download related

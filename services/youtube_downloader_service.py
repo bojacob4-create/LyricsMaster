@@ -165,14 +165,89 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
             "• Wait a minute and retry"
         )
 
+# ── MP3 constants ────────────────────────────────────────────────────────────
+_MIN_SONG_BYTES = 800_000     # < 800 KB = likely a short preview, skip it
+_MIN_SONG_SECS  = 90          # < 90 s duration in metadata = likely a preview
+
+
+def _clean_song_title(title: str) -> str:
+    """Strip features/parentheticals for simpler searches."""
+    title = re.sub(r'\s*[\(\[](feat|ft|with|prod|remix)[^\)\]]*[\)\]]', '', title, flags=re.IGNORECASE)
+    title = re.sub(r'\s*-\s*(feat|ft)\.?\s+.+$', '', title, flags=re.IGNORECASE)
+    return title.strip()
+
+
+def _sc_search_best(query: str, n: int = 5, artist_hint: str = '') -> Optional[dict]:
+    """
+    Search SoundCloud for top N results and return the best entry:
+      1. Among entries with duration >= _MIN_SONG_SECS, prefer official artist uploads
+         (uploader name contains artist_hint, case-insensitive)
+      2. If no artist match, pick the longest full-length entry
+      3. Fall back to the longest available entry if none are full-length
+    Returns yt-dlp entry dict or None.
+    """
+    logger.info(f"[MP3][SEARCH] SoundCloud scsearch{n}: '{query}'")
+    opts = {'quiet': True, 'no_warnings': True, 'extract_flat': True, 'socket_timeout': 15}
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            meta = ydl.extract_info(f'scsearch{n}:{query}', download=False)
+    except Exception as e:
+        logger.warning(f"[MP3][SEARCH] SoundCloud search error: {type(e).__name__}: {e}")
+        return None
+
+    entries = []
+    if isinstance(meta, dict):
+        entries = meta.get('entries', []) or []
+        if not entries and meta.get('id'):
+            entries = [meta]
+
+    if not entries:
+        logger.warning(f"[MP3][SEARCH] No results for '{query}'")
+        return None
+
+    logger.info(f"[MP3][SEARCH] Got {len(entries)} result(s):")
+    for i, e in enumerate(entries):
+        dur = int(e.get('duration', 0) or 0)
+        logger.info(f"[MP3][SEARCH]   [{i+1}] '{e.get('title')}' by '{e.get('uploader')}' "
+                    f"| {dur}s | {e.get('webpage_url', e.get('url', '?'))}")
+
+    full_entries = [e for e in entries if int(e.get('duration', 0) or 0) >= _MIN_SONG_SECS]
+    if full_entries:
+        # Prefer official artist upload if artist_hint given
+        if artist_hint:
+            hint_low = artist_hint.lower()
+            official = [e for e in full_entries
+                        if hint_low in (e.get('uploader') or '').lower()]
+            if official:
+                best = official[0]
+                logger.info(f"[MP3][SEARCH] Selected official artist upload: "
+                            f"'{best.get('title')}' ({int(best.get('duration', 0))}s)")
+                return best
+        best = max(full_entries, key=lambda e: int(e.get('duration', 0) or 0))
+        logger.info(f"[MP3][SEARCH] Selected full-length (no artist match): "
+                    f"'{best.get('title')}' ({int(best.get('duration', 0))}s)")
+        return best
+
+    best = max(entries, key=lambda e: int(e.get('duration', 0) or 0))
+    dur = int(best.get('duration', 0) or 0)
+    if dur > 0:
+        logger.warning(f"[MP3][SEARCH] No full song found — best: '{best.get('title')}' "
+                       f"({dur}s, may be a preview)")
+        return best
+
+    logger.warning(f"[MP3][SEARCH] All entries have zero duration for '{query}'")
+    return None
+
+
 def _search_audiomack_url(artist: str, song: str) -> Optional[str]:
     """Search Audiomack unofficial API and return the track page URL, or None."""
+    logger.info(f"[MP3][SEARCH] Audiomack: '{artist} - {song}'")
     query = f"{artist} {song}"
     try:
         r = requests.get(
             'https://audiomack.com/api/v1/music/search',
             params={'q': query, 'type': 'song', 'limit': 3},
-            timeout=7,
+            timeout=6,
             headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'},
         )
         if r.status_code == 200:
@@ -185,43 +260,51 @@ def _search_audiomack_url(artist: str, song: str) -> Optional[str]:
                 song_slug = track.get('url_slug', '')
                 if uploader_slug and song_slug:
                     url = f"https://audiomack.com/{uploader_slug}/song/{song_slug}"
-                    logger.info(f"Audiomack found: {url}")
+                    logger.info(f"[MP3][SEARCH] Audiomack found: {url}")
                     return url
     except Exception as e:
-        logger.debug(f"Audiomack search error: {e}")
+        logger.debug(f"[MP3][SEARCH] Audiomack error: {type(e).__name__}: {e}")
+    logger.info(f"[MP3][SEARCH] Audiomack: no match")
     return None
 
 
-def _try_sc_download(source_query: str, file_prefix: str) -> Tuple[bool, any]:
-    """Download audio from a source query (SoundCloud search or direct URL)."""
-    # Step 1: resolve the webpage_url (avoids the broken internal API URL bug in SC extractor)
-    resolve_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'extract_flat': True,
-        'socket_timeout': 15,
-    }
-    with yt_dlp.YoutubeDL(resolve_opts) as ydl:
-        meta = ydl.extract_info(source_query, download=False)
+def _search_archive_org(artist: str, song: str) -> Optional[str]:
+    """Search Archive.org for a music track. Returns a page URL or None."""
+    logger.info(f"[MP3][SEARCH] Archive.org: '{artist} - {song}'")
+    try:
+        r = requests.get(
+            'https://archive.org/advancedsearch.php',
+            params={
+                'q': f'title:"{song}" creator:"{artist}" mediatype:audio',
+                'fl[]': 'identifier,title,creator',
+                'output': 'json',
+                'rows': '3',
+                'sort[]': 'downloads desc',
+            },
+            timeout=6,
+            headers={'User-Agent': 'LyricsMasterBot/1.0'},
+        )
+        if r.status_code == 200:
+            docs = r.json().get('response', {}).get('docs', [])
+            if docs:
+                identifier = docs[0].get('identifier', '')
+                creator = docs[0].get('creator', '')
+                title = docs[0].get('title', '')
+                logger.info(f"[MP3][SEARCH] Archive.org match: id='{identifier}' "
+                            f"title='{title}' creator='{creator}'")
+                return f"https://archive.org/details/{identifier}"
+    except Exception as e:
+        logger.debug(f"[MP3][SEARCH] Archive.org error: {type(e).__name__}: {e}")
+    logger.info(f"[MP3][SEARCH] Archive.org: no match")
+    return None
 
-    if isinstance(meta, dict) and meta.get('entries'):
-        entry = meta['entries'][0]
-    else:
-        entry = meta
 
-    if not entry:
-        raise FileNotFoundError("no entry returned from search")
-
-    # Prefer webpage_url (full site URL); fall back to id-based url
-    download_url = entry.get('webpage_url') or entry.get('url') or source_query
-    duration = int(entry.get('duration', 0) or 0)
-    if duration > 600:
-        raise ValueError(f"too_long:{duration}")
-
-    title = entry.get('title', 'Audio')
-    uploader = entry.get('uploader', 'Unknown')
-
-    # Step 2: download from the resolved URL
+def _download_url_to_mp3(download_url: str, file_prefix: str, label: str) -> str:
+    """
+    Download audio from a resolved URL and convert to MP3.
+    Returns the local mp3 file path on success. Raises on failure.
+    """
+    logger.info(f"[MP3][DOWNLOAD] Starting | provider={label} | url='{download_url}'")
     output_template = f'{file_prefix}.%(ext)s'
     dl_opts = {
         'format': 'bestaudio/best',
@@ -244,93 +327,148 @@ def _try_sc_download(source_query: str, file_prefix: str) -> Tuple[bool, any]:
         with yt_dlp.YoutubeDL(dl_opts) as ydl:
             ret = ydl.download([download_url])
         if ret != 0:
-            raise RuntimeError(f"yt-dlp returned non-zero exit code: {ret}")
+            raise RuntimeError(f"yt-dlp returned non-zero code: {ret}")
     except yt_dlp.utils.DownloadError as de:
-        logger.warning(f"SC download error for {download_url}: {de}")
+        logger.warning(f"[MP3][DOWNLOAD] DownloadError | provider={label}: {de}")
+        raise
+    except Exception as e:
+        logger.warning(f"[MP3][DOWNLOAD] Error | provider={label}: {type(e).__name__}: {e}")
         raise
 
     mp3_path = os.path.join(os.getcwd(), f'{file_prefix}.mp3')
     if not os.path.exists(mp3_path):
-        matches = globmod.glob(os.path.join(os.getcwd(), f'{file_prefix}.*'))
-        matches = [m for m in matches if not m.endswith('.part')]
+        matches = [m for m in globmod.glob(os.path.join(os.getcwd(), f'{file_prefix}.*'))
+                   if not m.endswith('.part')]
         if matches:
             mp3_path = matches[0]
+            logger.info(f"[MP3][FILE] Found at alternate path: '{mp3_path}'")
         else:
-            raise FileNotFoundError("audio file not found after download")
+            logger.warning(f"[MP3][FILE] No file found after download | provider={label}")
+            raise FileNotFoundError(f"mp3 not found after download via {label}")
 
-    return True, (mp3_path, title, uploader, duration)
+    size_bytes = os.path.getsize(mp3_path)
+    logger.info(f"[MP3][FILE] OK | provider={label} | path='{mp3_path}' "
+                f"| size={round(size_bytes/1024/1024, 2)}MB")
+    return mp3_path
 
 
-def _clean_song_title(title: str) -> str:
-    """Strip features/parenthetical info from a song title for simpler searching."""
-    import re
-    title = re.sub(r'\s*[\(\[](feat|ft|with|prod|remix)[^\)\]]*[\)\]]', '', title, flags=re.IGNORECASE)
-    title = re.sub(r'\s*-\s*(feat|ft)\.?\s+.+$', '', title, flags=re.IGNORECASE)
-    return title.strip()
+def _build_success_msg(title: str, uploader: str, duration: int, file_size_mb: float) -> str:
+    dur_str = f"{duration//60}:{duration%60:02d}" if duration else "?"
+    return (
+        f"🎵 MP3 Ready!\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎤 {title}\n"
+        f"👤 {uploader}\n"
+        f"⏱️ {dur_str}  •  📦 {file_size_mb}MB\n\n"
+        f"🚀 Uploading..."
+    )
 
 
 def download_audio_for_song(artist: str, song: str) -> Tuple[bool, any]:
-    """Download MP3 for a song: SoundCloud primary with multiple fallbacks. No YouTube."""
+    """
+    Download MP3. Providers in order:
+      1. SoundCloud multi-result (scsearch5) — picks best non-preview result
+      2. Audiomack
+      3. Archive.org
+    No YouTube. Full stage logging for each step.
+    """
     import hashlib
     query = f"{artist} - {song}" if song else artist
     file_prefix = 'audio_' + hashlib.md5(query.encode()).hexdigest()[:10]
-
     simple_song = _clean_song_title(song) if song else ''
-    simple_query = f"{artist} - {simple_song}" if simple_song and simple_song != song else ''
 
-    sources = [
-        f"scsearch1:{query}",
-    ]
+    logger.info(f"[MP3][START] artist='{artist}' | song='{song}' | query='{query}'")
+
+    # ── Provider 1: SoundCloud ────────────────────────────────────────────────
+    sc_queries = [query]
     if song:
-        sources.append(f"scsearch1:{song} {artist}")
-    if simple_query:
-        sources.append(f"scsearch1:{simple_query}")
-    if song and simple_song and simple_song != song:
-        sources.append(f"scsearch1:{simple_song} {artist}")
+        sc_queries.append(f"{song} {artist}")
+    if simple_song and simple_song != song:
+        sc_queries.append(f"{artist} - {simple_song}")
+        sc_queries.append(f"{simple_song} {artist}")
 
-    # Audiomack URL as a middle fallback (non-blocking search)
-    am_url = _search_audiomack_url(artist, song)
-    if am_url:
-        sources.insert(1, am_url)
+    for sc_q in sc_queries:
+        logger.info(f"[MP3][P1-SC] Trying query: '{sc_q}'")
+        best = _sc_search_best(sc_q, n=5, artist_hint=artist)
 
-    for source in sources:
-        try:
-            logger.info(f"MP3: trying source '{source}'")
-            ok, data = _try_sc_download(source, file_prefix)
-            if ok:
-                mp3_path, title, uploader, duration = data
-                file_size = os.path.getsize(mp3_path)
-                file_size_mb = round(file_size / (1024 * 1024), 1)
-                if file_size > 50 * 1024 * 1024:
-                    cleanup_video(mp3_path)
-                    return False, (
-                        "❌ File Too Large\n"
-                        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-                        f"MP3 is {file_size_mb}MB (Telegram limit: 50MB)."
-                    )
-                dur_str = f"{duration//60}:{duration%60:02d}" if duration else "?"
-                success_msg = (
-                    f"🎵 MP3 Ready!\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"🎤 {title}\n"
-                    f"👤 {uploader}\n"
-                    f"⏱️ {dur_str}  •  📦 {file_size_mb}MB\n\n"
-                    f"🚀 Uploading..."
-                )
-                return True, (mp3_path, success_msg, title, uploader)
-        except ValueError as e:
-            if str(e).startswith("too_long:"):
-                secs = int(str(e).split(":")[1])
-                return False, (
-                    "❌ Audio Too Long\n"
-                    "━━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"This track is {secs//60}:{secs%60:02d}.\n"
-                    "Max allowed: 10 minutes."
-                )
-        except Exception as e:
-            logger.warning(f"MP3 source '{source}' failed: {type(e).__name__}: {e}")
+        if not best:
+            logger.info(f"[MP3][P1-SC] No usable result for '{sc_q}'")
             continue
 
+        dur = int(best.get('duration', 0) or 0)
+        if dur > 600:
+            logger.warning(f"[MP3][P1-SC] Rejected: too long ({dur}s) — aborting")
+            return False, (
+                "❌ Audio Too Long\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"This track is {dur//60}:{dur%60:02d}.\n"
+                "Max allowed: 10 minutes."
+            )
+
+        dl_url = best.get('webpage_url') or best.get('url')
+        if not dl_url:
+            logger.warning(f"[MP3][P1-SC] No download URL for '{sc_q}'")
+            continue
+
+        try:
+            mp3_path = _download_url_to_mp3(dl_url, file_prefix, label='SoundCloud')
+        except Exception:
+            logger.info(f"[MP3][P1-SC] Download failed for '{sc_q}', trying next query")
+            continue
+
+        file_size = os.path.getsize(mp3_path)
+        if file_size < _MIN_SONG_BYTES:
+            logger.warning(f"[MP3][P1-SC] File too small ({file_size} bytes) — likely preview, skipping")
+            cleanup_video(mp3_path)
+            continue
+
+        if file_size > 50 * 1024 * 1024:
+            cleanup_video(mp3_path)
+            return False, ("❌ File Too Large\n━━━━━━━━━━━━━━━━━━━━━\n\nTelegram limit: 50MB.")
+
+        file_size_mb = round(file_size / 1024 / 1024, 1)
+        title = best.get('title', song)
+        uploader = best.get('uploader', artist)
+        logger.info(f"[MP3][P1-SC] SUCCESS | title='{title}' | {file_size_mb}MB")
+        return True, (mp3_path, _build_success_msg(title, uploader, dur, file_size_mb), title, uploader)
+
+    logger.info(f"[MP3][P1-SC] All SC queries exhausted — moving to Provider 2")
+
+    # ── Provider 2: Audiomack ─────────────────────────────────────────────────
+    am_url = _search_audiomack_url(artist, song)
+    if am_url:
+        resolve_opts = {'quiet': True, 'no_warnings': True, 'extract_flat': True, 'socket_timeout': 12}
+        try:
+            with yt_dlp.YoutubeDL(resolve_opts) as ydl:
+                am_meta = ydl.extract_info(am_url, download=False)
+            dl_url = (am_meta or {}).get('webpage_url') or am_url
+            mp3_path = _download_url_to_mp3(dl_url, file_prefix, label='Audiomack')
+            dur = int((am_meta or {}).get('duration', 0) or 0)
+            title = (am_meta or {}).get('title', song)
+            uploader = (am_meta or {}).get('uploader', artist)
+            file_size_mb = round(os.path.getsize(mp3_path) / 1024 / 1024, 1)
+            logger.info(f"[MP3][P2-AM] SUCCESS | title='{title}' | {file_size_mb}MB")
+            return True, (mp3_path, _build_success_msg(title, uploader, dur, file_size_mb), title, uploader)
+        except Exception as e:
+            logger.warning(f"[MP3][P2-AM] Failed: {type(e).__name__}: {e}")
+    else:
+        logger.info(f"[MP3][P2-AM] No Audiomack URL — skipping")
+
+    # ── Provider 3: Archive.org ───────────────────────────────────────────────
+    ao_url = _search_archive_org(artist, song)
+    if ao_url:
+        try:
+            mp3_path = _download_url_to_mp3(ao_url, file_prefix, label='Archive.org')
+            file_size_mb = round(os.path.getsize(mp3_path) / 1024 / 1024, 1)
+            logger.info(f"[MP3][P3-AO] SUCCESS | {file_size_mb}MB")
+            return True, (mp3_path, _build_success_msg(song, artist, 0, file_size_mb), song, artist)
+        except Exception as e:
+            logger.warning(f"[MP3][P3-AO] Failed: {type(e).__name__}: {e}")
+    else:
+        logger.info(f"[MP3][P3-AO] No Archive.org match — skipping")
+
+    # ── All providers exhausted ───────────────────────────────────────────────
+    logger.error(f"[MP3][FAIL] All providers exhausted for '{artist} - {song}'")
     return False, (
         "❌ MP3 Not Available\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
