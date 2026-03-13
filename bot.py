@@ -45,6 +45,30 @@ logger = logging.getLogger(__name__)
 
 IS_PRODUCTION = os.environ.get('REPLIT_DEPLOYMENT') == '1'
 
+# File that persists the last conflict timestamp across dev process restarts.
+# When the Replit workflow restarts bot.py (e.g. after a deploy), the new
+# process reads this file and respects the backoff instead of immediately
+# competing with production again.
+_CONFLICT_STATE_FILE = '/tmp/bot_last_conflict'
+
+
+def _read_conflict_time() -> float:
+    """Return epoch time of last recorded conflict, or 0 if none."""
+    try:
+        with open(_CONFLICT_STATE_FILE) as f:
+            return float(f.read().strip())
+    except Exception:
+        return 0.0
+
+
+def _write_conflict_time(t: float):
+    """Persist the conflict timestamp so restarts honour the backoff."""
+    try:
+        with open(_CONFLICT_STATE_FILE, 'w') as f:
+            f.write(str(t))
+    except Exception:
+        pass
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Shared-DB heartbeat helpers
 # ──────────────────────────────────────────────────────────────────────────────
@@ -176,7 +200,9 @@ class TelegramBotWorker:
         self.keepalive_interval = 300
         self.running = True
         self.scheduler = None
-        self._last_conflict_at = 0.0   # epoch seconds of most recent conflict
+        # Epoch seconds of the most recent conflict — read from disk so it
+        # survives process restarts (Replit workflow restarts bot.py on crash).
+        self._last_conflict_at = _read_conflict_time()
 
         logger.info("Bot worker initialized with monitor logging")
 
@@ -235,7 +261,9 @@ class TelegramBotWorker:
             # keepalive timer; that window is where conflicts happen.
             if 'Conflict' in error_str and 'getUpdates' in error_str:
                 if not IS_PRODUCTION:
-                    self._last_conflict_at = time.time()
+                    now = time.time()
+                    self._last_conflict_at = now
+                    _write_conflict_time(now)   # survive process restarts
                     logger.info(
                         "Conflict detected — production bot is now active. "
                         "Dev instance stopping polling immediately."
@@ -395,11 +423,16 @@ class TelegramBotWorker:
     # Dev gate — never call getUpdates while production is active
     # ──────────────────────────────────────────────────────────────────────────
     # CONFLICT_BACKOFF: seconds dev waits after detecting a conflict before
-    # trying to poll again.  This covers the case where production is running
-    # old code that does not write DB heartbeats — conflicts become very rare
-    # instead of continuous.  Once production is also on the new code, the DB
-    # heartbeat check takes over and dev never polls at all.
-    CONFLICT_BACKOFF = 180  # 3 minutes
+    # trying to poll again.
+    #
+    # Architecture note: Replit gives each environment (dev / Reserved-VM) its
+    # own database namespace, so the DB heartbeat written by production is not
+    # visible to dev.  Instead the conflict error itself is the signal that
+    # production is alive.  After one conflict dev backs off 2 hours, and the
+    # timestamp is persisted to /tmp/bot_last_conflict so even workflow restarts
+    # stay within the backoff window.  Net effect: at most one conflict per
+    # 2-hour window — indistinguishable from conflict-free in practice.
+    CONFLICT_BACKOFF = 7200  # 2 hours
 
     def _dev_gate(self):
         """Check DB heartbeat (and recent-conflict backoff) before polling.
@@ -436,9 +469,12 @@ class TelegramBotWorker:
         elapsed = time.time() - self._last_conflict_at
         if self._last_conflict_at > 0 and elapsed < self.CONFLICT_BACKOFF:
             wait = self.CONFLICT_BACKOFF - elapsed
+            resume_at = time.strftime(
+                '%H:%M UTC', time.gmtime(self._last_conflict_at + self.CONFLICT_BACKOFF)
+            )
             logger.info(
-                f"Recent conflict — dev backing off {wait:.0f}s before polling. "
-                "(Deploy new code to production to enable full DB-heartbeat gate.)"
+                f"Production conflict on record — dev backing off {wait/60:.1f} min "
+                f"(until ~{resume_at}). Production handles all traffic in this window."
             )
             time.sleep(wait)
 
