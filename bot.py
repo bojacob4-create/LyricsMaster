@@ -176,6 +176,7 @@ class TelegramBotWorker:
         self.keepalive_interval = 300
         self.running = True
         self.scheduler = None
+        self._last_conflict_at = 0.0   # epoch seconds of most recent conflict
 
         logger.info("Bot worker initialized with monitor logging")
 
@@ -225,10 +226,22 @@ class TelegramBotWorker:
             logger.error(f"Failed to set up bot commands: {str(e)}")
 
     def error_handler(self, update: Update, context: CallbackContext):
-        """Handle bot errors — no special conflict logic needed here because
-        dev never reaches polling when production is active."""
+        """Handle bot errors."""
         try:
             error_str = str(context.error)
+
+            # Conflict = another instance is polling. In dev mode this means
+            # production just started. Stop immediately — don't wait for the
+            # keepalive timer; that window is where conflicts happen.
+            if 'Conflict' in error_str and 'getUpdates' in error_str:
+                if not IS_PRODUCTION:
+                    self._last_conflict_at = time.time()
+                    logger.info(
+                        "Conflict detected — production bot is now active. "
+                        "Dev instance stopping polling immediately."
+                    )
+                    self._stop_polling()
+                return
 
             if isinstance(context.error, NetworkError):
                 logger.warning(f"Network error: {error_str}")
@@ -252,6 +265,14 @@ class TelegramBotWorker:
                 )
         except Exception as e:
             logger.error(f"Error in error handler: {str(e)}")
+
+    def _stop_polling(self):
+        """Stop the updater's polling thread (dev use only)."""
+        try:
+            if self.updater:
+                self.updater.stop()
+        except Exception:
+            pass
 
     def handle_connection_error(self):
         """Handle connection errors with exponential backoff."""
@@ -373,35 +394,55 @@ class TelegramBotWorker:
     # ──────────────────────────────────────────────────────────────────────────
     # Dev gate — never call getUpdates while production is active
     # ──────────────────────────────────────────────────────────────────────────
-    def _dev_gate(self):
-        """Check DB heartbeat and sleep until production is no longer active.
+    # CONFLICT_BACKOFF: seconds dev waits after detecting a conflict before
+    # trying to poll again.  This covers the case where production is running
+    # old code that does not write DB heartbeats — conflicts become very rare
+    # instead of continuous.  Once production is also on the new code, the DB
+    # heartbeat check takes over and dev never polls at all.
+    CONFLICT_BACKOFF = 180  # 3 minutes
 
-        Called once before any polling attempt.  If production is active this
-        method never returns — it loops, sleeping DEV_RECHECK seconds between
-        DB reads, and starts polling only once the heartbeat goes stale.
+    def _dev_gate(self):
+        """Check DB heartbeat (and recent-conflict backoff) before polling.
+
+        Called at the top of every outer run() loop iteration.
+        - If a DB heartbeat shows production is active → sleep until it stales.
+        - If a conflict was detected recently → enforce a timed backoff first.
+        - Otherwise → return immediately so polling can start.
 
         This is the core of the conflict-free design: dev never calls
-        getUpdates while production holds the heartbeat.
+        getUpdates while production holds the heartbeat.  When production runs
+        old code without heartbeat support, the backoff limits conflicts to at
+        most one per CONFLICT_BACKOFF window instead of every ~34 seconds.
         """
         if IS_PRODUCTION:
             return  # Production skips the gate entirely
 
-        if not is_production_active():
-            logger.info("No active production bot detected — dev polling enabled.")
-            return
+        # ── Phase 1: DB heartbeat check ──────────────────────────────────────
+        if is_production_active():
+            logger.info(
+                "Production bot is active (DB heartbeat). "
+                "Dev instance will NOT poll — sleeping until production stops."
+            )
+            while True:
+                time.sleep(DEV_RECHECK)
+                if not is_production_active():
+                    logger.info("Production heartbeat stale — dev resuming polling.")
+                    break
+                logger.debug("Production still active, dev sleeping…")
 
-        logger.info(
-            "Production bot is active (DB heartbeat detected). "
-            "Dev instance will NOT poll — sleeping until production stops."
-        )
-        while True:
-            time.sleep(DEV_RECHECK)
-            if not is_production_active():
-                logger.info(
-                    "Production heartbeat stale — dev instance resuming polling."
-                )
-                return
-            logger.debug("Production still active, dev sleeping…")
+        # ── Phase 2: conflict backoff ─────────────────────────────────────────
+        # Even if the DB shows no heartbeat (production on old code), back off
+        # after a conflict so we do not hammer Telegram every 34 seconds.
+        elapsed = time.time() - self._last_conflict_at
+        if self._last_conflict_at > 0 and elapsed < self.CONFLICT_BACKOFF:
+            wait = self.CONFLICT_BACKOFF - elapsed
+            logger.info(
+                f"Recent conflict — dev backing off {wait:.0f}s before polling. "
+                "(Deploy new code to production to enable full DB-heartbeat gate.)"
+            )
+            time.sleep(wait)
+
+        logger.info("Dev gate cleared — starting polling.")
 
     def run(self):
         """Run the bot with automatic reconnection and keepalive."""
@@ -410,13 +451,15 @@ class TelegramBotWorker:
             # immediately and never make a competing getUpdates call.
             write_production_heartbeat()
             logger.info("Production heartbeat written — polling will start now.")
-        else:
-            # Block until production is not running; if already idle, returns
-            # immediately and dev polling begins normally.
-            self._dev_gate()
 
         while self.running:
             try:
+                # Dev gate: called at the top of EVERY outer loop iteration.
+                # This covers startup AND every restart after stopping, so dev
+                # can never re-enter polling while production holds a heartbeat.
+                if not IS_PRODUCTION:
+                    self._dev_gate()
+
                 if not self.initialize():
                     if self.retry_count >= self.max_retries:
                         logger.error("Max retries reached. Exiting…")
@@ -446,17 +489,8 @@ class TelegramBotWorker:
                 logger.info("Bot is running successfully")
 
                 while self.running and self.updater.running:
-                    # Dev: periodically check if production has started while we poll
-                    if not IS_PRODUCTION and is_production_active():
-                        logger.info(
-                            "Production bot became active — dev stopping polling "
-                            "and entering sleep mode."
-                        )
-                        self.updater.stop()
-                        self._dev_gate()   # blocks until production stops again
-                        break              # restart the outer while loop
                     self.keepalive()
-                    time.sleep(30)
+                    time.sleep(10)
 
             except Exception as e:
                 logger.error(f"Bot crashed: {str(e)}")
