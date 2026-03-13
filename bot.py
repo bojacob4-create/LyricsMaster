@@ -45,6 +45,125 @@ logger = logging.getLogger(__name__)
 
 IS_PRODUCTION = os.environ.get('REPLIT_DEPLOYMENT') == '1'
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Shared-DB heartbeat helpers
+# ──────────────────────────────────────────────────────────────────────────────
+# Production writes a heartbeat row to the shared PostgreSQL database every
+# HEARTBEAT_INTERVAL seconds.  Dev reads that row before starting polling;
+# if a fresh heartbeat exists, dev never calls getUpdates at all.
+#
+# This gives a conflict-free architecture by design:
+#   - production polls Telegram (normal)
+#   - dev reads DB, sees production is active, sleeps — no getUpdates ever
+#   - if production goes away (heartbeat stales after HEARTBEAT_TTL seconds),
+#     dev can safely start polling again
+# ──────────────────────────────────────────────────────────────────────────────
+HEARTBEAT_INTERVAL = 90          # production writes heartbeat every 90 s
+HEARTBEAT_TTL      = 5 * 60     # dev treats heartbeat fresh for 5 minutes
+DEV_RECHECK        = 60         # dev re-reads DB this often (seconds) while sleeping
+
+
+def _db_conn():
+    """Open a short-lived psycopg2 connection.  Returns None on failure."""
+    db_url = os.environ.get('DATABASE_URL', '')
+    if not db_url:
+        return None
+    try:
+        import psycopg2
+        return psycopg2.connect(db_url, connect_timeout=5)
+    except Exception as exc:
+        logger.debug(f"DB connect failed: {exc}")
+        return None
+
+
+def _ensure_heartbeat_table(conn):
+    """Create the heartbeat table if it doesn't exist yet."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS bot_heartbeat (
+                id          INTEGER PRIMARY KEY DEFAULT 1,
+                environment TEXT        NOT NULL,
+                last_seen   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                pid         INTEGER
+            )
+        """)
+    conn.commit()
+
+
+def write_production_heartbeat():
+    """Write/refresh the production heartbeat row in the shared DB.
+
+    Called immediately on production startup and then every HEARTBEAT_INTERVAL
+    seconds by the scheduler.  Dev instances read this row to learn that
+    production is active and must not start polling.
+    """
+    conn = _db_conn()
+    if conn is None:
+        return
+    try:
+        _ensure_heartbeat_table(conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO bot_heartbeat (id, environment, last_seen, pid)
+                VALUES (1, 'production', NOW(), %s)
+                ON CONFLICT (id) DO UPDATE
+                    SET environment = 'production',
+                        last_seen   = NOW(),
+                        pid         = EXCLUDED.pid
+            """, (os.getpid(),))
+        conn.commit()
+        logger.debug("Production heartbeat written to DB.")
+    except Exception as exc:
+        logger.warning(f"Failed to write production heartbeat: {exc}")
+    finally:
+        conn.close()
+
+
+def clear_production_heartbeat():
+    """Clear the heartbeat row when production shuts down cleanly."""
+    conn = _db_conn()
+    if conn is None:
+        return
+    try:
+        _ensure_heartbeat_table(conn)
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM bot_heartbeat WHERE id = 1")
+        conn.commit()
+        logger.info("Production heartbeat cleared from DB.")
+    except Exception as exc:
+        logger.warning(f"Failed to clear production heartbeat: {exc}")
+    finally:
+        conn.close()
+
+
+def is_production_active():
+    """Return True if a fresh production heartbeat exists in the shared DB.
+
+    Dev instances call this before starting polling and periodically while
+    sleeping.  A heartbeat older than HEARTBEAT_TTL is treated as stale
+    (production has gone away), allowing dev to resume polling.
+    """
+    conn = _db_conn()
+    if conn is None:
+        # Cannot reach DB — conservatively assume production is NOT active
+        # so dev can still be used standalone without a DB connection.
+        return False
+    try:
+        _ensure_heartbeat_table(conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 1 FROM bot_heartbeat
+                WHERE id = 1
+                  AND environment = 'production'
+                  AND last_seen > NOW() - INTERVAL '%s seconds'
+            """, (HEARTBEAT_TTL,))
+            return cur.fetchone() is not None
+    except Exception as exc:
+        logger.debug(f"Failed to read production heartbeat: {exc}")
+        return False
+    finally:
+        conn.close()
+
 
 class TelegramBotWorker:
     def __init__(self, token):
@@ -52,79 +171,16 @@ class TelegramBotWorker:
         self.updater = None
         self.retry_count = 0
         self.max_retries = 5
-        self.retry_delay = 60  # seconds
+        self.retry_delay = 60
         self.last_keepalive = time.time()
-        self.keepalive_interval = 300  # seconds
+        self.keepalive_interval = 300
         self.running = True
-        self.lock_file = "/tmp/telegram_bot.lock"
         self.scheduler = None
-        self._conflict_count = 0
-        self._max_conflicts = 10  # Dev only: exit after this many consecutive conflicts
-        
-        # Check if another instance is running
-        if self._is_another_instance_running():
-            logger.error("Another bot instance is already running. Exiting.")
-            sys.exit(1)
-            
-        # Create lock file
-        self._create_lock_file()
 
-        # Log bot startup
         logger.info("Bot worker initialized with monitor logging")
 
-        # Set up signal handlers
-        signal.signal(signal.SIGINT, self.signal_handler)
+        signal.signal(signal.SIGINT,  self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
-        
-    def _is_another_instance_running(self):
-        """Check if another instance is running by attempting to create a lock file.
-
-        Validates both that the PID is alive AND that it belongs to a bot.py
-        process — not a reused PID from a completely different process.
-        """
-        if not os.path.exists(self.lock_file):
-            return False
-
-        try:
-            with open(self.lock_file, 'r') as f:
-                pid = int(f.read().strip())
-
-            # Check process exists
-            os.kill(pid, 0)
-
-            # Verify the process is actually a bot.py instance, not a reused PID
-            cmdline_path = f'/proc/{pid}/cmdline'
-            if os.path.exists(cmdline_path):
-                with open(cmdline_path, 'rb') as f:
-                    cmdline = f.read().decode('utf-8', errors='replace').replace('\x00', ' ')
-                if 'bot.py' not in cmdline and 'bot' not in cmdline.lower():
-                    # PID is alive but it's not our bot — stale lock from PID reuse
-                    logger.warning(
-                        f"Lock file PID {pid} exists but belongs to a different "
-                        f"process ({cmdline[:60]!r}). Removing stale lock."
-                    )
-                    os.remove(self.lock_file)
-                    return False
-
-            return True  # Process exists and appears to be a bot
-
-        except (OSError, ValueError):
-            # Process doesn't exist or invalid PID — stale lock file
-            pass
-
-        try:
-            os.remove(self.lock_file)
-        except OSError:
-            pass
-        return False
-        
-    def _create_lock_file(self):
-        """Create a lock file with the current PID."""
-        try:
-            with open(self.lock_file, 'w') as f:
-                f.write(str(os.getpid()))
-        except Exception as e:
-            logger.error(f"Failed to create lock file: {str(e)}")
 
     def signal_handler(self, signum, frame):
         """Handle termination signals gracefully."""
@@ -137,39 +193,30 @@ class TelegramBotWorker:
                 pass
         if self.updater:
             self.updater.stop()
-        
-        self._cleanup()
-    
-    def _cleanup(self):
-        """Remove the lock file on exit."""
-        try:
-            if os.path.exists(self.lock_file):
-                os.remove(self.lock_file)
-                logger.info("Removed lock file")
-        except Exception as e:
-            logger.error(f"Error removing lock file: {str(e)}")
+        if IS_PRODUCTION:
+            clear_production_heartbeat()
 
     def setup_commands(self):
         """Set up bot commands menu."""
         try:
             commands = [
-                BotCommand("start", "Welcome & overview"),
-                BotCommand("help", "Full command guide"),
-                BotCommand("song", "🎵 Full song dashboard"),
-                BotCommand("lyrics", "🎤 Get song lyrics"),
-                BotCommand("stats", "📊 Song word statistics"),
-                BotCommand("recommend", "🎵 Find similar songs"),
-                BotCommand("analyze", "🔍 Deep lyrical analysis"),
-                BotCommand("translate", "🌍 Translate lyrics to any language"),
-                BotCommand("artist", "🎤 Quick artist profile"),
-                BotCommand("top", "🔝 Top songs by genre"),
-                BotCommand("random", "🎲 Random song discovery"),
-                BotCommand("youtube", "🎬 Find the music video"),
-                BotCommand("quiz", "🎮 Lyrics guessing game"),
-                BotCommand("endquiz", "End current quiz"),
-                BotCommand("wiki", "📚 Artist Wikipedia info"),
-                BotCommand("trending", "📈 Trending songs now"),
-                BotCommand("subscribe", "🔔 Daily song picks"),
+                BotCommand("start",       "Welcome & overview"),
+                BotCommand("help",        "Full command guide"),
+                BotCommand("song",        "🎵 Full song dashboard"),
+                BotCommand("lyrics",      "🎤 Get song lyrics"),
+                BotCommand("stats",       "📊 Song word statistics"),
+                BotCommand("recommend",   "🎵 Find similar songs"),
+                BotCommand("analyze",     "🔍 Deep lyrical analysis"),
+                BotCommand("translate",   "🌍 Translate lyrics to any language"),
+                BotCommand("artist",      "🎤 Quick artist profile"),
+                BotCommand("top",         "🔝 Top songs by genre"),
+                BotCommand("random",      "🎲 Random song discovery"),
+                BotCommand("youtube",     "🎬 Find the music video"),
+                BotCommand("quiz",        "🎮 Lyrics guessing game"),
+                BotCommand("endquiz",     "End current quiz"),
+                BotCommand("wiki",        "📚 Artist Wikipedia info"),
+                BotCommand("trending",    "📈 Trending songs now"),
+                BotCommand("subscribe",   "🔔 Daily song picks"),
                 BotCommand("unsubscribe", "Stop daily updates"),
             ]
             self.updater.bot.set_my_commands(commands)
@@ -178,45 +225,13 @@ class TelegramBotWorker:
             logger.error(f"Failed to set up bot commands: {str(e)}")
 
     def error_handler(self, update: Update, context: CallbackContext):
-        """Handle bot errors."""
+        """Handle bot errors — no special conflict logic needed here because
+        dev never reaches polling when production is active."""
         try:
             error_str = str(context.error)
 
-            if 'Conflict' in error_str and 'getUpdates' in error_str:
-                self._conflict_count += 1
-
-                if IS_PRODUCTION:
-                    # Production instance must never yield — back off briefly and
-                    # let the polling library retry.  Another process (the dev
-                    # editor bot) will detect conflicts and self-terminate first.
-                    if self._conflict_count % 5 == 0:
-                        logger.warning(
-                            f"[PROD] Polling conflict #{self._conflict_count} — "
-                            "dev instance present, backing off 10 s then retrying."
-                        )
-                    time.sleep(10)
-                    self._conflict_count = 0   # reset so we keep retrying indefinitely
-                    return
-
-                # Dev instance: yield after max_conflicts so production wins.
-                if self._conflict_count >= self._max_conflicts:
-                    logger.warning(
-                        f"Detected {self._conflict_count} consecutive polling conflicts — "
-                        "production instance has priority. Dev instance standing down."
-                    )
-                    self.running = False
-                    if self.updater:
-                        try:
-                            self.updater.stop()
-                        except Exception:
-                            pass
-                return
-
-            # Reset conflict count on any non-Conflict error
-            self._conflict_count = 0
-
             if isinstance(context.error, NetworkError):
-                logger.warning(f"Network error occurred: {error_str}")
+                logger.warning(f"Network error: {error_str}")
                 self.handle_connection_error()
                 return
             elif isinstance(context.error, TimedOut):
@@ -240,8 +255,8 @@ class TelegramBotWorker:
 
     def handle_connection_error(self):
         """Handle connection errors with exponential backoff."""
-        wait_time = min(300, self.retry_delay * (2 ** self.retry_count))  # Max 5 minutes
-        logger.info(f"Connection error, waiting {wait_time} seconds before retry...")
+        wait_time = min(300, self.retry_delay * (2 ** self.retry_count))
+        logger.info(f"Connection error, waiting {wait_time}s before retry...")
         time.sleep(wait_time)
         self.retry_count += 1
 
@@ -250,73 +265,13 @@ class TelegramBotWorker:
         current_time = time.time()
         if current_time - self.last_keepalive >= self.keepalive_interval:
             try:
-                # Verify bot connection
                 self.updater.bot.get_me()
                 logger.debug("Keepalive check successful")
                 self.last_keepalive = current_time
-                self.retry_count = 0  # Reset retry count on successful keepalive
+                self.retry_count = 0
             except Exception as e:
                 logger.warning(f"Keepalive check failed: {str(e)}")
                 self.handle_connection_error()
-
-    def initialize(self):
-        """Initialize the bot with handlers."""
-        try:
-            self.updater = Updater(
-                token=self.token,
-                use_context=True,
-                request_kwargs={
-                    'read_timeout': 30,
-                    'connect_timeout': 30
-                }
-            )
-
-            self.updater.bot.delete_webhook(drop_pending_updates=True)
-            logger.info("Webhook cleared, ready for polling")
-
-            # Get the dispatcher
-            dp = self.updater.dispatcher
-
-            # Register command handlers
-            dp.add_handler(CommandHandler("start", start_command))
-            dp.add_handler(CommandHandler("help", help_command))
-            dp.add_handler(CommandHandler("lyrics", lyrics_command))
-            dp.add_handler(CommandHandler("stats", stats_command))
-            dp.add_handler(CommandHandler("recommend", recommend_command))
-            dp.add_handler(CommandHandler("quiz", quiz_command))
-            dp.add_handler(CommandHandler("endquiz", end_quiz_command))
-            dp.add_handler(CommandHandler("translate", translate_lyrics_command))
-            dp.add_handler(CommandHandler("youtube", youtube_command))
-            dp.add_handler(CommandHandler("analyze", analyze_command))
-            dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
-            dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
-            dp.add_handler(CommandHandler("wiki", wiki_command))
-            dp.add_handler(CommandHandler("artist", artist_command))
-            dp.add_handler(CommandHandler("trending", trending_command))
-            dp.add_handler(CommandHandler("song", song_command))
-            dp.add_handler(CommandHandler("top", top_command))
-            dp.add_handler(CommandHandler("random", random_command))
-
-            # Add callback query handler for inline buttons
-            dp.add_handler(CallbackQueryHandler(callback_query_handler))
-
-            # Add message handler for natural language + quiz answers
-            dp.add_handler(MessageHandler(Filters.text & ~Filters.command, natural_language_handler))
-
-            # Add error handler
-            dp.add_error_handler(self.error_handler)
-
-            # Set up commands menu
-            self.setup_commands()
-
-            self._setup_daily_scheduler()
-
-            logger.info("Bot initialized successfully")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to initialize bot: {str(e)}")
-            return False
 
     def _setup_daily_scheduler(self):
         try:
@@ -337,6 +292,16 @@ class TelegramBotWorker:
                 replace_existing=True,
                 misfire_grace_time=3600
             )
+            if IS_PRODUCTION:
+                # Refresh the production heartbeat on a regular schedule so dev
+                # instances can see that production is alive without any polling.
+                self.scheduler.add_job(
+                    write_production_heartbeat,
+                    'interval',
+                    seconds=HEARTBEAT_INTERVAL,
+                    id='heartbeat',
+                    replace_existing=True,
+                )
             self.scheduler.start()
             logger.info("Daily song scheduler started (09:00 UTC)")
         except Exception as e:
@@ -352,28 +317,125 @@ class TelegramBotWorker:
         except Exception as e:
             logger.error(f"Error in daily song delivery: {e}")
 
+    def initialize(self):
+        """Initialize the bot with handlers."""
+        try:
+            self.updater = Updater(
+                token=self.token,
+                use_context=True,
+                request_kwargs={
+                    'read_timeout': 30,
+                    'connect_timeout': 30
+                }
+            )
+
+            self.updater.bot.delete_webhook(drop_pending_updates=True)
+            logger.info("Webhook cleared, ready for polling")
+
+            dp = self.updater.dispatcher
+
+            dp.add_handler(CommandHandler("start",       start_command))
+            dp.add_handler(CommandHandler("help",        help_command))
+            dp.add_handler(CommandHandler("lyrics",      lyrics_command))
+            dp.add_handler(CommandHandler("stats",       stats_command))
+            dp.add_handler(CommandHandler("recommend",   recommend_command))
+            dp.add_handler(CommandHandler("quiz",        quiz_command))
+            dp.add_handler(CommandHandler("endquiz",     end_quiz_command))
+            dp.add_handler(CommandHandler("translate",   translate_lyrics_command))
+            dp.add_handler(CommandHandler("youtube",     youtube_command))
+            dp.add_handler(CommandHandler("analyze",     analyze_command))
+            dp.add_handler(CommandHandler("subscribe",   subscribe_daily_command))
+            dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
+            dp.add_handler(CommandHandler("wiki",        wiki_command))
+            dp.add_handler(CommandHandler("artist",      artist_command))
+            dp.add_handler(CommandHandler("trending",    trending_command))
+            dp.add_handler(CommandHandler("song",        song_command))
+            dp.add_handler(CommandHandler("top",         top_command))
+            dp.add_handler(CommandHandler("random",      random_command))
+
+            dp.add_handler(CallbackQueryHandler(callback_query_handler))
+            dp.add_handler(MessageHandler(
+                Filters.text & ~Filters.command, natural_language_handler
+            ))
+
+            dp.add_error_handler(self.error_handler)
+
+            self.setup_commands()
+            self._setup_daily_scheduler()
+
+            logger.info("Bot initialized successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to initialize bot: {str(e)}")
+            return False
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Dev gate — never call getUpdates while production is active
+    # ──────────────────────────────────────────────────────────────────────────
+    def _dev_gate(self):
+        """Check DB heartbeat and sleep until production is no longer active.
+
+        Called once before any polling attempt.  If production is active this
+        method never returns — it loops, sleeping DEV_RECHECK seconds between
+        DB reads, and starts polling only once the heartbeat goes stale.
+
+        This is the core of the conflict-free design: dev never calls
+        getUpdates while production holds the heartbeat.
+        """
+        if IS_PRODUCTION:
+            return  # Production skips the gate entirely
+
+        if not is_production_active():
+            logger.info("No active production bot detected — dev polling enabled.")
+            return
+
+        logger.info(
+            "Production bot is active (DB heartbeat detected). "
+            "Dev instance will NOT poll — sleeping until production stops."
+        )
+        while True:
+            time.sleep(DEV_RECHECK)
+            if not is_production_active():
+                logger.info(
+                    "Production heartbeat stale — dev instance resuming polling."
+                )
+                return
+            logger.debug("Production still active, dev sleeping…")
+
     def run(self):
         """Run the bot with automatic reconnection and keepalive."""
+        if IS_PRODUCTION:
+            # Write heartbeat BEFORE starting polling so dev instances see it
+            # immediately and never make a competing getUpdates call.
+            write_production_heartbeat()
+            logger.info("Production heartbeat written — polling will start now.")
+        else:
+            # Block until production is not running; if already idle, returns
+            # immediately and dev polling begins normally.
+            self._dev_gate()
+
         while self.running:
             try:
                 if not self.initialize():
                     if self.retry_count >= self.max_retries:
-                        logger.error("Max retries reached. Exiting...")
+                        logger.error("Max retries reached. Exiting…")
                         sys.exit(1)
 
                     self.retry_count += 1
                     wait_time = self.retry_delay * (2 ** (self.retry_count - 1))
-                    logger.info(f"Retrying initialization in {wait_time} seconds... (Attempt {self.retry_count}/{self.max_retries})")
+                    logger.info(
+                        f"Retrying initialization in {wait_time}s… "
+                        f"(Attempt {self.retry_count}/{self.max_retries})"
+                    )
                     time.sleep(wait_time)
                     continue
 
-                # Reset retry count on successful initialization
                 self.retry_count = 0
                 self.last_keepalive = time.time()
 
-                logger.info("Starting bot polling...")
+                logger.info("Starting bot polling…")
 
-                # Start polling in a non-blocking way
                 self.updater.start_polling(
                     drop_pending_updates=True,
                     timeout=30,
@@ -383,46 +445,59 @@ class TelegramBotWorker:
 
                 logger.info("Bot is running successfully")
 
-                # Main loop with keepalive checks
                 while self.running and self.updater.running:
+                    # Dev: periodically check if production has started while we poll
+                    if not IS_PRODUCTION and is_production_active():
+                        logger.info(
+                            "Production bot became active — dev stopping polling "
+                            "and entering sleep mode."
+                        )
+                        self.updater.stop()
+                        self._dev_gate()   # blocks until production stops again
+                        break              # restart the outer while loop
                     self.keepalive()
-                    time.sleep(1)  # Prevent CPU overuse
+                    time.sleep(30)
 
             except Exception as e:
                 logger.error(f"Bot crashed: {str(e)}")
                 if self.updater:
                     try:
                         self.updater.stop()
-                    except:
+                    except Exception:
                         pass
                 self.updater = None
 
                 if self.retry_count >= self.max_retries:
-                    logger.error("Max retries reached. Exiting...")
+                    logger.error("Max retries reached. Exiting…")
                     sys.exit(1)
 
                 self.retry_count += 1
                 wait_time = self.retry_delay * (2 ** (self.retry_count - 1))
-                logger.info(f"Restarting bot in {wait_time} seconds... (Attempt {self.retry_count}/{self.max_retries})")
+                logger.info(
+                    f"Restarting bot in {wait_time}s… "
+                    f"(Attempt {self.retry_count}/{self.max_retries})"
+                )
                 time.sleep(wait_time)
 
         logger.info("Bot shutdown complete")
+        if IS_PRODUCTION:
+            clear_production_heartbeat()
+
 
 def main():
     """Entry point for the bot worker."""
     try:
-        # Get token from environment
         token = os.environ.get("TELEGRAM_TOKEN")
         if not token:
             raise ValueError("TELEGRAM_TOKEN not found in environment variables")
 
-        # Create and run bot
         bot_worker = TelegramBotWorker(token)
         bot_worker.run()
 
     except Exception as e:
         logger.critical(f"Critical error: {str(e)}")
         sys.exit(1)
+
 
 if __name__ == '__main__':
     main()
