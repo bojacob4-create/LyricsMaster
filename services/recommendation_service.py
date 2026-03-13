@@ -2778,8 +2778,18 @@ def _get_lastfm_recommendations(artist: str, song: str,
     source_eco  = source_profile.get('ecosystem', 'pop_synth')
     adj_ecos    = ECOSYSTEM_ADJACENT.get(source_eco, frozenset({source_eco}))
 
+    # Normalise source artist name for same-artist filtering.
+    # Last.fm sometimes returns featured-artist strings like "The Weeknd, Daft Punk"
+    # so we match by checking whether the source artist name is a substring of
+    # the candidate artist string (case-insensitive).
+    source_artist_lower = artist.lower()
+
     scored = []
     for c in raw:
+        # Skip any track that is by the source artist (including featuring variants)
+        if source_artist_lower in c['artist'].lower():
+            continue
+
         c_genre  = _detect_genre_fast(c['artist'])
         c_eco    = POOL_ECOSYSTEM.get(c_genre, 'pop_synth')
 
