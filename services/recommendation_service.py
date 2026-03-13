@@ -2621,11 +2621,6 @@ def get_similar_songs(artist: str, song: str, mood: str) -> List[Dict]:
             f"vocal={source_profile['vocal']} era={source_profile['era']}"
         )
 
-        apple_recs = _get_apple_recommendations(artist, song, source_profile)
-        if apple_recs and len(apple_recs) >= 3:
-            logger.info(f"[REC] Apple Music (scored) for '{artist} - {song}'")
-            return apple_recs
-
         logger.info(f"[REC] Curated (scored) for '{artist} - {song}'")
         return _get_curated_recommendations(artist, song, mood, source_profile)
 
