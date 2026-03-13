@@ -1,0 +1,51 @@
+I want you to analyze the recommendation pipeline based on several real outputs.
+
+Important clarification:
+The recommendation system should prioritize song identity, not artist identity.
+The similarity must be driven primarily by the production, style, and sonic characteristics of the specific track, not by the artist’s general catalog profile.
+
+Do not immediately modify code. First diagnose the root cause.
+
+Observed behaviors from multiple test runs:
+
+Case 1 — The Weeknd - Blinding Lights
+Expected neighborhood: synth-pop / retro pop / electronic pop
+Actual recommendations include songs associated with indie folk and modern R&B styles.
+
+This suggests the track may still be routed toward an ecosystem influenced by the artist’s broader R&B identity rather than the production identity of this specific song.
+
+Case 2 — Daft Punk - Get Lucky
+Expected neighborhood: disco / funk / electronic crossover
+Actual recommendations include trap/hip-hop tracks.
+
+This indicates the candidate pool is drifting toward hip-hop ecosystems despite the song’s clear disco/electronic production.
+
+Case 3 — Billie Eilish - Happier Than Ever
+Recommendations are mostly modern pop artists. This case behaves reasonably and suggests that parts of the pipeline are functioning correctly.
+
+Case 4 — Halsey - Without Me
+Recommendations drift strongly into indie/folk territory, suggesting that the system may be overcorrecting toward an indie_alt ecosystem.
+
+Cross-case observation:
+Several recommendation explanations reference vocal traits (e.g., “upbeat male vocalist”) instead of production or stylistic similarity.
+
+This may indicate that vocal profile similarity is influencing ranking more strongly than production identity, which is not the intended behavior.
+
+Your task:
+	1.	Trace the full recommendation pipeline for these tracks:
+	•	The Weeknd — Blinding Lights
+	•	Daft Punk — Get Lucky
+	2.	Log the final song profile used for recommendation with these fields:
+
+song_style
+tag_style
+production_signature
+genre
+resolved_style_pool
+ecosystem
+candidate_pool
+	3.	Verify whether the system is accidentally inheriting signals from the artist-level profile rather than the track-level profile.
+	4.	Identify where the routing deviates from the production identity of the track.
+	5.	Propose the minimal architectural correction needed to ensure that track-level production identity dominates over artist-level genre identity when selecting the ecosystem and candidate pool.
+
+Do not assume the issue is limited to tag parsing. Investigate the full pipeline from tag interpretation to ecosystem assignment to candidate pool selection and rankin
