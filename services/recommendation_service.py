@@ -1,48 +1,285 @@
 import os
+import re
 import logging
-import requests
 import random
+import requests
 import time
 from typing import List, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-# Cache: (timestamp, [candidates])
+# ──────────────────────────────────────────────────────────────────────────────
+# Cache
+# ──────────────────────────────────────────────────────────────────────────────
 _apple_cache: Dict[str, tuple] = {}
 _CACHE_TTL = 3600  # 1 hour
 
 
-def _fetch_apple_top_songs() -> List[Dict]:
-    """Fetch global Apple Music top 100 with caching."""
-    now = time.time()
-    cached = _apple_cache.get('global')
-    if cached and (now - cached[0]) < _CACHE_TTL:
-        return cached[1]
+# ──────────────────────────────────────────────────────────────────────────────
+# Genre map (artist → genre)
+# ──────────────────────────────────────────────────────────────────────────────
+ARTIST_GENRE_MAP = {
+    'tyla': 'afrobeats', 'ayra starr': 'afrobeats', 'rema': 'afrobeats', 'burna boy': 'afrobeats',
+    'wizkid': 'afrobeats', 'davido': 'afrobeats', 'ckay': 'afrobeats', 'fireboy dml': 'afrobeats',
+    'tiwa savage': 'afrobeats', 'asake': 'afrobeats', 'omah lay': 'afrobeats', 'tems': 'afrobeats',
+    'victony': 'afrobeats', 'kizz daniel': 'afrobeats', 'oxlade': 'afrobeats',
+    'taylor swift': 'pop', 'ed sheeran': 'pop', 'dua lipa': 'pop', 'harry styles': 'pop',
+    'olivia rodrigo': 'pop', 'billie eilish': 'pop', 'ariana grande': 'pop', 'miley cyrus': 'pop',
+    'katy perry': 'pop', 'bruno mars': 'pop', 'justin bieber': 'pop', 'shawn mendes': 'pop',
+    'charlie puth': 'pop', 'lizzo': 'pop', 'doja cat': 'pop', 'camila cabello': 'pop',
+    'sabrina carpenter': 'pop', 'chappell roan': 'pop', 'gracie abrams': 'pop',
+    'charli xcx': 'pop', 'post malone': 'pop',
+    'sza': 'rnb', 'the weeknd': 'rnb', 'daniel caesar': 'rnb', 'h.e.r.': 'rnb',
+    'brent faiyaz': 'rnb', 'summer walker': 'rnb', 'jhene aiko': 'rnb', 'khalid': 'rnb',
+    'frank ocean': 'rnb', 'chris brown': 'rnb', 'usher': 'rnb', 'alicia keys': 'rnb',
+    'adele': 'rnb', 'sam smith': 'rnb', 'john legend': 'rnb', 'victoria monet': 'rnb',
+    'lucky daye': 'rnb', 'chloe': 'rnb', 'rihanna': 'rnb',
+    'whitney houston': 'rnb', 'mariah carey': 'rnb',
+    'drake': 'hiphop', 'kendrick lamar': 'hiphop', 'j. cole': 'hiphop', 'kanye west': 'hiphop',
+    'travis scott': 'hiphop', 'eminem': 'hiphop', 'lil wayne': 'hiphop', 'jay-z': 'hiphop',
+    'tyler, the creator': 'hiphop', 'megan thee stallion': 'hiphop', 'nicki minaj': 'hiphop',
+    '21 savage': 'hiphop', 'jid': 'hiphop', 'future': 'hiphop',
+    'sexyy red': 'hiphop', 'glorilla': 'hiphop', 'ice spice': 'hiphop', 'doechii': 'hiphop',
+    'metro boomin': 'hiphop', 'playboi carti': 'hiphop',
+    'bad bunny': 'latin', 'rosalia': 'latin', 'karol g': 'latin', 'rauw alejandro': 'latin',
+    'ozuna': 'latin', 'j balvin': 'latin', 'daddy yankee': 'latin', 'peso pluma': 'latin',
+    'shakira': 'latin', 'myke towers': 'latin', 'feid': 'latin', 'anitta': 'latin',
+    'queen': 'rock', 'the beatles': 'rock', 'led zeppelin': 'rock', 'pink floyd': 'rock',
+    'nirvana': 'rock', 'foo fighters': 'rock', 'arctic monkeys': 'rock',
+    'imagine dragons': 'rock', 'coldplay': 'rock', 'u2': 'rock', 'the killers': 'rock',
+    'tame impala': 'rock', 'hozier': 'rock', 'paramore': 'rock', 'wet leg': 'rock',
+    'boygenius': 'rock', 'radiohead': 'rock', 'muse': 'rock', 'linkin park': 'rock',
+    'twenty one pilots': 'rock', 'fontaines d.c.': 'rock',
+    'fleetwood mac': 'classic', 'elvis presley': 'classic', 'michael jackson': 'pop',
+    'david bowie': 'classic', 'stevie wonder': 'classic', 'marvin gaye': 'classic',
+    'eagles': 'classic', 'prince': 'classic', 'elton john': 'classic',
+    'rolling stones': 'classic',
+}
 
-    candidates = []
-    try:
-        url = "https://rss.applemarketingtools.com/api/v2/us/music/most-played/100/songs.json"
-        r = requests.get(url, timeout=8, headers={'User-Agent': 'LyricsMasterBot/1.0'})
-        if r.status_code == 200:
-            results = r.json().get('feed', {}).get('results', [])
-            for item in results:
-                name = item.get('name', '').strip()
-                artist = item.get('artistName', '').strip()
-                if name and artist:
-                    candidates.append({
-                        'name': name,
-                        'artist': artist,
-                        'reason': 'Trending on Apple Music Top 100',
-                    })
-            logger.info(f"Apple Music top 100 fetched {len(candidates)} tracks")
-    except Exception as e:
-        logger.debug(f"Apple Music global chart failed: {e}")
+# iTunes genre → internal genre
+_ITUNES_GENRE_MAP = {
+    'hip-hop/rap': 'hiphop', 'hip hop/rap': 'hiphop', 'hip-hop': 'hiphop',
+    'r&b/soul': 'rnb', 'r&b': 'rnb', 'soul': 'rnb',
+    'pop': 'pop', 'dance': 'pop', 'electronic': 'pop',
+    'rock': 'rock', 'alternative': 'rock', 'indie': 'rock',
+    'latin': 'latin', 'reggaeton': 'latin', 'latin urban': 'latin',
+    'country': 'pop', 'jazz': 'classic', 'classical': 'classic',
+    'k-pop': 'pop', 'afrobeats': 'afrobeats', 'reggae': 'afrobeats',
+    'metal': 'rock', 'punk': 'rock', 'blues': 'rnb', 'funk': 'rnb',
+    'afropop': 'afrobeats', 'dancehall': 'afrobeats',
+}
 
-    if candidates:
-        _apple_cache['global'] = (now, candidates)
-    return candidates
+# ──────────────────────────────────────────────────────────────────────────────
+# Artist profile — vocal type + era (used for scoring only, not displayed)
+# ──────────────────────────────────────────────────────────────────────────────
+# vocal: 'female' | 'male' | 'group'
+# era:   'modern' (2020+) | 'recent' (2015-2019) | 'older' (pre-2015)
+ARTIST_PROFILE = {
+    'tyla': {'vocal': 'female', 'era': 'modern'},
+    'ayra starr': {'vocal': 'female', 'era': 'modern'},
+    'rema': {'vocal': 'male', 'era': 'modern'},
+    'burna boy': {'vocal': 'male', 'era': 'recent'},
+    'wizkid': {'vocal': 'male', 'era': 'recent'},
+    'davido': {'vocal': 'male', 'era': 'recent'},
+    'ckay': {'vocal': 'male', 'era': 'modern'},
+    'fireboy dml': {'vocal': 'male', 'era': 'modern'},
+    'tiwa savage': {'vocal': 'female', 'era': 'recent'},
+    'asake': {'vocal': 'male', 'era': 'modern'},
+    'omah lay': {'vocal': 'male', 'era': 'modern'},
+    'tems': {'vocal': 'female', 'era': 'modern'},
+    'victony': {'vocal': 'male', 'era': 'modern'},
+    'kizz daniel': {'vocal': 'male', 'era': 'recent'},
+    'oxlade': {'vocal': 'male', 'era': 'modern'},
+    'taylor swift': {'vocal': 'female', 'era': 'recent'},
+    'ed sheeran': {'vocal': 'male', 'era': 'recent'},
+    'dua lipa': {'vocal': 'female', 'era': 'modern'},
+    'harry styles': {'vocal': 'male', 'era': 'modern'},
+    'olivia rodrigo': {'vocal': 'female', 'era': 'modern'},
+    'billie eilish': {'vocal': 'female', 'era': 'modern'},
+    'ariana grande': {'vocal': 'female', 'era': 'recent'},
+    'miley cyrus': {'vocal': 'female', 'era': 'recent'},
+    'katy perry': {'vocal': 'female', 'era': 'older'},
+    'bruno mars': {'vocal': 'male', 'era': 'older'},
+    'justin bieber': {'vocal': 'male', 'era': 'recent'},
+    'shawn mendes': {'vocal': 'male', 'era': 'recent'},
+    'charlie puth': {'vocal': 'male', 'era': 'recent'},
+    'lizzo': {'vocal': 'female', 'era': 'recent'},
+    'doja cat': {'vocal': 'female', 'era': 'modern'},
+    'camila cabello': {'vocal': 'female', 'era': 'recent'},
+    'sabrina carpenter': {'vocal': 'female', 'era': 'modern'},
+    'chappell roan': {'vocal': 'female', 'era': 'modern'},
+    'gracie abrams': {'vocal': 'female', 'era': 'modern'},
+    'charli xcx': {'vocal': 'female', 'era': 'recent'},
+    'post malone': {'vocal': 'male', 'era': 'recent'},
+    'sza': {'vocal': 'female', 'era': 'recent'},
+    'the weeknd': {'vocal': 'male', 'era': 'recent'},
+    'daniel caesar': {'vocal': 'male', 'era': 'recent'},
+    'h.e.r.': {'vocal': 'female', 'era': 'recent'},
+    'brent faiyaz': {'vocal': 'male', 'era': 'modern'},
+    'summer walker': {'vocal': 'female', 'era': 'modern'},
+    'jhene aiko': {'vocal': 'female', 'era': 'recent'},
+    'khalid': {'vocal': 'male', 'era': 'recent'},
+    'frank ocean': {'vocal': 'male', 'era': 'recent'},
+    'chris brown': {'vocal': 'male', 'era': 'older'},
+    'usher': {'vocal': 'male', 'era': 'older'},
+    'alicia keys': {'vocal': 'female', 'era': 'older'},
+    'adele': {'vocal': 'female', 'era': 'recent'},
+    'sam smith': {'vocal': 'male', 'era': 'recent'},
+    'john legend': {'vocal': 'male', 'era': 'older'},
+    'victoria monet': {'vocal': 'female', 'era': 'modern'},
+    'lucky daye': {'vocal': 'male', 'era': 'modern'},
+    'chloe': {'vocal': 'female', 'era': 'modern'},
+    'rihanna': {'vocal': 'female', 'era': 'older'},
+    'whitney houston': {'vocal': 'female', 'era': 'older'},
+    'mariah carey': {'vocal': 'female', 'era': 'older'},
+    'drake': {'vocal': 'male', 'era': 'recent'},
+    'kendrick lamar': {'vocal': 'male', 'era': 'older'},
+    'j. cole': {'vocal': 'male', 'era': 'older'},
+    'kanye west': {'vocal': 'male', 'era': 'older'},
+    'travis scott': {'vocal': 'male', 'era': 'recent'},
+    'eminem': {'vocal': 'male', 'era': 'older'},
+    'lil wayne': {'vocal': 'male', 'era': 'older'},
+    'jay-z': {'vocal': 'male', 'era': 'older'},
+    'tyler, the creator': {'vocal': 'male', 'era': 'recent'},
+    'megan thee stallion': {'vocal': 'female', 'era': 'modern'},
+    'nicki minaj': {'vocal': 'female', 'era': 'older'},
+    '21 savage': {'vocal': 'male', 'era': 'recent'},
+    'jid': {'vocal': 'male', 'era': 'modern'},
+    'future': {'vocal': 'male', 'era': 'recent'},
+    'sexyy red': {'vocal': 'female', 'era': 'modern'},
+    'glorilla': {'vocal': 'female', 'era': 'modern'},
+    'ice spice': {'vocal': 'female', 'era': 'modern'},
+    'doechii': {'vocal': 'female', 'era': 'modern'},
+    'metro boomin': {'vocal': 'male', 'era': 'modern'},
+    'playboi carti': {'vocal': 'male', 'era': 'modern'},
+    'bad bunny': {'vocal': 'male', 'era': 'modern'},
+    'rosalia': {'vocal': 'female', 'era': 'modern'},
+    'karol g': {'vocal': 'female', 'era': 'modern'},
+    'rauw alejandro': {'vocal': 'male', 'era': 'modern'},
+    'ozuna': {'vocal': 'male', 'era': 'recent'},
+    'j balvin': {'vocal': 'male', 'era': 'recent'},
+    'daddy yankee': {'vocal': 'male', 'era': 'older'},
+    'peso pluma': {'vocal': 'male', 'era': 'modern'},
+    'shakira': {'vocal': 'female', 'era': 'older'},
+    'myke towers': {'vocal': 'male', 'era': 'modern'},
+    'feid': {'vocal': 'male', 'era': 'modern'},
+    'anitta': {'vocal': 'female', 'era': 'modern'},
+    'queen': {'vocal': 'group', 'era': 'older'},
+    'the beatles': {'vocal': 'group', 'era': 'older'},
+    'led zeppelin': {'vocal': 'group', 'era': 'older'},
+    'pink floyd': {'vocal': 'group', 'era': 'older'},
+    'nirvana': {'vocal': 'group', 'era': 'older'},
+    'foo fighters': {'vocal': 'group', 'era': 'older'},
+    'arctic monkeys': {'vocal': 'group', 'era': 'older'},
+    'imagine dragons': {'vocal': 'group', 'era': 'recent'},
+    'coldplay': {'vocal': 'group', 'era': 'older'},
+    'u2': {'vocal': 'group', 'era': 'older'},
+    'the killers': {'vocal': 'group', 'era': 'older'},
+    'tame impala': {'vocal': 'male', 'era': 'recent'},
+    'hozier': {'vocal': 'male', 'era': 'recent'},
+    'paramore': {'vocal': 'group', 'era': 'recent'},
+    'wet leg': {'vocal': 'group', 'era': 'modern'},
+    'boygenius': {'vocal': 'group', 'era': 'modern'},
+    'radiohead': {'vocal': 'group', 'era': 'older'},
+    'muse': {'vocal': 'group', 'era': 'older'},
+    'linkin park': {'vocal': 'group', 'era': 'older'},
+    'twenty one pilots': {'vocal': 'group', 'era': 'recent'},
+    'fontaines d.c.': {'vocal': 'group', 'era': 'modern'},
+    'fleetwood mac': {'vocal': 'group', 'era': 'older'},
+    'elvis presley': {'vocal': 'male', 'era': 'older'},
+    'michael jackson': {'vocal': 'male', 'era': 'older'},
+    'david bowie': {'vocal': 'male', 'era': 'older'},
+    'stevie wonder': {'vocal': 'male', 'era': 'older'},
+    'marvin gaye': {'vocal': 'male', 'era': 'older'},
+    'eagles': {'vocal': 'group', 'era': 'older'},
+    'prince': {'vocal': 'male', 'era': 'older'},
+    'elton john': {'vocal': 'male', 'era': 'older'},
+    'rolling stones': {'vocal': 'group', 'era': 'older'},
+}
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Mood / tempo lookup tables
+# ──────────────────────────────────────────────────────────────────────────────
 
+# Keywords in song title → mood signal
+_MOOD_KEYWORDS: Dict[str, set] = {
+    'sad': {
+        'sad', 'cry', 'crying', 'tears', 'heartbreak', 'sorry', 'goodbye', 'alone',
+        'lost', 'missing', 'hurt', 'pain', 'broken', 'leaving', 'dark', 'empty',
+        'cold', 'ache', 'aching', 'weep', 'weeping', 'sorrow', 'despair', 'grief',
+        'die', 'dying', 'dead', 'death', 'gone', 'never', 'miss', 'suffer',
+    },
+    'romantic': {
+        'love', 'heart', 'forever', 'together', 'yours', 'kiss', 'darling', 'baby',
+        'hold', 'adore', 'cherish', 'devoted', 'beloved', 'sweetheart', 'romance',
+        'lover', 'desire', 'passion', 'dream', 'dreaming', 'tender', 'gentle',
+        'mine', 'need', 'want', 'stay', 'close', 'near', 'soul',
+    },
+    'energetic': {
+        'fire', 'lit', 'run', 'move', 'jump', 'fight', 'rise', 'power', 'beast',
+        'boss', 'flex', 'wild', 'crazy', 'rush', 'bang', 'hard', 'loud',
+        'grind', 'hustle', 'win', 'king', 'god', 'savage', 'hit', 'hype',
+    },
+    'happy': {
+        'happy', 'joy', 'smile', 'laugh', 'fun', 'good', 'bright', 'sunshine',
+        'summer', 'beautiful', 'amazing', 'wonderful', 'celebrate', 'party',
+        'dance', 'night', 'light', 'shine', 'glow', 'free', 'high',
+    },
+    'chill': {
+        'chill', 'vibe', 'flow', 'easy', 'smooth', 'mellow', 'soft', 'breeze',
+        'ocean', 'wave', 'cloud', 'float', 'drift', 'slow', 'quiet', 'still',
+        'peace', 'calm', 'haze', 'cool', 'laid',
+    },
+}
+
+# Handler moods → internal moods (exact pass-through for matching ones)
+_HANDLER_MOOD_MAP = {
+    'energetic': 'energetic',
+    'happy': 'happy',
+    'romantic': 'romantic',
+    'sad': 'sad',
+    'relaxed': 'chill',
+    'melancholic': 'sad',
+    'upbeat': 'energetic',
+}
+
+# Genre → default mood when nothing else is available
+_GENRE_MOOD_DEFAULT = {
+    'afrobeats': 'energetic',
+    'pop': 'happy',
+    'rnb': 'romantic',
+    'hiphop': 'energetic',
+    'rock': 'energetic',
+    'latin': 'energetic',
+    'classic': 'chill',
+}
+
+# Genre → default tempo bucket
+_GENRE_TEMPO_DEFAULT = {
+    'afrobeats': 'mid',
+    'pop': 'mid',
+    'rnb': 'slow',
+    'hiphop': 'fast',
+    'rock': 'fast',
+    'latin': 'fast',
+    'classic': 'slow',
+}
+
+# Mood compatibility — how well two moods pair (0-100)
+_MOOD_COMPAT = {
+    ('sad', 'sad'): 100, ('sad', 'romantic'): 50, ('sad', 'chill'): 40,
+    ('sad', 'happy'): 10, ('sad', 'energetic'): 5,
+    ('romantic', 'romantic'): 100, ('romantic', 'sad'): 50, ('romantic', 'chill'): 60,
+    ('romantic', 'happy'): 40, ('romantic', 'energetic'): 15,
+    ('happy', 'happy'): 100, ('happy', 'energetic'): 70, ('happy', 'chill'): 40,
+    ('happy', 'romantic'): 40, ('happy', 'sad'): 10,
+    ('energetic', 'energetic'): 100, ('energetic', 'happy'): 70,
+    ('energetic', 'chill'): 20, ('energetic', 'romantic'): 15, ('energetic', 'sad'): 5,
+    ('chill', 'chill'): 100, ('chill', 'romantic'): 60, ('chill', 'sad'): 40,
+    ('chill', 'happy'): 40, ('chill', 'energetic'): 20,
+}
+
+# Curated fallback pool
 GENRE_RECOMMENDATIONS = {
     'afrobeats': [
         {'artist': 'Ayra Starr', 'name': 'Rush', 'reason': 'Afrobeats/Amapiano crossover energy'},
@@ -175,40 +412,6 @@ GENRE_RECOMMENDATIONS = {
     ],
 }
 
-ARTIST_GENRE_MAP = {
-    'tyla': 'afrobeats', 'ayra starr': 'afrobeats', 'rema': 'afrobeats', 'burna boy': 'afrobeats',
-    'wizkid': 'afrobeats', 'davido': 'afrobeats', 'ckay': 'afrobeats', 'fireboy dml': 'afrobeats',
-    'tiwa savage': 'afrobeats', 'asake': 'afrobeats', 'omah lay': 'afrobeats', 'tems': 'afrobeats',
-    'victony': 'afrobeats', 'kizz daniel': 'afrobeats', 'oxlade': 'afrobeats',
-    'taylor swift': 'pop', 'ed sheeran': 'pop', 'dua lipa': 'pop', 'harry styles': 'pop',
-    'olivia rodrigo': 'pop', 'billie eilish': 'pop', 'ariana grande': 'pop', 'miley cyrus': 'pop',
-    'katy perry': 'pop', 'bruno mars': 'pop', 'justin bieber': 'pop', 'shawn mendes': 'pop',
-    'charlie puth': 'pop', 'lizzo': 'pop', 'doja cat': 'pop', 'camila cabello': 'pop',
-    'sabrina carpenter': 'pop', 'chappell roan': 'pop', 'gracie abrams': 'pop',
-    'sza': 'rnb', 'the weeknd': 'rnb', 'daniel caesar': 'rnb', 'h.e.r.': 'rnb',
-    'brent faiyaz': 'rnb', 'summer walker': 'rnb', 'jhene aiko': 'rnb', 'khalid': 'rnb',
-    'frank ocean': 'rnb', 'chris brown': 'rnb', 'usher': 'rnb', 'alicia keys': 'rnb',
-    'adele': 'rnb', 'sam smith': 'rnb', 'john legend': 'rnb', 'victoria monet': 'rnb',
-    'lucky daye': 'rnb', 'chloe': 'rnb',
-    'drake': 'hiphop', 'kendrick lamar': 'hiphop', 'j. cole': 'hiphop', 'kanye west': 'hiphop',
-    'travis scott': 'hiphop', 'eminem': 'hiphop', 'lil wayne': 'hiphop', 'jay-z': 'hiphop',
-    'tyler, the creator': 'hiphop', 'megan thee stallion': 'hiphop', 'nicki minaj': 'hiphop',
-    'post malone': 'hiphop', '21 savage': 'hiphop', 'jid': 'hiphop', 'future': 'hiphop',
-    'sexyy red': 'hiphop', 'glorilla': 'hiphop', 'ice spice': 'hiphop', 'doechii': 'hiphop',
-    'bad bunny': 'latin', 'rosalia': 'latin', 'karol g': 'latin', 'rauw alejandro': 'latin',
-    'ozuna': 'latin', 'j balvin': 'latin', 'daddy yankee': 'latin', 'peso pluma': 'latin',
-    'shakira': 'latin', 'myke towers': 'latin', 'feid': 'latin', 'anitta': 'latin',
-    'queen': 'rock', 'the beatles': 'rock', 'led zeppelin': 'rock', 'pink floyd': 'rock',
-    'nirvana': 'rock', 'foo fighters': 'rock', 'arctic monkeys': 'rock',
-    'imagine dragons': 'rock', 'coldplay': 'rock', 'u2': 'rock', 'the killers': 'rock',
-    'tame impala': 'rock', 'hozier': 'rock', 'paramore': 'rock', 'wet leg': 'rock',
-    'boygenius': 'rock', 'radiohead': 'rock', 'muse': 'rock', 'linkin park': 'rock',
-    'fleetwood mac': 'classic', 'elvis presley': 'classic', 'michael jackson': 'pop',
-    'whitney houston': 'rnb', 'mariah carey': 'rnb', 'rihanna': 'pop',
-    'david bowie': 'classic', 'stevie wonder': 'classic', 'marvin gaye': 'classic',
-    'eagles': 'classic', 'prince': 'classic', 'elton john': 'classic',
-}
-
 MOOD_GENRE_WEIGHTS = {
     'energetic': ['afrobeats', 'pop', 'hiphop', 'rock'],
     'romantic': ['rnb', 'pop', 'latin'],
@@ -217,29 +420,185 @@ MOOD_GENRE_WEIGHTS = {
     'relaxed': ['rnb', 'pop', 'classic'],
 }
 
-_ITUNES_GENRE_MAP = {
-    'hip-hop/rap': 'hiphop', 'hip hop/rap': 'hiphop', 'hip-hop': 'hiphop',
-    'r&b/soul': 'rnb', 'r&b': 'rnb', 'soul': 'rnb',
-    'pop': 'pop', 'dance': 'pop', 'electronic': 'pop',
-    'rock': 'rock', 'alternative': 'rock', 'indie': 'rock',
-    'latin': 'latin', 'reggaeton': 'latin', 'latin urban': 'latin',
-    'country': 'pop', 'jazz': 'classic', 'classical': 'classic',
-    'k-pop': 'pop', 'afrobeats': 'afrobeats', 'reggae': 'afrobeats',
-    'metal': 'rock', 'punk': 'rock', 'blues': 'rnb', 'funk': 'rnb',
-}
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Lightweight metadata helpers (no external API calls)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _detect_genre_fast(artist: str) -> str:
+    """Genre from artist map only — no external calls, O(1)."""
+    key = artist.lower().strip()
+    if key in ARTIST_GENRE_MAP:
+        return ARTIST_GENRE_MAP[key]
+    # Try stripping 'feat.' suffix
+    clean = re.sub(r'\s*(feat\.?|ft\.?|featuring)\s.*', '', key, flags=re.IGNORECASE).strip()
+    if clean in ARTIST_GENRE_MAP:
+        return ARTIST_GENRE_MAP[clean]
+    # Partial match
+    for k, v in ARTIST_GENRE_MAP.items():
+        if k in key:
+            return v
+    return 'pop'
+
+
+def _get_artist_profile(artist: str) -> Dict:
+    """Lookup vocal type + era for a known artist; returns safe defaults."""
+    key = artist.lower().strip()
+    if key in ARTIST_PROFILE:
+        return ARTIST_PROFILE[key]
+    clean = re.sub(r'\s*(feat\.?|ft\.?|featuring)\s.*', '', key, flags=re.IGNORECASE).strip()
+    if clean in ARTIST_PROFILE:
+        return ARTIST_PROFILE[clean]
+    # Partial
+    for k, v in ARTIST_PROFILE.items():
+        if k in key:
+            return v
+    return {'vocal': 'male', 'era': 'modern'}
+
+
+def _infer_mood_from_title(title: str, genre: str, handler_mood: str) -> str:
+    """
+    Infer mood priority:
+      1. handler_mood (from lyrics analysis) if it maps cleanly
+      2. title keyword scan
+      3. genre default
+    """
+    if handler_mood:
+        mapped = _HANDLER_MOOD_MAP.get(handler_mood.lower())
+        if mapped:
+            return mapped
+
+    title_words = set(re.sub(r"[^a-z\s]", '', title.lower()).split())
+    best_mood, best_score = None, 0
+    for mood, keywords in _MOOD_KEYWORDS.items():
+        score = len(keywords & title_words)
+        if score > best_score:
+            best_score, best_mood = score, mood
+
+    if best_mood and best_score > 0:
+        return best_mood
+
+    return _GENRE_MOOD_DEFAULT.get(genre, 'happy')
+
+
+def _infer_tempo(mood: str, genre: str) -> str:
+    """Infer tempo bucket from mood + genre."""
+    base = _GENRE_TEMPO_DEFAULT.get(genre, 'mid')
+    if mood == 'sad' and genre in ('rnb', 'pop', 'classic'):
+        return 'slow'
+    if mood == 'energetic' and genre in ('hiphop', 'rock'):
+        return 'fast'
+    if mood == 'chill':
+        return 'slow'
+    return base
+
+
+def _build_song_profile(artist: str, song: str, handler_mood: str, genre: str) -> Dict:
+    """Build a lightweight metadata profile dict for a song."""
+    ap = _get_artist_profile(artist)
+    mood = _infer_mood_from_title(song, genre, handler_mood)
+    tempo = _infer_tempo(mood, genre)
+    return {
+        'genre': genre,
+        'mood': mood,
+        'vocal': ap.get('vocal', 'male'),
+        'tempo': tempo,
+        'era': ap.get('era', 'modern'),
+    }
+
+
+def _mood_compat(m1: str, m2: str) -> float:
+    """Return compatibility score 0-100 between two moods (symmetric)."""
+    return float(_MOOD_COMPAT.get((m1, m2)) or _MOOD_COMPAT.get((m2, m1)) or 20)
+
+
+def _score_candidate(candidate_artist: str, candidate_name: str,
+                     candidate_genre: str, source: Dict) -> float:
+    """
+    Score a candidate against source profile (0-100, weighted).
+
+    Weights:
+      40% mood similarity
+      25% genre similarity
+      15% vocal similarity
+      10% tempo similarity
+      10% era similarity
+    """
+    cp = _get_artist_profile(candidate_artist)
+    c_mood = _infer_mood_from_title(candidate_name, candidate_genre, '')
+    c_tempo = _infer_tempo(c_mood, candidate_genre)
+
+    mood_score = _mood_compat(c_mood, source['mood'])
+    genre_score = 100.0 if candidate_genre == source['genre'] else 20.0
+    vocal_score = 100.0 if cp.get('vocal') == source['vocal'] else 40.0
+    tempo_score = 100.0 if c_tempo == source['tempo'] else 50.0
+    era_score = 100.0 if cp.get('era') == source['era'] else 30.0
+
+    return (
+        0.40 * mood_score +
+        0.25 * genre_score +
+        0.15 * vocal_score +
+        0.10 * tempo_score +
+        0.10 * era_score
+    )
+
+
+def _generate_reason(candidate_artist: str, candidate_name: str,
+                     candidate_genre: str, source: Dict,
+                     existing_reason: str = '') -> str:
+    """
+    Generate a short vibe-based reason string.
+    Uses the curated reason when it's already meaningful.
+    Generates a new one for Apple Music candidates.
+    """
+    if existing_reason and existing_reason != 'Trending on Apple Music Top 100':
+        return existing_reason
+
+    cp = _get_artist_profile(candidate_artist)
+    c_mood = _infer_mood_from_title(candidate_name, candidate_genre, '')
+
+    mood_words = {
+        'sad': 'emotional', 'romantic': 'romantic', 'energetic': 'energetic',
+        'happy': 'upbeat', 'chill': 'chill',
+    }
+    genre_words = {
+        'afrobeats': 'Afrobeats vibe', 'pop': 'pop sound', 'rnb': 'R&B feel',
+        'hiphop': 'hip-hop energy', 'rock': 'rock energy', 'latin': 'Latin groove',
+        'classic': 'classic sound',
+    }
+    vocal_words = {
+        'female': 'female vocalist', 'male': 'male vocalist', 'group': 'band/group',
+    }
+
+    mood_w = mood_words.get(c_mood, '')
+    genre_w = genre_words.get(candidate_genre, 'similar vibe')
+    vocal_w = vocal_words.get(cp.get('vocal', ''), '')
+
+    # Genre + mood match → best reason
+    if candidate_genre == source['genre'] and c_mood == source['mood']:
+        return f"same {mood_w} {genre_w}" if mood_w else genre_w
+    if candidate_genre == source['genre']:
+        return f"{mood_w} {genre_w}".strip() if mood_w else genre_w
+    if c_mood == source['mood']:
+        return f"{mood_w} {vocal_w}".strip() if vocal_w else f"{mood_w} {genre_w}".strip()
+    return genre_w or 'similar vibe'
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Genre detection with iTunes fallback (used for source song only)
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _detect_genre(artist: str, song: str, mood: str) -> str:
-    artist_lower = artist.lower().strip()
-    if artist_lower in ARTIST_GENRE_MAP:
-        return ARTIST_GENRE_MAP[artist_lower]
+    """Detect genre: artist map → iTunes API → mood fallback."""
+    result = _detect_genre_fast(artist)
+    if result != 'pop' or artist.lower().strip() in ARTIST_GENRE_MAP:
+        return result
 
     try:
-        search_term = f"{artist} {song}" if song else artist
         r = requests.get(
             'https://itunes.apple.com/search',
-            params={'term': search_term, 'media': 'music', 'entity': 'song', 'limit': 1},
-            timeout=5
+            params={'term': f"{artist} {song}", 'media': 'music', 'entity': 'song', 'limit': 1},
+            timeout=5,
         )
         if r.status_code == 200:
             results = r.json().get('results', [])
@@ -247,8 +606,8 @@ def _detect_genre(artist: str, song: str, mood: str) -> str:
                 itunes_genre = results[0].get('primaryGenreName', '').lower()
                 mapped = _ITUNES_GENRE_MAP.get(itunes_genre)
                 if mapped:
-                    logger.info(f"iTunes genre for '{artist} - {song}': {itunes_genre} -> {mapped}")
-                    ARTIST_GENRE_MAP[artist_lower] = mapped
+                    logger.info(f"iTunes genre: '{artist} - {song}' → {itunes_genre} → {mapped}")
+                    ARTIST_GENRE_MAP[artist.lower().strip()] = mapped
                     return mapped
     except Exception:
         pass
@@ -257,71 +616,184 @@ def _detect_genre(artist: str, song: str, mood: str) -> str:
     return mood_genres[0] if mood_genres else 'pop'
 
 
-def _get_apple_recommendations(artist: str, song: str) -> Optional[List[Dict]]:
-    """Get recommendations from Apple Music global top 100."""
-    candidates = _fetch_apple_top_songs()
+# ──────────────────────────────────────────────────────────────────────────────
+# Apple Music top 100
+# ──────────────────────────────────────────────────────────────────────────────
 
+def _fetch_apple_top_songs() -> List[Dict]:
+    """Fetch global Apple Music top 100 with 1-hour caching."""
+    now = time.time()
+    cached = _apple_cache.get('global')
+    if cached and (now - cached[0]) < _CACHE_TTL:
+        return cached[1]
+
+    candidates = []
+    try:
+        url = "https://rss.applemarketingtools.com/api/v2/us/music/most-played/100/songs.json"
+        r = requests.get(url, timeout=8, headers={'User-Agent': 'LyricsMasterBot/1.0'})
+        if r.status_code == 200:
+            for item in r.json().get('feed', {}).get('results', []):
+                name = item.get('name', '').strip()
+                artist = item.get('artistName', '').strip()
+                if name and artist:
+                    candidates.append({'name': name, 'artist': artist,
+                                       'reason': 'Trending on Apple Music Top 100'})
+            logger.info(f"Apple Music top 100: {len(candidates)} tracks")
+    except Exception as e:
+        logger.debug(f"Apple Music chart failed: {e}")
+
+    if candidates:
+        _apple_cache['global'] = (now, candidates)
+    return candidates
+
+
+_APPLE_MIN_QUALITY = 76.0  # Minimum average score for top-5 Apple picks to beat curated
+
+
+def _get_apple_recommendations(artist: str, song: str,
+                                source_profile: Dict) -> Optional[List[Dict]]:
+    """
+    Score + rank Apple Music top 100 by vibe similarity.
+
+    Only returns results when the top picks genuinely match the source profile
+    (average score >= _APPLE_MIN_QUALITY). This prevents low-relevance Apple
+    Music charts from overriding the more on-point curated pool.
+    """
+    candidates = _fetch_apple_top_songs()
     if not candidates:
         return None
 
-    # Filter out the source artist and the exact source song
     filtered = [
         c for c in candidates
-        if c['artist'].lower() != artist.lower()
-        and c['name'].lower() != song.lower()
+        if c['artist'].lower() != artist.lower() and c['name'].lower() != song.lower()
     ]
     if len(filtered) < 3:
         return None
 
-    # Random sample so results feel fresh on every call
-    sample_size = min(5, len(filtered))
-    return random.sample(filtered, sample_size)
+    # Score every candidate (fast: all from lookup tables, no API calls)
+    scored = []
+    for c in filtered:
+        c_genre = _detect_genre_fast(c['artist'])
+        score = _score_candidate(c['artist'], c['name'], c_genre, source_profile)
+        scored.append((score, c, c_genre))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    # Check quality: are the top-5 results actually similar in vibe?
+    top5_scores = [s for s, _, _ in scored[:5]]
+    avg_quality = sum(top5_scores) / len(top5_scores) if top5_scores else 0
+    logger.info(f"[REC] Apple top-5 avg score: {avg_quality:.1f} "
+                f"(threshold={_APPLE_MIN_QUALITY}) for '{artist} - {song}'")
+
+    if avg_quality < _APPLE_MIN_QUALITY:
+        # Curated pool will give better genre/vibe matches — use that instead
+        logger.info(f"[REC] Apple quality too low ({avg_quality:.1f}), falling back to curated")
+        return None
+
+    # Good quality: take top 10, add jitter, sample 5 for variety
+    top_pool = scored[:10]
+    jittered = [(s + random.uniform(-4, 4), c, g) for s, c, g in top_pool]
+    jittered.sort(key=lambda x: x[0], reverse=True)
+    selected = jittered[:5]
+
+    result = []
+    for score, c, c_genre in selected:
+        rec = dict(c)
+        rec['reason'] = _generate_reason(
+            c['artist'], c['name'], c_genre, source_profile, c.get('reason', '')
+        )
+        result.append(rec)
+
+    return result
 
 
-def _get_curated_recommendations(artist: str, song: str, mood: str) -> List[Dict]:
-    genre = _detect_genre(artist, song, mood)
-    logger.info(f"Curated recommendations: genre='{genre}' for '{artist} - {song}' (mood={mood})")
+def _get_curated_recommendations(artist: str, song: str,
+                                  mood: str, source_profile: Dict) -> List[Dict]:
+    """Score + rank curated genre pool by vibe similarity."""
+    genre = source_profile['genre']
+    logger.info(f"Curated recs: genre='{genre}' mood='{source_profile['mood']}' "
+                f"for '{artist} - {song}'")
 
-    pool = list(GENRE_RECOMMENDATIONS.get(genre, GENRE_RECOMMENDATIONS['pop']))
-    filtered = [s for s in pool if s['artist'].lower() != artist.lower()]
+    # Build pool: primary genre + related genres
+    pool: List[tuple] = []  # (candidate_dict, pool_genre)
 
-    if len(filtered) < 3:
-        related_genres = MOOD_GENRE_WEIGHTS.get(mood, ['pop'])
-        for rg in related_genres:
+    primary = GENRE_RECOMMENDATIONS.get(genre, GENRE_RECOMMENDATIONS['pop'])
+    for entry in primary:
+        pool.append((entry, genre))
+
+    if len(pool) < 8:
+        for rg in MOOD_GENRE_WEIGHTS.get(mood, ['pop']):
             if rg != genre:
-                extras = GENRE_RECOMMENDATIONS.get(rg, [])
-                for s in extras:
-                    if s['artist'].lower() != artist.lower() and s not in filtered:
-                        filtered.append(s)
-                        if len(filtered) >= 15:
-                            break
+                for entry in GENRE_RECOMMENDATIONS.get(rg, []):
+                    pool.append((entry, rg))
 
-    return random.sample(filtered, min(5, len(filtered)))
+    # Filter out source artist
+    pool = [(e, g) for e, g in pool if e['artist'].lower() != artist.lower()]
 
+    # Score
+    scored = []
+    for entry, pool_genre in pool:
+        score = _score_candidate(entry['artist'], entry['name'], pool_genre, source_profile)
+        score += random.uniform(-5, 5)
+        scored.append((score, entry, pool_genre))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    # Take top 12 and sample 5
+    top_pool = scored[:12]
+    selected = random.sample(top_pool, min(5, len(top_pool)))
+
+    result = []
+    for score, entry, pool_genre in selected:
+        rec = dict(entry)
+        # Curated entries already have good reasons — keep them
+        result.append(rec)
+
+    return result
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Public API (unchanged signatures)
+# ──────────────────────────────────────────────────────────────────────────────
 
 def get_similar_songs(artist: str, song: str, mood: str) -> List[Dict]:
+    """
+    Return 5 recommended songs similar in vibe to the source.
+    Unchanged signature — drop-in replacement.
+    """
     try:
-        apple_recs = _get_apple_recommendations(artist, song)
+        genre = _detect_genre(artist, song, mood)
+        source_profile = _build_song_profile(artist, song, mood, genre)
+        logger.info(
+            f"[REC] profile for '{artist} - {song}': "
+            f"genre={source_profile['genre']} mood={source_profile['mood']} "
+            f"vocal={source_profile['vocal']} tempo={source_profile['tempo']} "
+            f"era={source_profile['era']}"
+        )
+
+        apple_recs = _get_apple_recommendations(artist, song, source_profile)
         if apple_recs and len(apple_recs) >= 3:
-            logger.info(f"Using Apple Music recommendations for '{artist} - {song}'")
+            logger.info(f"[REC] Apple Music (scored) for '{artist} - {song}'")
             return apple_recs
 
-        logger.info(f"Using curated recommendations for '{artist} - {song}'")
-        return _get_curated_recommendations(artist, song, mood)
+        logger.info(f"[REC] Curated (scored) for '{artist} - {song}'")
+        return _get_curated_recommendations(artist, song, mood, source_profile)
 
     except Exception as e:
-        logger.error(f"Error getting recommendations: {e}")
-        return _get_curated_recommendations(artist, song, mood)
+        logger.error(f"[REC] Error: {e}")
+        genre = _detect_genre_fast(artist)
+        source_profile = _build_song_profile(artist, song, mood, genre)
+        return _get_curated_recommendations(artist, song, mood, source_profile)
 
 
 def format_recommendations(recommendations: List[Dict], based_on: str = None) -> str:
+    """Format recommendation list — output format unchanged."""
     if not recommendations:
         return "😕 Sorry, I couldn't find recommendations right now. Try another song!"
 
     header = "🎵 Songs You Might Love\n"
     if based_on:
         header = f"🎵 If you like \"{based_on}\", try these:\n"
-
     header += "━━━━━━━━━━━━━━━━━━━━━\n\n"
 
     APPLE_REASON = 'Trending on Apple Music Top 100'
@@ -331,17 +803,14 @@ def format_recommendations(recommendations: List[Dict], based_on: str = None) ->
     for i, song in enumerate(recommendations, 1):
         emoji = ['🔥', '✨', '💫', '🎶', '⭐'][i - 1] if i <= 5 else '🎵'
         line = f"{emoji} {song['artist']} — {song['name']}"
-
         reason = song.get('reason', '')
         if reason and reason != APPLE_REASON:
             line += f"\n   ↳ {reason}"
         elif song.get('match'):
             line += f" ({song['match']}% match)"
-
         lines.append(line)
 
     body = '\n\n'.join(lines)
-
     source_note = "\n🍎 Source: Apple Music Top 100" if all_apple else ""
     footer = (
         f"\n\n━━━━━━━━━━━━━━━━━━━━━{source_note}\n"

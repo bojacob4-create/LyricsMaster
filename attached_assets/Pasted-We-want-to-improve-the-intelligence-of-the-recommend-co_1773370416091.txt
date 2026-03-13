@@ -1,0 +1,130 @@
+We want to improve the intelligence of the /recommend command and the Similar button, but without breaking or modifying any existing flows that are currently working correctly.
+
+The current bot behavior is stable and has been fully tested. All commands such as /song, /lyrics, /analyze, /artist, /wiki, the MP3 system, and the Similar picker flow must remain unchanged unless absolutely required.
+
+Your task is ONLY to improve the recommendation quality, not to redesign the command system.
+
+⸻
+
+Current System (Important)
+
+Right now recommendations rely mainly on:
+
+• Apple Music Top 100 pool
+• Randomized selection
+• Basic contextual filtering
+
+This works well but is not yet song-aware enough.
+
+⸻
+
+Goal
+
+Make the recommendations more intelligent and closer to the vibe of the selected song, while keeping the current UI, commands, and output format exactly the same.
+
+Do NOT change:
+
+• command names
+• button labels
+• callback routing
+• existing message format
+• existing Similar picker flow
+• MP3 functionality
+• artist/song dashboard outputs
+
+⸻
+
+Required Improvement
+
+Introduce a metadata-based ranking layer before selecting recommendation results.
+
+For each candidate song, extract or estimate metadata such as:
+
+• genre
+• mood (sad, romantic, hype, chill, etc.)
+• vocal type (male / female / group)
+• tempo bucket (slow / mid / fast)
+• era (modern / older)
+
+When a user requests recommendations (either through /recommend or the Similar button), the system should:
+	1.	Analyze the source song and infer its metadata profile.
+	2.	Build a candidate pool (Apple Music Top 100 or current pool).
+	3.	Score candidates based on similarity.
+
+Example scoring weights:
+
+40% mood similarity
+25% genre similarity
+15% vocal style similarity
+10% tempo similarity
+10% era similarity
+
+Then select the top matches.
+
+⸻
+
+Output Format
+
+Do NOT change the output structure.
+
+The result should remain a list of songs with short explanations such as:
+
+“soft emotional female ballad”
+“similar breakup vibe”
+“upbeat pop energy”
+
+Only the selection logic behind the recommendations should become smarter.
+
+⸻
+
+Performance Requirement
+
+The recommendation intelligence improvement must remain lightweight.
+
+Do not introduce heavy external API calls for every request.
+Do not noticeably slow down /recommend or the Similar button.
+
+Use existing metadata, cached values, or lightweight heuristics where possible.
+
+If additional scoring is added, it should operate on a limited candidate pool and preserve the current fast response time.
+
+⸻
+
+Critical Safety Rules
+
+You must NOT:
+
+• break or modify the Similar picker system
+• break the MP3 button
+• modify routing in buttons.py
+• change command interfaces
+• alter message formatting users already see
+
+Focus only on improving the internal recommendation scoring logic.
+
+⸻
+
+Success Criteria
+
+After your changes:
+
+• /recommend Artist - Song returns songs that feel closer in vibe
+• Similar button recommendations feel more relevant
+• No existing command behavior changes
+• All previous test cases still pass
+
+Before finishing, run tests on:
+
+Rihanna - Umbrella
+Adele - Hello
+Tyla - Water
+The Weeknd - Blinding Lights
+
+Confirm that:
+
+• Similar still works
+• /recommend still works
+• MP3 still works
+• Song dashboard remains unchanged
+
+Do not perform unrelated refactoring. Only improve recommendation intelligence.
