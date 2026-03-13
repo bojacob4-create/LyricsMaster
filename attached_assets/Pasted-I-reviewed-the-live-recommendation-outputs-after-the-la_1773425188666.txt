@@ -1,0 +1,73 @@
+I reviewed the live recommendation outputs after the latest deployment and I want to improve the recommendation architecture rather than patching individual cases.
+
+The system is clearly working (Last.fm candidates are being retrieved and song profiling is active), but the ranking layer is still over-biasing the internal vibe scoring, which sometimes distorts the natural listener graph returned by Last.fm.
+
+For example:
+• Kavinsky – Nightcall → results were correct  
+• The Weeknd – Wicked Games vs Blinding Lights → song profiling works  
+• Bad Bunny – Titi Me Pregunto → ranking broke the Latin ecosystem  
+• Tame Impala – The Less I Know The Better → genre drift toward indie rock
+
+This indicates that the architecture is good but the weighting and feature layers need adjustment.
+
+I want the system to remain song-centric, not artist-centric, and to rely more on real listener overlap.
+
+Please implement the following structural improvements:
+
+1. Rebalance the ranking weights
+
+Current scoring appears to over-prioritize internal vibe scoring.
+
+Update the scoring blend to something closer to:
+
+Last.fm similarity: 60–70%  
+Internal vibe score: 30–40%
+
+Last.fm already represents real listener behavior and should be the primary signal.
+
+The internal scoring layer should refine candidates, not override them.
+
+2. Improve ecosystem detection
+
+Add additional style signals so songs are evaluated by their musical ecosystem, not only broad genre labels.
+
+Expand the song profile with the following dimensions if they are missing:
+
+• genre family  
+• sub-genre  
+• tempo / energy level  
+• production style (retro synth, trap drums, indie guitar, etc.)  
+• mood / emotional tone  
+• vocal style (male / female / duet / instrumental)  
+• decade or era aesthetic (80s synth, 2010s indie pop, etc.)
+
+These features should influence scoring but must not eliminate Last.fm neighbors unless they are clearly incompatible.
+
+3. Strengthen ecosystem filtering
+
+Instead of simple genre matching, apply a soft compatibility system between ecosystems such as:
+
+synthwave ↔ retro pop  
+alt-R&B ↔ modern R&B / chill pop  
+indie psychedelic ↔ indie pop / dream pop
+
+This prevents genre drift while still allowing natural musical neighborhoods.
+
+4. Keep the same-artist exclusion
+
+Continue excluding the source artist (including variants like “Artist A, Artist B”) so recommendations remain discovery-focused.
+
+5. Improve the description layer
+
+The current descriptions often fall back to generic tags such as “pop sound”.
+
+Replace this with short contextual explanations derived from the song profile, for example:
+
+“retro synth-pop groove similar to the 80s aesthetic”  
+“dark alternative R&B atmosphere with minimal production”
+
+This will make the output feel more intelligent without changing the recommendation logic.
+
+The goal is not to fix specific songs but to strengthen the core recommendation layers so the system performs well across all genres.
+
+After these adjustments, we should retest with multiple ecosystems (synthwave, alt-R&B, Latin, indie psychedelic, etc.) to confirm that the ranking layer no longer distorts the candidate pool.

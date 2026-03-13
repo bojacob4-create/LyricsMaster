@@ -1483,10 +1483,11 @@ ECOSYSTEM_ADJACENT: Dict[str, frozenset] = {
     'rock_band':          frozenset({'rock_band',   'indie_alt'}),
     'indie_alt':          frozenset({'indie_alt',   'rock_band',
                                      'pop_synth',   'electronic_synth'}),
-    'afrobeats_world':    frozenset({'afrobeats_world', 'rnb_soul', 'pop_synth'}),
+    'afrobeats_world':    frozenset({'afrobeats_world', 'rnb_soul', 'pop_synth',
+                                     'hiphop_trap'}),
     'classical_cinematic':frozenset({'classical_cinematic', 'indie_alt',
                                      'electronic_synth'}),
-    'country_folk':       frozenset({'country_folk'}),
+    'country_folk':       frozenset({'country_folk', 'indie_alt'}),
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2301,9 +2302,12 @@ def _score_candidate(candidate_artist: str, candidate_name: str,
     if c_ecosystem == source_ecosystem:
         ecosystem_score = 100.0
     elif c_ecosystem in adjacent_ecos:
-        ecosystem_score = 60.0
+        ecosystem_score = 70.0
     else:
-        ecosystem_score = 0.0
+        # Soft floor — don't zero-out candidates that Last.fm says are genuinely
+        # similar.  A 35/100 ecosystem score still meaningfully penalises
+        # cross-ecosystem candidates relative to in-ecosystem ones.
+        ecosystem_score = 35.0
 
     # Weight distribution (v4 — ecosystem-aware):
     #   20% mood           primary emotional tone of the song
@@ -2350,41 +2354,136 @@ def _generate_reason(candidate_artist: str, candidate_name: str,
                      candidate_genre: str, source: Dict,
                      existing_reason: str = '') -> str:
     """
-    Generate a short vibe-based reason string.
-    Uses the curated reason when it's already meaningful.
-    Generates a new one for Apple Music candidates.
+    Generate a rich, context-specific reason string derived from the source song
+    profile (style, production, mood, era).  Avoids generic fallbacks like
+    'pop sound' — every phrase reflects a concrete dimension of the source song.
+
+    Priority:
+      1. Existing curated reason (kept when non-generic).
+      2. Style match phrase  — most specific.
+      3. Production + mood phrase — sonic texture.
+      4. Genre + mood fallback.
     """
-    if existing_reason and existing_reason != 'Trending on Apple Music Top 100':
+    if (existing_reason
+            and existing_reason not in ('Trending on Apple Music Top 100', '')):
         return existing_reason
 
-    cp = _get_artist_profile(candidate_artist)
+    src_style      = source.get('style', 'unknown')
+    src_production = source.get('production', 'mixed')
+    src_mood       = source.get('mood', '')
+    src_era        = source.get('era', 'modern')
+
     c_mood = _infer_mood_from_title(candidate_name, candidate_genre, '')
 
-    mood_words = {
-        'sad': 'emotional', 'romantic': 'romantic', 'energetic': 'energetic',
-        'happy': 'upbeat', 'chill': 'chill',
-    }
-    genre_words = {
-        'afrobeats': 'Afrobeats vibe', 'pop': 'pop sound', 'rnb': 'R&B feel',
-        'hiphop': 'hip-hop energy', 'rock': 'rock energy', 'latin': 'Latin groove',
-        'classic': 'classic sound',
-    }
-    vocal_words = {
-        'female': 'female vocalist', 'male': 'male vocalist', 'group': 'band/group',
+    # ── Style → descriptive phrase ────────────────────────────────────────────
+    _STYLE_PHRASES: Dict[str, str] = {
+        # Electronic / synth
+        'synthwave':         'retro synthwave atmosphere',
+        'synth_pop':         'catchy synth-pop groove',
+        'indie_electronic':  'indie-electronic texture',
+        'nu_disco':          'nu-disco funk feel',
+        'dark_electronic':   'dark electronic production',
+        'edm':               'festival-ready electronic energy',
+        'house':             'house-influenced groove',
+        'ambient_electronic':'atmospheric electronic soundscape',
+        # R&B / soul
+        'alt_rnb':           'dark alt-R&B atmosphere',
+        'dark_rnb':          'moody dark R&B feel',
+        'neo_soul':          'neo-soul warmth',
+        'classic_soul':      'classic soul depth',
+        'bedroom_pop':       'lo-fi bedroom-pop intimacy',
+        # Hip-hop
+        'trap':              'modern trap production',
+        'drill':             'drill-influenced production',
+        'lo_fi_hiphop':      'lo-fi hip-hop chill',
+        'conscious_hiphop':  'lyric-driven hip-hop feel',
+        'boom_bap':          'boom-bap hip-hop energy',
+        # Rock / indie
+        'indie_rock':        'indie guitar-driven sound',
+        'psychedelic_rock':  'psychedelic guitar atmosphere',
+        'alternative_rock':  'alternative rock edge',
+        'post_punk':         'post-punk intensity',
+        'shoegaze':          'hazy shoegaze texture',
+        'dream_pop':         'ethereal dream-pop feel',
+        'folk_pop':          'acoustic folk-pop warmth',
+        'indie_folk':        'introspective indie-folk sound',
+        # Pop
+        'power_pop':         'anthemic pop energy',
+        'dance_pop':         'danceable pop production',
+        'art_pop':           'experimental art-pop sensibility',
+        # Latin / world
+        'latin_pop':         'Latin pop groove',
+        'reggaeton':         'reggaeton-driven rhythm',
+        'afrobeats':         'Afrobeats pulse',
+        'afropop':           'Afropop energy',
+        'dancehall':         'dancehall swing',
+        'bossa_nova':        'bossa nova elegance',
+        # Classical / cinematic
+        'classical':         'orchestral depth',
+        'cinematic':         'cinematic atmosphere',
+        'ambient':           'ambient texture',
     }
 
-    mood_w = mood_words.get(c_mood, '')
-    genre_w = genre_words.get(candidate_genre, 'similar vibe')
-    vocal_w = vocal_words.get(cp.get('vocal', ''), '')
+    # ── Production → sonic description ───────────────────────────────────────
+    _PROD_PHRASES: Dict[str, str] = {
+        'electronic': 'electronic production',
+        'trap':       'trap-influenced production',
+        'acoustic':   'acoustic, stripped-back feel',
+        'band':       'live band energy',
+        'cinematic':  'cinematic, atmospheric production',
+        'minimal':    'minimal, intimate production',
+        'mixed':      'layered production',
+    }
 
-    # Genre + mood match → best reason
-    if candidate_genre == source['genre'] and c_mood == source['mood']:
-        return f"same {mood_w} {genre_w}" if mood_w else genre_w
-    if candidate_genre == source['genre']:
-        return f"{mood_w} {genre_w}".strip() if mood_w else genre_w
-    if c_mood == source['mood']:
-        return f"{mood_w} {vocal_w}".strip() if vocal_w else f"{mood_w} {genre_w}".strip()
-    return genre_w or 'similar vibe'
+    # ── Era → contextual marker ───────────────────────────────────────────────
+    _ERA_PHRASES: Dict[str, str] = {
+        '80s':    '80s-influenced aesthetic',
+        '90s':    '90s R&B feel',
+        '2000s':  'early 2000s sound',
+        '2010s':  '2010s indie pop energy',
+        'modern': 'contemporary sound',
+        'classic':'classic, timeless feel',
+    }
+
+    # ── Mood → adjective ──────────────────────────────────────────────────────
+    _MOOD_ADJ: Dict[str, str] = {
+        'sad':       'melancholic', 'romantic': 'romantic', 'energetic': 'energetic',
+        'happy':     'upbeat',     'chill':    'laid-back',
+    }
+
+    style_phrase = _STYLE_PHRASES.get(src_style, '')
+    prod_phrase  = _PROD_PHRASES.get(src_production, '')
+    era_phrase   = _ERA_PHRASES.get(src_era, '') if src_era not in ('modern', '') else ''
+    mood_adj     = _MOOD_ADJ.get(src_mood, '')
+    mood_match   = (c_mood == src_mood)
+
+    # Priority 1: if we have a specific style phrase, build around it
+    if style_phrase:
+        if mood_match and mood_adj:
+            return f"{mood_adj} {style_phrase}"
+        if era_phrase:
+            return f"{style_phrase} with {era_phrase}"
+        return style_phrase
+
+    # Priority 2: production + mood context
+    if prod_phrase:
+        if mood_match and mood_adj:
+            return f"{mood_adj} {prod_phrase}"
+        if era_phrase:
+            return f"{prod_phrase} — {era_phrase}"
+        return prod_phrase
+
+    # Priority 3: genre + mood fallback (more specific than before)
+    _GENRE_PHRASES: Dict[str, str] = {
+        'afrobeats': 'Afrobeats rhythm', 'pop':    'polished pop feel',
+        'rnb':       'R&B warmth',        'hiphop': 'hip-hop energy',
+        'rock':      'rock edge',         'latin':  'Latin groove',
+        'classic':   'timeless sound',   'indie':  'indie sensibility',
+    }
+    genre_phrase = _GENRE_PHRASES.get(candidate_genre, 'similar sonic feel')
+    if mood_adj and mood_match:
+        return f"{mood_adj} {genre_phrase}"
+    return genre_phrase
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2760,23 +2859,32 @@ def _get_lastfm_recommendations(artist: str, song: str,
     """
     Score + rank Last.fm similar tracks by vibe similarity to the source profile.
 
-    Scoring blends our internal multi-dimensional score (mood, style, energy,
-    production, ecosystem) with Last.fm's listener-overlap match score:
-        blended = internal_score * 0.82 + lastfm_match * 18
+    Scoring formula (v2 — listener-graph-first):
+        blended = lastfm_match * 65 + internal_score * 35
 
-    The lastfm_match weight (18 pts max) acts as a soft tiebreaker that rewards
-    actual listener co-occurrence — songs that Last.fm listeners play together —
-    without overriding the musical-coherence signals from internal scoring.
+    Last.fm match (0-1) is the primary signal because it represents real listener
+    co-occurrence across millions of plays — the most direct evidence that two
+    songs belong in the same listening session.  Internal vibe score (0-100)
+    acts as a coherence filter: it nudges the ranking toward candidates that
+    share the same sonic fingerprint (mood, style, energy, production) without
+    overriding the listener graph.
 
-    Returns None when fewer than 3 ecosystem-passing candidates are found, so
-    the caller can fall back to the curated pool.
+    Ecosystem compatibility is now a soft multiplier applied after scoring rather
+    than a hard gate, so Last.fm neighbors from adjacent musical worlds are
+    retained but ranked below in-ecosystem candidates:
+        same ecosystem  → 1.00× (no penalty)
+        adjacent        → 0.90× (mild discount)
+        outside         → 0.65× (meaningful penalty, but not excluded)
+
+    Returns None when fewer than 3 scored candidates are available, signalling
+    that the caller should fall back to the curated pool.
     """
     raw = _get_lastfm_similar_candidates(artist, song)
     if not raw:
         return None
 
-    source_eco  = source_profile.get('ecosystem', 'pop_synth')
-    adj_ecos    = ECOSYSTEM_ADJACENT.get(source_eco, frozenset({source_eco}))
+    source_eco = source_profile.get('ecosystem', 'pop_synth')
+    adj_ecos   = ECOSYSTEM_ADJACENT.get(source_eco, frozenset({source_eco}))
 
     # Normalise source artist name for same-artist filtering.
     # Last.fm sometimes returns featured-artist strings like "The Weeknd, Daft Punk"
@@ -2790,20 +2898,29 @@ def _get_lastfm_recommendations(artist: str, song: str,
         if source_artist_lower in c['artist'].lower():
             continue
 
-        c_genre  = _detect_genre_fast(c['artist'])
-        c_eco    = POOL_ECOSYSTEM.get(c_genre, 'pop_synth')
+        c_genre = _detect_genre_fast(c['artist'])
+        c_eco   = POOL_ECOSYSTEM.get(c_genre, 'pop_synth')
 
-        # Ecosystem gate — skip candidates from incompatible musical worlds
-        if c_eco not in adj_ecos:
-            continue
+        internal = _score_candidate(c['artist'], c['name'], c_genre, source_profile)
+        # Primary signal: Last.fm listener overlap (0-1 → up to 65 pts)
+        # Refinement signal: internal vibe coherence (0-100 → up to 35 pts)
+        blended = c['lastfm_match'] * 65 + internal * 0.35
 
-        internal  = _score_candidate(c['artist'], c['name'], c_genre, source_profile)
-        blended   = internal * 0.82 + c['lastfm_match'] * 18
+        # Soft ecosystem multiplier — keeps cross-ecosystem Last.fm neighbors but
+        # rewards in-ecosystem candidates in ranking.
+        if c_eco == source_eco:
+            eco_mult = 1.00
+        elif c_eco in adj_ecos:
+            eco_mult = 0.90
+        else:
+            eco_mult = 0.65
+
+        blended *= eco_mult
         scored.append((blended, c, c_genre))
 
     if len(scored) < 3:
         logger.info(
-            f"[LASTFM] Only {len(scored)} ecosystem-passing candidates — "
+            f"[LASTFM] Only {len(scored)} candidates for '{artist} - {song}' — "
             "falling back to curated"
         )
         return None
