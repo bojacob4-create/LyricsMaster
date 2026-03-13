@@ -1,0 +1,89 @@
+We do NOT want any more case-by-case fixes, artist-specific patches, or manual song-by-song corrections.
+
+The goal now is a one-time architectural upgrade to make the recommendation engine truly song-first and track-based, while preserving the strong progress already achieved.
+
+Important principle:
+Recommendations must be based primarily on the INPUT SONG itself, not on the artist identity.
+
+A single artist can have very different songs across different styles, so the system must recommend according to the searched track, not according to the artist’s overall reputation or default genre.
+
+Examples of the principle:
+- the same artist can have a rap track and an R&B track
+- recommendations should follow the searched song’s sound and vibe
+- the engine must treat songs as the main unit, not artists
+
+What we want now is NOT:
+- more hard-coded artist mappings
+- more song-specific manual patching
+- more “if artist X then recommend Y”
+- more gradual micro-fixes every time we test a new edge case
+
+What we want is:
+a durable track-level recommendation layer that works generally across many songs and styles.
+
+Please keep the current architecture that already works:
+- keep the existing song-first scoring system
+- keep taxonomy / style families
+- keep candidate pool routing
+- keep output format
+- keep buttons, routing, and command behavior
+- keep performance lightweight
+- do not touch unrelated systems
+
+But add one stronger track-based intelligence layer on top of the current system.
+
+Required direction:
+
+1) Build the recommender around SONG identity, not ARTIST identity.
+The final recommendation logic should prioritize the characteristics of the input track itself, such as:
+- style / subgenre
+- mood / emotional tone
+- energy
+- production feel
+- sonic family / listening context
+- vocal presence and vocal character
+
+2) Add a general track-neighbor / song-neighbor layer.
+This must NOT be implemented as manual case-by-case fixes.
+Instead, it should work as a reusable track-level memory or similarity layer that can improve specificity for many songs at once.
+
+The purpose of this layer is:
+- when the system knows enough about a track, it should inject or prioritize musically close SONG candidates
+- this should happen at the SONG level, not the ARTIST level
+- the current scoring system should still rank the final candidates
+
+In other words:
+candidate generation should become more song-aware before final scoring happens.
+
+3) If a neighbor/similarity layer is added, it must be implemented in a scalable and reusable way.
+Do NOT build it as a growing patch list of special cases.
+Use a generalized structure that can expand safely without turning into manual maintenance.
+
+4) Preserve the current architecture and stability.
+Do NOT redesign the whole recommender.
+Do NOT remove the taxonomy system.
+Do NOT weaken what is already working well.
+Do NOT change the output layout.
+Do NOT change buttons or command flows.
+
+5) Performance requirement:
+The upgrade must remain lightweight and fast.
+Do NOT introduce heavy API calls on every recommendation request.
+Do NOT noticeably slow down /recommend or Similar.
+If extra data is used, it should be cached, internal, precomputed, or lightweight.
+
+6) The final selection must still remain SONG-based.
+Even if artist/style metadata is used as a weak hint, the engine must not drift back into artist-first behavior.
+
+7) The solution should be broad enough that we do not need to keep adding fixes for every new test song.
+We want one strong implementation that improves recommendation quality across mainstream, alternative, electronic, indie, rap, R&B, cinematic, experimental, and crossover tracks.
+
+Summary:
+Please implement one durable, track-first recommendation upgrade that improves song-level specificity without breaking the current system.
+The engine should become better at recommending based on the searched SONG itself, not the artist name, and it should do this in a generalized, scalable, and lightweight way — not through manual patches.
+
+After implementation, please report:
+- exactly which file(s) were changed
+- what generalized track-level mechanism was added
+- how it avoids case-by-case maintenance
+- confirmation that no unrelated working part of the bot was changed

@@ -1292,6 +1292,39 @@ STYLE_GENRE_AFFINITY: Dict[str, str] = {
     'cinematic_score': 'classic',
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Sonic Pool Hint  — song-first candidate expansion
+# ──────────────────────────────────────────────────────────────────────────────
+# Maps (mood, production) → one additional pool to include in candidate search.
+# This fires for EVERY query, regardless of detected artist genre.
+# It lets the song's own emotional+sonic character reach pools that the
+# artist-genre routing would otherwise miss (e.g. a slow electronic track
+# finding the downtempo end of the electronic pool, or a melancholic pop song
+# finding folk-adjacent indie candidates).
+# There are no artist names here — this is purely a song-characteristic signal.
+SONIC_POOL_HINT: Dict[tuple, str] = {
+    # Cinematic feel: downtempo/ambient end of electronic pool
+    ('sad',       'cinematic'):  'electronic',
+    ('relaxed',   'cinematic'):  'electronic',
+    # Acoustic feel: indie/folk pool
+    ('sad',       'acoustic'):   'indie',
+    ('relaxed',   'acoustic'):   'indie',
+    ('romantic',  'acoustic'):   'indie',
+    ('romantic',  'cinematic'):  'indie',
+    # Stripped-down emotional: R&B/soul pool
+    ('sad',       'minimal'):    'rnb',
+    ('relaxed',   'minimal'):    'rnb',
+    ('romantic',  'minimal'):    'rnb',
+    # High-energy: domain-specific pools
+    ('energetic', 'band'):       'rock',
+    ('energetic', 'trap'):       'hiphop',
+    ('energetic', 'mixed'):      'afrobeats',
+    ('happy',     'mixed'):      'afrobeats',
+    ('romantic',  'mixed'):      'latin',
+    ('happy',     'electronic'): 'electronic',
+    ('energetic', 'electronic'): 'electronic',
+}
+
 
 def _get_song_style(artist: str, song: str) -> str:
     """
@@ -1358,23 +1391,40 @@ def _infer_energy(title: str, mood: str, genre: str) -> str:
     return 'mid'
 
 
-def _infer_production(style: str, genre: str) -> str:
+def _infer_production(style: str, genre: str,
+                       mood: str = '', energy: str = '') -> str:
     """
     Infer song production feel from its style/subgenre.
 
-    When style is known, look it up in _PROD_FROM_STYLE for a precise value.
-    When style is unknown, return 'mixed' — production cannot be reliably
-    inferred from genre alone (pop can be trap, acoustic, electronic, etc.).
-    Using genre as a fallback when style is unknown creates false matches
-    (e.g. an unknown-style song in 'pop' would wrongly score as 'electronic').
+    Base: style → _PROD_FROM_STYLE (precise). Unknown style → 'mixed'.
+
+    Song-level softening (applied only when mood+energy are supplied, i.e.
+    for the SOURCE song — never for candidates):
+      • electronic base + sad/relaxed/romantic + low energy → 'cinematic'
+        Slow melancholic tracks by electronic/synth-pop artists feel cinematic,
+        not like high-BPM EDM.  Same artist, different songs → different profiles.
+      • trap base + sad/romantic + low/mid energy → 'minimal'
+        Melodic/emotional rap tracks feel stripped-down, not hard trap.
+
+    This is the song-first mechanism: the same artist's upbeat and gentle
+    tracks produce different production profiles without any per-song data.
 
     Returns one of: electronic | acoustic | band | trap | cinematic | minimal | mixed
     """
     if style and style != 'unknown':
         prod = _PROD_FROM_STYLE.get(style)
-        if prod:
-            return prod
-    return 'mixed'
+        base = prod if prod else 'mixed'
+    else:
+        base = 'mixed'
+
+    # Song-level softening when mood+energy are known (source song only)
+    if mood and energy:
+        if base == 'electronic' and energy == 'low' and mood in ('sad', 'relaxed', 'romantic'):
+            return 'cinematic'
+        if base == 'trap' and energy in ('low', 'mid') and mood in ('sad', 'romantic'):
+            return 'minimal'
+
+    return base
 
 
 def _energy_compat(e1: str, e2: str) -> float:
@@ -1485,7 +1535,7 @@ def _build_song_profile(artist: str, song: str, handler_mood: str, genre: str) -
     style = _get_song_style(artist, song)
 
     energy     = _infer_energy(song, mood, genre)
-    production = _infer_production(style, genre)
+    production = _infer_production(style, genre, mood, energy)  # song-aware softening
 
     return {
         'genre':      genre,
@@ -1537,7 +1587,7 @@ def _score_candidate(candidate_artist: str, candidate_name: str,
     vocal_score      = 100.0 if cp.get('vocal') == source['vocal'] else 40.0
     era_score        = 100.0 if cp.get('era')   == source['era']   else 30.0
 
-    return (
+    score = (
         0.22 * mood_score       +
         0.20 * style_score      +
         0.18 * energy_score     +
@@ -1546,6 +1596,26 @@ def _score_candidate(candidate_artist: str, candidate_name: str,
         0.06 * vocal_score      +
         0.04 * era_score
     )
+
+    # ── Constellation bonus ────────────────────────────────────────────────────
+    # When ≥2 of the three core song-first dimensions align simultaneously,
+    # the candidate likely belongs to the same sonic family as the source.
+    # This rewards multi-dimensional fingerprint overlap beyond what the
+    # independent weighted scores can capture — a candidate scoring 80 on
+    # mood AND 80 on energy AND 80 on production is fundamentally more
+    # similar than three separate candidates each scoring 80 on one axis.
+    # Thresholds are set so that exact matches (100) always qualify, and
+    # near-matches do too, while cross-family coincidences (e.g. same mood
+    # but completely different production) do not.
+    n_core = (int(mood_score >= 80) +
+              int(energy_score >= 72) +
+              int(production_score >= 75))
+    if n_core == 3:
+        score += 12.0   # all three core dimensions align → strong sonic match
+    elif n_core == 2:
+        score += 5.0    # two of three align → partial sonic match
+
+    return score
 
 
 def _generate_reason(candidate_artist: str, candidate_name: str,
@@ -1764,6 +1834,21 @@ def _get_curated_recommendations(artist: str, song: str,
                 pool_genres.add(rg)
                 if len(pool_genres) >= 4:
                     break
+
+    # ── Sonic pool hint: song-first candidate expansion ────────────────────────
+    # After artist-genre routing and style routing, add one further pool based
+    # purely on the song's combined mood × production fingerprint.
+    # This fires for ALL queries (known and unknown style alike) and ensures
+    # the right sonic family is represented in candidates even when the artist's
+    # genre classification doesn't point there.
+    # Example: a slow, melancholic synth-pop track (softened to 'cinematic')
+    # adds the electronic pool — giving downtempo/trip-hop candidates a chance
+    # to compete — without changing anything about the scoring or output format.
+    source_prod = source_profile.get('production', 'mixed')
+    sonic_hint  = SONIC_POOL_HINT.get((mood, source_prod))
+    if sonic_hint and sonic_hint not in pool_genres:
+        pool_genres.add(sonic_hint)
+        logger.info(f"[REC] sonic pool hint ({mood}×{source_prod}) → adding '{sonic_hint}'")
 
     # Build flat candidate list (candidate_dict, pool_genre)
     pool: List[tuple] = []
