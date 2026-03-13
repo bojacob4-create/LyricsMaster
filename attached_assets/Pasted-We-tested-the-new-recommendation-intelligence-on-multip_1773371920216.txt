@@ -1,0 +1,159 @@
+We tested the new recommendation intelligence on multiple songs, and while it is improved compared to the old random behavior, the results are still not accurate enough in several important cases.
+
+Please apply a targeted refinement only to the internal recommendation scoring logic.
+
+Do not change:
+	•	command names
+	•	button labels
+	•	callback routing
+	•	output structure
+	•	Similar picker flow
+	•	MP3
+	•	/song, /lyrics, /analyze, /artist, /wiki
+	•	current recommendation message layout
+
+Only refine the selection quality.
+
+⸻
+
+Findings from testing
+
+1) Sam Smith - Too Good At Goodbyes
+
+The result was partially reasonable, but still included off-target candidates such as:
+	•	Whiskey Myers
+	•	some weak emotional-male matches
+
+This suggests the system is still over-weighting broad emotional tags and under-weighting actual style fit.
+
+2) Billie Eilish - Happier Than Ever
+
+Results were too generic and not close enough to Billie’s actual alt-pop / emotional dramatic style.
+
+The system appears to detect “emotional female pop” but not the more specific vibe family.
+
+3) Dua Lipa - Levitating
+
+This was a clear miss.
+
+The output included artists like:
+	•	Luke Combs
+	•	Ella Langley
+
+This means the current logic is treating the song as only “upbeat pop,” which is too broad.
+
+Levitating needs recommendations closer to:
+	•	dance-pop
+	•	disco-pop
+	•	synth-pop
+	•	club-friendly upbeat energy
+
+4) Burna Boy - Last Last
+
+This was also a miss.
+
+The results leaned too much toward:
+	•	generic male energetic tracks
+	•	hip-hop / rap artists like Future / Drake
+
+instead of true Afrobeats / Afro-fusion matches.
+
+This means the current system is under-weighting regional genre identity.
+
+⸻
+
+Required improvement
+
+Please add a style / subgenre layer to the existing recommendation intelligence.
+
+Do not remove the current mood / genre / vocal / tempo / era scoring.
+
+Instead, refine it by adding a more specific style-family classification such as:
+
+Pop
+	•	dance pop
+	•	synth pop
+	•	emotional pop
+	•	acoustic pop
+	•	alt pop
+
+R&B
+	•	smooth R&B
+	•	alt R&B
+	•	emotional R&B
+	•	sensual R&B
+
+Afro
+	•	afrobeats
+	•	afro-fusion
+	•	amapiano-adjacent afro pop
+
+Rap
+	•	trap
+	•	melodic rap
+	•	lyrical rap
+	•	dark rap
+
+This style/subgenre layer should improve candidate scoring so that songs are compared by true musical family, not just broad genre + mood.
+
+⸻
+
+Important scoring correction
+
+Please reduce the influence of generic signals such as:
+	•	“male vocalist”
+	•	“female vocalist”
+	•	broad “upbeat pop”
+	•	broad “energetic”
+
+when stronger style signals are available.
+
+For example:
+	•	“Levitating” should not match country-pop or generic upbeat songs
+	•	“Last Last” should not drift into trap/rap just because it is energetic and male-led
+
+⸻
+
+Performance requirement
+
+Keep this lightweight.
+
+Do not introduce heavy external API calls per request.
+Do not noticeably slow down /recommend or the Similar button.
+
+Use:
+	•	existing metadata
+	•	cached values
+	•	lightweight heuristics
+	•	internal tagging
+
+If additional scoring is added, it must operate on a limited candidate pool and preserve current fast response time.
+
+⸻
+
+Safety rules
+
+Do not:
+	•	refactor unrelated files
+	•	modify current flows
+	•	alter UI
+	•	change message formatting
+	•	touch MP3
+	•	touch routing or callback logic
+
+Only improve the internal recommendation scoring quality.
+
+⸻
+
+Success criteria
+
+After the refinement:
+	•	/recommend Dua Lipa - Levitating should lean strongly toward dance-pop / synth-pop
+	•	/recommend Burna Boy - Last Last should lean strongly toward Afrobeats / Afro-fusion
+	•	/recommend Billie Eilish - Happier Than Ever should lean closer to alt-pop / emotional female ballad territory
+	•	/recommend Sam Smith - Too Good At Goodbyes should avoid obvious off-genre picks
+
+Please report:
+	•	exact file(s) modified
+	•	exact scoring/tagging refinement added
+	•	confirmation that no other working system was changed

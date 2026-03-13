@@ -422,6 +422,444 @@ MOOD_GENRE_WEIGHTS = {
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Style / subgenre layer
+# Artist → style family (more specific than genre, used only for scoring)
+# ──────────────────────────────────────────────────────────────────────────────
+ARTIST_STYLE = {
+    # ── Dance / Disco / Synth Pop ─────────────────────────────────────────────
+    'dua lipa': 'dance_pop',
+    'ariana grande': 'dance_pop',
+    'doja cat': 'dance_pop',
+    'charli xcx': 'dance_pop',
+    'camila cabello': 'dance_pop',
+    'katy perry': 'dance_pop',
+    'lizzo': 'dance_pop',
+    'cardi b': 'dance_pop',
+    'nicki minaj': 'dance_pop',
+    'meghan trainor': 'dance_pop',
+    'the weeknd': 'synth_pop',
+    'sabrina carpenter': 'synth_pop',
+    'taylor swift': 'synth_pop',
+    'post malone': 'synth_pop',
+    'charlie puth': 'synth_pop',
+    'shawn mendes': 'acoustic_pop',
+    'harry styles': 'acoustic_pop',
+    'ed sheeran': 'acoustic_pop',
+    'justin bieber': 'acoustic_pop',
+    'niall horan': 'acoustic_pop',
+    # ── Alt / Emotional Pop ───────────────────────────────────────────────────
+    'billie eilish': 'alt_pop',
+    'gracie abrams': 'alt_pop',
+    'chappell roan': 'alt_pop',
+    'olivia rodrigo': 'emotional_pop',
+    'miley cyrus': 'emotional_pop',
+    'bruno mars': 'pop_rnb',
+    'michael jackson': 'pop_rnb',
+    'lizzo': 'pop_rnb',
+    # ── R&B sub-styles ────────────────────────────────────────────────────────
+    'sza': 'alt_rnb',
+    'brent faiyaz': 'alt_rnb',
+    'frank ocean': 'alt_rnb',
+    'summer walker': 'alt_rnb',
+    'jhene aiko': 'alt_rnb',
+    'chloe': 'alt_rnb',
+    'daniel caesar': 'smooth_rnb',
+    'khalid': 'smooth_rnb',
+    'lucky daye': 'smooth_rnb',
+    'john legend': 'smooth_rnb',
+    'alicia keys': 'smooth_rnb',
+    'victoria monet': 'smooth_rnb',
+    'h.e.r.': 'emotional_rnb',
+    'adele': 'emotional_rnb',
+    'sam smith': 'emotional_rnb',
+    'usher': 'sensual_rnb',
+    'chris brown': 'sensual_rnb',
+    'rihanna': 'pop_rnb',
+    'beyonce': 'pop_rnb',
+    'whitney houston': 'soul',
+    'mariah carey': 'soul',
+    'stevie wonder': 'soul',
+    'marvin gaye': 'soul',
+    'alicia keys': 'soul',
+    # ── Afro sub-styles ───────────────────────────────────────────────────────
+    'burna boy': 'afrobeats',
+    'wizkid': 'afrobeats',
+    'davido': 'afrobeats',
+    'ckay': 'afrobeats',
+    'tiwa savage': 'afrobeats',
+    'kizz daniel': 'afrobeats',
+    'tyla': 'afro_fusion',
+    'tems': 'afro_fusion',
+    'omah lay': 'afro_fusion',
+    'oxlade': 'afro_fusion',
+    'rema': 'afro_fusion',
+    'ayra starr': 'afro_fusion',
+    'asake': 'amapiano',
+    'victony': 'amapiano',
+    'fireboy dml': 'amapiano',
+    # ── Hip-hop sub-styles ────────────────────────────────────────────────────
+    'travis scott': 'trap',
+    'future': 'trap',
+    'playboi carti': 'trap',
+    '21 savage': 'trap',
+    'metro boomin': 'trap',
+    'lil baby': 'melodic_rap',
+    'gunna': 'melodic_rap',
+    'don toliver': 'trap',
+    'rodwave': 'melodic_rap',
+    'central cee': 'melodic_rap',
+    'latto': 'female_rap',
+    'yeat': 'trap',
+    'lil wayne': 'melodic_rap',
+    'drake': 'melodic_rap',
+    'tyler, the creator': 'melodic_rap',
+    'kanye west': 'melodic_rap',
+    'kendrick lamar': 'lyrical_rap',
+    'j. cole': 'lyrical_rap',
+    'jid': 'lyrical_rap',
+    'eminem': 'lyrical_rap',
+    'jay-z': 'lyrical_rap',
+    'megan thee stallion': 'female_rap',
+    'sexyy red': 'female_rap',
+    'glorilla': 'female_rap',
+    'ice spice': 'female_rap',
+    'doechii': 'female_rap',
+    # ── Latin sub-styles ──────────────────────────────────────────────────────
+    'bad bunny': 'reggaeton',
+    'karol g': 'reggaeton',
+    'rauw alejandro': 'reggaeton',
+    'ozuna': 'reggaeton',
+    'j balvin': 'reggaeton',
+    'daddy yankee': 'reggaeton',
+    'feid': 'reggaeton',
+    'myke towers': 'reggaeton',
+    'peso pluma': 'regional_mexican',
+    'shakira': 'latin_pop',
+    'anitta': 'latin_pop',
+    'rosalia': 'latin_pop',
+    # ── Country (explicit style to block cross-genre bleed) ───────────────────
+    'luke combs': 'country',
+    'morgan wallen': 'country',
+    'ella langley': 'country',
+    'zach bryan': 'country',
+    'lainey wilson': 'country',
+    'chris stapleton': 'country',
+    'kenny chesney': 'country',
+    'toby keith': 'country',
+    'blake shelton': 'country',
+    'garth brooks': 'country',
+    'dolly parton': 'country',
+    'kacey musgraves': 'country',
+    'tyler hubbard': 'country',
+    # ── Rock sub-styles ───────────────────────────────────────────────────────
+    'arctic monkeys': 'indie_rock',
+    'the killers': 'indie_rock',
+    'wet leg': 'indie_rock',
+    'boygenius': 'indie_rock',
+    'fontaines d.c.': 'indie_rock',
+    'radiohead': 'alt_rock',
+    'foo fighters': 'alt_rock',
+    'linkin park': 'alt_rock',
+    'twenty one pilots': 'alt_rock',
+    'imagine dragons': 'anthemic_rock',
+    'muse': 'anthemic_rock',
+    'tame impala': 'psychedelic_rock',
+    'hozier': 'folk_rock',
+    'paramore': 'punk_pop',
+    'coldplay': 'anthemic_rock',
+    'nirvana': 'alt_rock',
+    'pink floyd': 'classic_rock',
+    'led zeppelin': 'classic_rock',
+    'the beatles': 'classic_rock',
+    'queen': 'classic_rock',
+    'fleetwood mac': 'classic_rock',
+    'rolling stones': 'classic_rock',
+    'david bowie': 'classic_rock',
+    'prince': 'classic_rock',
+    'elton john': 'classic_rock',
+    'eagles': 'classic_rock',
+    'u2': 'classic_rock',
+}
+
+# Per-song style overrides for well-known tracks where the song style
+# differs from the artist's primary style (e.g. The Weeknd has both
+# sensual_rnb and synth_pop eras).
+# Key: (artist_lowercase, substring_of_song_title_lowercase)
+SONG_STYLE_OVERRIDE = {
+    ('the weeknd', 'blinding lights'): 'synth_pop',
+    ('the weeknd', 'save your tears'): 'synth_pop',
+    ('the weeknd', 'starboy'): 'synth_pop',
+    ('the weeknd', 'die for you'): 'sensual_rnb',
+    ('the weeknd', 'wicked games'): 'alt_rnb',
+    ('the weeknd', 'in your eyes'): 'synth_pop',
+    ('billie eilish', 'bad guy'): 'alt_pop',
+    ('billie eilish', 'happier than ever'): 'emotional_pop',
+    ('billie eilish', 'lovely'): 'emotional_pop',
+    ('billie eilish', 'ocean eyes'): 'emotional_pop',
+    ('billie eilish', 'when the party'): 'alt_pop',
+    ('taylor swift', 'anti-hero'): 'synth_pop',
+    ('taylor swift', 'shake it off'): 'dance_pop',
+    ('taylor swift', 'love story'): 'emotional_pop',
+    ('taylor swift', 'all too well'): 'emotional_pop',
+    ('taylor swift', 'cruel summer'): 'synth_pop',
+    ('rihanna', 'umbrella'): 'pop_rnb',
+    ('rihanna', 'we found love'): 'dance_pop',
+    ('rihanna', 'diamonds'): 'emotional_pop',
+    ('adele', 'hello'): 'emotional_rnb',
+    ('adele', 'rolling in the deep'): 'soul',
+    ('adele', 'someone like you'): 'emotional_rnb',
+    ('adele', 'easy on me'): 'emotional_rnb',
+    ('sam smith', 'too good at goodbyes'): 'emotional_rnb',
+    ('sam smith', 'stay with me'): 'emotional_rnb',
+    ('sam smith', 'unholy'): 'dance_pop',
+    ('dua lipa', 'levitating'): 'dance_pop',
+    ('dua lipa', 'dont start now'): 'dance_pop',
+    ('dua lipa', 'physical'): 'dance_pop',
+    ('dua lipa', 'houdini'): 'dance_pop',
+    ('dua lipa', 'new rules'): 'dance_pop',
+    ('burna boy', 'last last'): 'afrobeats',
+    ('burna boy', 'ye'): 'afrobeats',
+    ('burna boy', 'city boys'): 'afrobeats',
+    ('olivia rodrigo', 'drivers license'): 'emotional_pop',
+    ('olivia rodrigo', 'vampire'): 'emotional_pop',
+    ('olivia rodrigo', 'good 4 u'): 'punk_pop',
+    ('miley cyrus', 'flowers'): 'emotional_pop',
+    ('miley cyrus', 'wrecking ball'): 'emotional_pop',
+    ('tyla', 'water'): 'afro_fusion',
+    ('tyla', 'jump'): 'afro_fusion',
+}
+
+# Style compatibility matrix (symmetric, 0-100).
+# Missing pairs default to 10 (incompatible).
+STYLE_COMPAT: Dict[tuple, float] = {
+    # ── Within dance/pop family ───────────────────────────────────────────────
+    ('dance_pop', 'dance_pop'): 100,
+    ('dance_pop', 'synth_pop'): 72,
+    ('dance_pop', 'pop_rnb'): 55,
+    ('dance_pop', 'emotional_pop'): 30,
+    ('dance_pop', 'alt_pop'): 25,
+    ('dance_pop', 'acoustic_pop'): 18,
+    ('dance_pop', 'latin_pop'): 50,
+    ('dance_pop', 'reggaeton'): 40,
+    # ── Synth pop ─────────────────────────────────────────────────────────────
+    ('synth_pop', 'synth_pop'): 100,
+    ('synth_pop', 'dance_pop'): 72,
+    ('synth_pop', 'alt_pop'): 55,
+    ('synth_pop', 'emotional_pop'): 40,
+    ('synth_pop', 'acoustic_pop'): 18,
+    ('synth_pop', 'pop_rnb'): 45,
+    # ── Alt pop ───────────────────────────────────────────────────────────────
+    ('alt_pop', 'alt_pop'): 100,
+    ('alt_pop', 'emotional_pop'): 72,
+    ('alt_pop', 'synth_pop'): 55,
+    ('alt_pop', 'indie_rock'): 55,
+    ('alt_pop', 'acoustic_pop'): 45,
+    ('alt_pop', 'punk_pop'): 50,
+    ('alt_pop', 'alt_rock'): 40,
+    ('alt_pop', 'dance_pop'): 25,
+    # ── Emotional pop ─────────────────────────────────────────────────────────
+    ('emotional_pop', 'emotional_pop'): 100,
+    ('emotional_pop', 'alt_pop'): 72,
+    ('emotional_pop', 'emotional_rnb'): 68,
+    ('emotional_pop', 'acoustic_pop'): 62,
+    ('emotional_pop', 'soul'): 55,
+    ('emotional_pop', 'synth_pop'): 40,
+    ('emotional_pop', 'dance_pop'): 28,
+    # ── Acoustic pop ──────────────────────────────────────────────────────────
+    ('acoustic_pop', 'acoustic_pop'): 100,
+    ('acoustic_pop', 'emotional_pop'): 62,
+    ('acoustic_pop', 'alt_pop'): 45,
+    ('acoustic_pop', 'folk_rock'): 58,
+    ('acoustic_pop', 'indie_rock'): 40,
+    ('acoustic_pop', 'synth_pop'): 18,
+    ('acoustic_pop', 'dance_pop'): 18,
+    # ── R&B family ────────────────────────────────────────────────────────────
+    ('smooth_rnb', 'smooth_rnb'): 100,
+    ('smooth_rnb', 'alt_rnb'): 65,
+    ('smooth_rnb', 'sensual_rnb'): 70,
+    ('smooth_rnb', 'emotional_rnb'): 55,
+    ('smooth_rnb', 'pop_rnb'): 65,
+    ('smooth_rnb', 'soul'): 62,
+    ('alt_rnb', 'alt_rnb'): 100,
+    ('alt_rnb', 'smooth_rnb'): 65,
+    ('alt_rnb', 'sensual_rnb'): 52,
+    ('alt_rnb', 'emotional_rnb'): 62,
+    ('alt_rnb', 'melodic_rap'): 42,
+    ('alt_rnb', 'alt_pop'): 40,
+    ('emotional_rnb', 'emotional_rnb'): 100,
+    ('emotional_rnb', 'alt_rnb'): 62,
+    ('emotional_rnb', 'smooth_rnb'): 55,
+    ('emotional_rnb', 'emotional_pop'): 68,
+    ('emotional_rnb', 'soul'): 72,
+    ('sensual_rnb', 'sensual_rnb'): 100,
+    ('sensual_rnb', 'smooth_rnb'): 70,
+    ('sensual_rnb', 'alt_rnb'): 52,
+    ('sensual_rnb', 'pop_rnb'): 60,
+    ('pop_rnb', 'pop_rnb'): 100,
+    ('pop_rnb', 'smooth_rnb'): 65,
+    ('pop_rnb', 'sensual_rnb'): 60,
+    ('pop_rnb', 'dance_pop'): 55,
+    ('pop_rnb', 'emotional_rnb'): 50,
+    ('soul', 'soul'): 100,
+    ('soul', 'emotional_rnb'): 72,
+    ('soul', 'smooth_rnb'): 65,
+    ('soul', 'pop_rnb'): 50,
+    # ── Afro family ───────────────────────────────────────────────────────────
+    ('afrobeats', 'afrobeats'): 100,
+    ('afrobeats', 'afro_fusion'): 82,
+    ('afrobeats', 'amapiano'): 68,
+    ('afro_fusion', 'afro_fusion'): 100,
+    ('afro_fusion', 'afrobeats'): 82,
+    ('afro_fusion', 'amapiano'): 75,
+    ('amapiano', 'amapiano'): 100,
+    ('amapiano', 'afro_fusion'): 75,
+    ('amapiano', 'afrobeats'): 68,
+    # Afro cross-genre mismatches (explicit low scores to block bad drift)
+    ('afrobeats', 'trap'): 8,
+    ('afrobeats', 'melodic_rap'): 12,
+    ('afrobeats', 'lyrical_rap'): 8,
+    ('afrobeats', 'reggaeton'): 22,
+    ('afro_fusion', 'trap'): 8,
+    ('afro_fusion', 'melodic_rap'): 12,
+    ('amapiano', 'trap'): 8,
+    # ── Hip-hop / rap family ──────────────────────────────────────────────────
+    ('trap', 'trap'): 100,
+    ('trap', 'melodic_rap'): 55,
+    ('trap', 'female_rap'): 60,
+    ('trap', 'lyrical_rap'): 38,
+    ('melodic_rap', 'melodic_rap'): 100,
+    ('melodic_rap', 'trap'): 55,
+    ('melodic_rap', 'lyrical_rap'): 62,
+    ('melodic_rap', 'pop_rnb'): 42,
+    ('melodic_rap', 'smooth_rnb'): 38,
+    ('lyrical_rap', 'lyrical_rap'): 100,
+    ('lyrical_rap', 'melodic_rap'): 62,
+    ('lyrical_rap', 'trap'): 38,
+    ('lyrical_rap', 'female_rap'): 45,
+    ('female_rap', 'female_rap'): 100,
+    ('female_rap', 'trap'): 60,
+    ('female_rap', 'melodic_rap'): 45,
+    ('female_rap', 'dance_pop'): 30,
+    # ── Latin family ──────────────────────────────────────────────────────────
+    ('reggaeton', 'reggaeton'): 100,
+    ('reggaeton', 'latin_pop'): 65,
+    ('reggaeton', 'dance_pop'): 40,
+    ('reggaeton', 'regional_mexican'): 35,
+    ('latin_pop', 'latin_pop'): 100,
+    ('latin_pop', 'reggaeton'): 65,
+    ('latin_pop', 'dance_pop'): 45,
+    ('regional_mexican', 'regional_mexican'): 100,
+    ('regional_mexican', 'latin_pop'): 35,
+    # ── Rock family ───────────────────────────────────────────────────────────
+    ('indie_rock', 'indie_rock'): 100,
+    ('indie_rock', 'alt_rock'): 70,
+    ('indie_rock', 'alt_pop'): 55,
+    ('indie_rock', 'punk_pop'): 60,
+    ('indie_rock', 'psychedelic_rock'): 55,
+    ('alt_rock', 'alt_rock'): 100,
+    ('alt_rock', 'indie_rock'): 70,
+    ('alt_rock', 'anthemic_rock'): 60,
+    ('alt_rock', 'punk_pop'): 55,
+    ('anthemic_rock', 'anthemic_rock'): 100,
+    ('anthemic_rock', 'alt_rock'): 60,
+    ('anthemic_rock', 'indie_rock'): 45,
+    ('folk_rock', 'folk_rock'): 100,
+    ('folk_rock', 'indie_rock'): 55,
+    ('folk_rock', 'acoustic_pop'): 58,
+    ('folk_rock', 'alt_rock'): 45,
+    ('punk_pop', 'punk_pop'): 100,
+    ('punk_pop', 'indie_rock'): 60,
+    ('punk_pop', 'alt_pop'): 50,
+    ('psychedelic_rock', 'psychedelic_rock'): 100,
+    ('psychedelic_rock', 'indie_rock'): 60,
+    ('classic_rock', 'classic_rock'): 100,
+    ('classic_rock', 'alt_rock'): 45,
+    ('classic_rock', 'folk_rock'): 40,
+    # ── Country family ────────────────────────────────────────────────────────
+    ('country', 'country'): 100,
+    ('country', 'folk_rock'): 40,
+    ('country', 'acoustic_pop'): 30,
+    # ── Explicit cross-genre blocks ───────────────────────────────────────────
+    ('dance_pop', 'classic_rock'): 5,
+    ('dance_pop', 'trap'): 10,
+    ('dance_pop', 'country'): 5,
+    ('synth_pop', 'trap'): 8,
+    ('synth_pop', 'country'): 5,
+    ('emotional_pop', 'trap'): 8,
+    ('emotional_pop', 'country'): 12,
+    ('emotional_rnb', 'trap'): 12,
+    ('emotional_rnb', 'country'): 8,
+    ('alt_pop', 'trap'): 8,
+    ('alt_pop', 'country'): 8,
+    ('acoustic_pop', 'trap'): 5,
+    ('acoustic_pop', 'country'): 30,
+    ('smooth_rnb', 'trap'): 12,
+    ('smooth_rnb', 'country'): 5,
+    ('pop_rnb', 'country'): 5,
+    ('afrobeats', 'country'): 3,
+    ('afro_fusion', 'country'): 3,
+    ('dance_pop', 'regional_mexican'): 8,
+    ('emotional_rnb', 'reggaeton'): 15,
+}
+
+
+# Maps each style to the curated genre pool that contains the best candidates.
+# Used to cross-search the right pool even when detected genre differs.
+STYLE_GENRE_AFFINITY: Dict[str, str] = {
+    'dance_pop': 'pop',   'synth_pop': 'pop',   'alt_pop': 'pop',
+    'emotional_pop': 'pop', 'acoustic_pop': 'pop', 'pop_rnb': 'rnb',
+    'alt_rnb': 'rnb',     'smooth_rnb': 'rnb',  'emotional_rnb': 'rnb',
+    'sensual_rnb': 'rnb', 'soul': 'rnb',
+    'afrobeats': 'afrobeats', 'afro_fusion': 'afrobeats', 'amapiano': 'afrobeats',
+    'trap': 'hiphop',     'melodic_rap': 'hiphop', 'lyrical_rap': 'hiphop',
+    'female_rap': 'hiphop',
+    'reggaeton': 'latin', 'latin_pop': 'latin', 'regional_mexican': 'latin',
+    'indie_rock': 'rock', 'alt_rock': 'rock',   'anthemic_rock': 'rock',
+    'folk_rock': 'rock',  'punk_pop': 'rock',   'psychedelic_rock': 'rock',
+    'classic_rock': 'classic',
+}
+
+
+def _get_song_style(artist: str, song: str) -> str:
+    """
+    Return style/subgenre for a specific song.
+    Priority: SONG_STYLE_OVERRIDE → ARTIST_STYLE → 'unknown'
+    No external calls; O(1) lookup.
+    """
+    a_key = re.sub(r'\s*(feat\.?|ft\.?|featuring)\s.*', '', artist.lower().strip(),
+                   flags=re.IGNORECASE).strip()
+    s_key = song.lower().strip()
+
+    # Check song-level override first
+    for (a_frag, s_frag), style in SONG_STYLE_OVERRIDE.items():
+        if a_frag in a_key and s_frag in s_key:
+            return style
+
+    # Fall back to artist-level style
+    if a_key in ARTIST_STYLE:
+        return ARTIST_STYLE[a_key]
+    for k, v in ARTIST_STYLE.items():
+        if k in a_key:
+            return v
+
+    return 'unknown'
+
+
+def _style_compat(s1: str, s2: str) -> float:
+    """
+    Style compatibility score 0-100 (symmetric).
+    Exact match → 100. Unknown on either side → neutral 45.
+    Not in STYLE_COMPAT → 10 (incompatible by default).
+    """
+    if s1 == 'unknown' or s2 == 'unknown':
+        return 45.0
+    if s1 == s2:
+        return 100.0
+    score = STYLE_COMPAT.get((s1, s2)) or STYLE_COMPAT.get((s2, s1))
+    return float(score) if score is not None else 10.0
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Lightweight metadata helpers (no external API calls)
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -498,12 +936,14 @@ def _build_song_profile(artist: str, song: str, handler_mood: str, genre: str) -
     ap = _get_artist_profile(artist)
     mood = _infer_mood_from_title(song, genre, handler_mood)
     tempo = _infer_tempo(mood, genre)
+    style = _get_song_style(artist, song)
     return {
         'genre': genre,
         'mood': mood,
         'vocal': ap.get('vocal', 'male'),
         'tempo': tempo,
         'era': ap.get('era', 'modern'),
+        'style': style,
     }
 
 
@@ -517,28 +957,28 @@ def _score_candidate(candidate_artist: str, candidate_name: str,
     """
     Score a candidate against source profile (0-100, weighted).
 
-    Weights:
-      40% mood similarity
-      25% genre similarity
-      15% vocal similarity
-      10% tempo similarity
+    Weights (v2 — style/subgenre layer added):
+      30% style/subgenre similarity  ← replaces generic vocal-only signal
+      25% mood similarity
+      20% genre similarity
+      15% vocal similarity           ← reduced: style is now the precision signal
       10% era similarity
     """
     cp = _get_artist_profile(candidate_artist)
     c_mood = _infer_mood_from_title(candidate_name, candidate_genre, '')
-    c_tempo = _infer_tempo(c_mood, candidate_genre)
+    c_style = _get_song_style(candidate_artist, candidate_name)
 
     mood_score = _mood_compat(c_mood, source['mood'])
     genre_score = 100.0 if candidate_genre == source['genre'] else 20.0
+    style_score = _style_compat(c_style, source.get('style', 'unknown'))
     vocal_score = 100.0 if cp.get('vocal') == source['vocal'] else 40.0
-    tempo_score = 100.0 if c_tempo == source['tempo'] else 50.0
     era_score = 100.0 if cp.get('era') == source['era'] else 30.0
 
     return (
-        0.40 * mood_score +
-        0.25 * genre_score +
+        0.30 * style_score +
+        0.25 * mood_score +
+        0.20 * genre_score +
         0.15 * vocal_score +
-        0.10 * tempo_score +
         0.10 * era_score
     )
 
@@ -711,42 +1151,57 @@ def _get_curated_recommendations(artist: str, song: str,
                                   mood: str, source_profile: Dict) -> List[Dict]:
     """Score + rank curated genre pool by vibe similarity."""
     genre = source_profile['genre']
-    logger.info(f"Curated recs: genre='{genre}' mood='{source_profile['mood']}' "
-                f"for '{artist} - {song}'")
+    source_style = source_profile.get('style', 'unknown')
+    logger.info(f"Curated recs: genre='{genre}' style='{source_style}' "
+                f"mood='{source_profile['mood']}' for '{artist} - {song}'")
 
-    # Build pool: primary genre + related genres
-    pool: List[tuple] = []  # (candidate_dict, pool_genre)
+    pool_genres: set = {genre}
 
-    primary = GENRE_RECOMMENDATIONS.get(genre, GENRE_RECOMMENDATIONS['pop'])
-    for entry in primary:
-        pool.append((entry, genre))
+    # If the song's style belongs to a different curated pool, include that pool
+    # too (e.g. The Weeknd "Blinding Lights" = synth_pop → add pop pool).
+    style_genre = STYLE_GENRE_AFFINITY.get(source_style)
+    if style_genre and style_genre != genre:
+        pool_genres.add(style_genre)
+        logger.info(f"[REC] style '{source_style}' pulls in extra pool: '{style_genre}'")
 
-    if len(pool) < 8:
-        for rg in MOOD_GENRE_WEIGHTS.get(mood, ['pop']):
-            if rg != genre:
-                for entry in GENRE_RECOMMENDATIONS.get(rg, []):
-                    pool.append((entry, rg))
+    # Add mood-related genres if primary pool is small
+    for rg in MOOD_GENRE_WEIGHTS.get(mood, ['pop']):
+        if rg not in pool_genres:
+            pool_genres.add(rg)
+            if len(pool_genres) >= 3:
+                break
+
+    # Build flat candidate list (candidate_dict, pool_genre)
+    pool: List[tuple] = []
+    seen_keys: set = set()
+    for pg in pool_genres:
+        for entry in GENRE_RECOMMENDATIONS.get(pg, []):
+            key = (entry['artist'].lower(), entry['name'].lower())
+            if key not in seen_keys:
+                seen_keys.add(key)
+                pool.append((entry, pg))
 
     # Filter out source artist
     pool = [(e, g) for e, g in pool if e['artist'].lower() != artist.lower()]
 
-    # Score
+    # Score each candidate
     scored = []
     for entry, pool_genre in pool:
         score = _score_candidate(entry['artist'], entry['name'], pool_genre, source_profile)
-        score += random.uniform(-5, 5)
         scored.append((score, entry, pool_genre))
 
     scored.sort(key=lambda x: x[0], reverse=True)
 
-    # Take top 12 and sample 5
-    top_pool = scored[:12]
-    selected = random.sample(top_pool, min(5, len(top_pool)))
+    # Tighter pool (top 8) → less variance, more on-vibe results.
+    # Small jitter (±3) still provides freshness across calls.
+    top_pool = scored[:8]
+    jittered = [(s + random.uniform(-3, 3), e, g) for s, e, g in top_pool]
+    jittered.sort(key=lambda x: x[0], reverse=True)
+    selected = jittered[:5]
 
     result = []
     for score, entry, pool_genre in selected:
         rec = dict(entry)
-        # Curated entries already have good reasons — keep them
         result.append(rec)
 
     return result
@@ -767,8 +1222,8 @@ def get_similar_songs(artist: str, song: str, mood: str) -> List[Dict]:
         logger.info(
             f"[REC] profile for '{artist} - {song}': "
             f"genre={source_profile['genre']} mood={source_profile['mood']} "
-            f"vocal={source_profile['vocal']} tempo={source_profile['tempo']} "
-            f"era={source_profile['era']}"
+            f"style={source_profile.get('style','?')} "
+            f"vocal={source_profile['vocal']} era={source_profile['era']}"
         )
 
         apple_recs = _get_apple_recommendations(artist, song, source_profile)
