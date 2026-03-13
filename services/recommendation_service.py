@@ -3141,13 +3141,9 @@ def format_recommendations(recommendations: List[Dict], based_on: str = None) ->
     lines = []
     for i, song in enumerate(recommendations, 1):
         emoji = ['🔥', '✨', '💫', '🎶', '⭐'][i - 1] if i <= 5 else '🎵'
-        line = f"{emoji} {song['artist']} — {song['name']}"
-        reason = song.get('reason', '')
-        if reason:
-            line += f"\n   ↳ {reason}"
-        lines.append(line)
+        lines.append(f"{emoji} {song['artist']} — {song['name']}")
 
-    body   = '\n\n'.join(lines)
+    body   = '\n'.join(lines)
     footer = (
         "\n\n━━━━━━━━━━━━━━━━━━━━━\n"
         "🎤 /lyrics to see any song's lyrics\n"
