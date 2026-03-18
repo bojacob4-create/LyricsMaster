@@ -468,7 +468,8 @@ def natural_language_handler(update: Update, context: CallbackContext):
             # ── Unified non-execute path ───────────────────────────────────
             # Disambiguation is driven by ENTITY STATE, not confidence tier.
             #
-            # Rule A: Song extracted, artist missing → Last.fm candidates.
+            # Rule A: Song extracted, artist missing → try full-text first,
+            #         then Last.fm candidates if that fails.
             # Rule B: ≤2 words, no entities extracted → try text as song name.
             # Rule C: No song to search → generic clarify / format prompt.
 
@@ -476,6 +477,24 @@ def natural_language_handler(update: Update, context: CallbackContext):
             song_to_search = None
 
             if nlp_song and not nlp_artist:
+                # NLP found a song fragment but lost the artist context (common
+                # when the artist name is misspelled).  Before falling back to
+                # song-only disambiguation, try resolving the FULL input through
+                # the lyrics engine — which handles typos via lrclib fuzzy search.
+                try:
+                    from input_parser import search_lyrics_with_fallback as _sfw
+                    _r_a, _r_s, _r_lyr, _ = _sfw(text.strip())
+                    if _r_lyr and _r_a and _r_s:
+                        _resolved = f"{_r_a} - {_r_s}"
+                        context.args = _resolved.split()
+                        update.message.chat.send_action(action="typing")
+                        _disp_intent = (
+                            nlp_intent if nlp_intent in _nlp_handler_map else "song"
+                        )
+                        _nlp_handler_map.get(_disp_intent, song_command)(update, context)
+                        return
+                except Exception:
+                    pass
                 song_to_search = nlp_song
             elif not nlp_song and not nlp_artist and len(_raw_words) <= 2:
                 song_to_search = text.strip()
@@ -1698,7 +1717,7 @@ def _is_artist_only_query(query: str) -> bool:
                 'https://ws.audioscrobbler.com/2.0/',
                 params={'method': 'artist.getInfo', 'artist': clean,
                         'api_key': api_key, 'format': 'json'},
-                timeout=5
+                timeout=2
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -1707,21 +1726,6 @@ def _is_artist_only_query(query: str) -> bool:
                 listeners = int(artist_data.get('stats', {}).get('listeners', '0'))
                 if listeners > 5000 and len(bio_content) > 50:
                     return True
-    except Exception:
-        pass
-    try:
-        import requests
-        resp = requests.get(
-            'https://en.wikipedia.org/api/rest_v1/page/summary/' + clean.replace(' ', '_'),
-            timeout=5, headers={'User-Agent': 'LyricsMasterBot/1.0'}
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            desc = (data.get('description', '') or '').lower()
-            extract = (data.get('extract', '') or '').lower()
-            music_words = ['singer', 'rapper', 'musician', 'songwriter', 'artist', 'band', 'group', 'vocalist', 'producer', 'dj', 'mc']
-            if any(w in desc for w in music_words) or any(w in extract[:300] for w in music_words):
-                return True
     except Exception:
         pass
     return False

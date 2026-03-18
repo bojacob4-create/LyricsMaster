@@ -1,0 +1,129 @@
+Subject: Clarified findings — artist handling + fallback behavior + response delay
+
+After re-validating the tests, here is the corrected and precise breakdown:
+
+⸻
+
+❗ 1. Behavior difference between misspelled vs correct query (NOT the same query)
+
+Test cases:
+	•	duaa lipa one kiss (misspelled)
+	•	dua lipa one kiss (correct)
+
+Observed:
+	•	Misspelled input → bot entered disambiguation and returned unrelated artists
+	•	Correct input → bot returned Dua Lipa – One Kiss correctly
+
+👉 This confirms:
+	•	The issue is not randomness or non-determinism
+	•	The issue is how the system handles misspelled inputs
+
+👉 Specifically:
+	•	When spelling is incorrect, the system fails to preserve or recover artist intent
+	•	It falls back to weaker/general search paths (e.g., treating query like “one kiss” only)
+
+⸻
+
+❗ 2. Artist context loss during fallback
+
+In the failing (misspelled) case:
+	•	"dua lipa" is effectively ignored
+	•	The system behaves as if only "one kiss" is the query
+
+👉 This indicates:
+	•	Artist context is being dropped during parsing, correction, or fallback stages
+	•	Fallback logic is too aggressive and overrides useful context
+
+⸻
+
+❗ 3. Core improvements are working correctly
+
+✔️ Spelling correction works
+✔️ Punctuation normalization works
+✔️ Scoring logic works
+
+Examples:
+	•	billie eilsh blue → correct
+	•	love - kendrick → correct
+
+👉 So the core intelligence is solid — the issue is in flow control, not logic quality
+
+⸻
+
+⚠️ 4. Response delay (performance issue)
+
+Observed:
+	•	Noticeable delay in responses (e.g., simple queries like “halo”)
+	•	Even when the final answer is correct
+
+👉 This suggests:
+	•	Extra unnecessary steps are being executed
+	•	Possibly:
+	•	multiple search attempts
+	•	fallback loops
+	•	redundant API calls
+	•	No early exit when a strong match is already found
+
+⸻
+
+🧠 Root cause summary
+
+The problem is not correctness — it is execution flow design:
+	•	Misspelled queries trigger weaker fallback paths
+	•	These paths lose artist context
+	•	They also increase latency
+	•	Strong matches are not prioritized early enough
+
+⸻
+
+🎯 Required action
+
+1. Preserve artist context at all stages
+	•	Once artist is detected (even approximately), it must not be dropped
+
+2. Improve misspelling handling
+	•	Do not degrade to generic search when spelling is slightly off
+	•	Prefer fuzzy matching instead of fallback removal
+
+3. Control fallback logic
+	•	Prevent fallback from overriding structured queries (artist + song)
+	•	Avoid single-word dominant searches when more context exists
+
+4. Add early exit optimization
+	•	If a high-confidence match is found → return immediately
+	•	Stop further processing
+
+5. Fix performance regression
+	•	Remove redundant search attempts
+	•	Minimize API calls
+	•	Restore fast response time
+
+⸻
+
+⚠️ Constraints
+	•	Do NOT break current working fixes (scoring, punctuation, normalization)
+	•	Do NOT remove useful fallback entirely — only refine it
+	•	Focus on stability + speed + context preservation
+
+⸻
+
+🧪 Validation targets
+	•	duaa lipa one kiss → must resolve to Dua Lipa – One Kiss
+	•	dua lipa one kiss → same result, faster
+	•	billie eilsh blue → correct
+	•	love - kendrick → correct
+	•	simple queries (e.g., “halo”) → fast response, no delay
+
+⸻
+
+🧩 Goal
+
+Make the system:
+	•	context-aware (even with typos)
+	•	fast
+	•	consistent
+	•	resistant to fallback degradation
+
+⸻
+
+Please implement carefully without affecting the current progress.
