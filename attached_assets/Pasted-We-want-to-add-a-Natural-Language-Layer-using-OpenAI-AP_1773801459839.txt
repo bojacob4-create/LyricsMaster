@@ -1,0 +1,109 @@
+We want to add a Natural Language Layer using OpenAI API, but this must be strictly NON-INTRUSIVE and must NOT break or modify any existing bot logic, services, or workflows.
+
+Goal:
+Allow users to send messages without slash commands (e.g. "lyrics hello", "suggest songs like blinding lights", "analyze kill bill"), and have the bot understand and route them correctly.
+
+CRITICAL RULES:
+- Do NOT modify any existing command handlers (/song, /lyrics, /recommend, /analyze, etc.)
+- Do NOT change recommendation logic, scoring, ecosystems, or services
+- Do NOT replace any existing functionality
+- This must be an ADD-ON layer only (pre-processing step)
+
+IMPORTANT CLARIFICATION:
+The OpenAI API must be used ONLY for:
+- intent detection
+- artist/song extraction
+
+It must NOT be used for:
+- generating recommendations
+- analyzing songs
+- fetching lyrics
+- rewriting responses
+
+All existing services (recommendation, lyrics, analyze, etc.) must remain exactly as they are.
+
+The NLP layer is strictly a lightweight parser/router only.
+
+Implementation Plan:
+
+1) Create a new module:
+services/nlp_router.py
+
+2) This module will:
+- Call OpenAI Responses API using model: gpt-5.4-mini
+- Take raw user text input
+- Return structured JSON only in this format:
+
+{
+  "intent": "lyrics | song | recommend | analyze | unknown",
+  "artist": "string or null",
+  "song": "string or null",
+  "confidence": 0.0-1.0
+}
+
+3) Strict behavior:
+- If input is unclear → return intent="unknown"
+- Do NOT hallucinate artist/song if confidence is low
+- Prefer safe extraction over guessing
+
+4) Confidence-based handling:
+- If confidence >= 0.7:
+    Proceed normally and route to the existing handler
+
+- If confidence is between 0.4 and 0.7:
+    Do NOT guess silently
+    Return a clarification message with possible matches if available
+    Example:
+    "Did you mean:
+     • Adele — Hello
+     • Lionel Richie — Hello"
+
+- If confidence < 0.4:
+    Ask the user to specify in this format:
+    "Artist - Song"
+
+Important:
+- Avoid wrong guesses at all costs
+- Prefer asking for clarification over incorrect execution
+- This logic must be handled inside nlp_router only
+
+5) Integration point:
+- In message handler (non-command messages ONLY):
+    - If message starts with "/" → skip (existing system handles it)
+    - Else:
+        - Send text to nlp_router
+        - If confidence >= 0.7:
+            route internally to existing functions:
+                lyrics → call existing lyrics handler
+                song → call existing song handler
+                recommend → call existing recommendation system
+                analyze → call existing analyze system
+        - If confidence < 0.7:
+            return the clarification/fallback message from nlp_router
+
+6) VERY IMPORTANT:
+- Reuse existing internal functions directly (do NOT duplicate logic)
+- Do NOT create new recommendation/lyrics/analyze logic
+- This layer is ONLY for intent detection + entity extraction
+
+7) Fallback behavior:
+If NLP fails:
+"Sorry, I couldn't fully understand. Try: Artist - Song"
+
+8) Optional optimization:
+- Add caching for identical inputs to reduce API calls
+
+9) Environment:
+- Read API key from environment variable:
+OPENAI_API_KEY
+
+10) Logging:
+- Log parsed output for debugging (intent, artist, song, confidence)
+
+DO NOT deploy any changes that affect:
+- recommendation scoring
+- ecosystem logic
+- curated pools
+- output formatting
+
+This must be a safe, isolated enhancement only.
