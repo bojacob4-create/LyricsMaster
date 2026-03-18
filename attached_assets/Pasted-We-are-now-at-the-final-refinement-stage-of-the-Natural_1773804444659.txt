@@ -1,0 +1,165 @@
+We are now at the final refinement stage of the Natural Language Layer. The foundation is good, but the current behavior still shows critical gaps between intent detection and safe execution. This message is to fully clarify the expected system design so the implementation becomes production-grade and fully aligned with the purpose of integrating a paid OpenAI API.
+
+⸻
+
+🎯 Core Objective (Reinforced)
+
+The purpose of using the OpenAI API is NOT just classification — it is to:
+
+Reliably understand ANY natural language input, extract intent + entities safely, and ONLY allow execution when the request is sufficiently clear and complete.
+
+This system must behave like a smart decision layer, not a trigger.
+
+⸻
+
+⚠️ Critical Problem Identified
+
+The current issue is:
+
+The system allows execution based on intent confidence alone, even when entities are missing, weak, or hallucinated.
+
+This leads to:
+	•	Executing /lyrics with no song
+	•	Guessing songs or artists incorrectly
+	•	Generating fake placeholders like "adele — something"
+	•	Routing ambiguous inputs directly into handlers
+
+This is NOT acceptable for a production NLP system
+
+⸻
+
+🧠 Required System Behavior (Non-Negotiable)
+
+You must treat intent confidence and entity quality as TWO SEPARATE dimensions.
+
+✔️ Execution should ONLY happen when:
+	•	Intent is clear AND
+	•	Required entities are present and reliable
+
+⸻
+
+🔒 Mandatory Safety Layer (Handlers-Level Enforcement)
+
+This MUST be enforced in handlers.py (NOT only inside nlp_router):
+
+Rule 1 — No execution with missing entities
+
+If intent is:
+	•	lyrics
+	•	song
+	•	analyze
+
+Then:
+
+if not artist or not song:
+    DO NOT EXECUTE
+    return clarification message
+
+
+⸻
+
+Rule 2 — Reject hallucinated placeholders
+
+if song in ["something", "some song", "unknown", None]:
+    DO NOT EXECUTE
+
+The model is NOT allowed to fabricate missing values.
+
+⸻
+
+Rule 3 — Recommendation logic safety
+
+if intent == "recommend":
+    if not song and not artist:
+        DO NOT EXECUTE
+
+Allowed:
+	•	“songs like blinding lights” ✅
+	•	“play something by adele” ✅ (artist-only allowed)
+
+Not allowed:
+	•	vague generic requests with no anchor
+
+⸻
+
+Rule 4 — Short input protection
+
+If input is ≤ 2 words and does NOT contain both artist + song:
+→ NEVER auto-execute
+
+⸻
+
+🧠 NLP Router Responsibilities (Strict)
+
+The NLP layer must:
+	1.	Extract:
+
+{
+  "intent": "...",
+  "artist": "...",
+  "song": "...",
+  "confidence": ...
+}
+
+	2.	Follow these principles:
+
+	•	DO NOT guess artist if not explicitly stated
+	•	DO NOT complete missing song names
+	•	Prefer null over wrong values
+	•	Confidence must reflect BOTH clarity of intent AND completeness of data
+
+⸻
+
+🎯 Confidence Interpretation (Revised)
+
+Confidence	Meaning	Action
+≥ 0.7	Clear intent + strong entities	Execute
+0.4–0.7	Partial / ambiguous	Clarify
+< 0.4	Weak / unclear	Ask for format
+
+
+⸻
+
+🚫 ABSOLUTE PROHIBITIONS
+	•	Do NOT fabricate song names
+	•	Do NOT assume artist from song
+	•	Do NOT route incomplete requests
+	•	Do NOT bypass safety checks
+	•	Do NOT modify existing services or logic
+
+⸻
+
+✅ What “Perfect Behavior” Looks Like
+
+Input	Expected Behavior
+“lyrics”	Ask for song
+“show lyrics”	Ask for song
+“hello”	Ask clarification
+“blinding lights”	Ask for artist
+“lyrics hello adele”	Execute
+“analyze kill bill by sza”	Execute
+“play something by adele”	Recommend
+“similar songs to water”	Ask for clarification (no guessing)
+
+
+⸻
+
+💡 Final Expectation
+
+This NLP layer must behave like a high-precision intelligent router, not a loose interpreter.
+
+We are using a paid AI API, so:
+	•	It must handle ALL natural language inputs
+	•	It must generalize beyond examples
+	•	It must prioritize accuracy over convenience
+	•	It must NEVER produce wrong outputs just to respond
+
+⸻
+
+🔚 Final Goal
+
+A system that only acts when it is confident AND correct — otherwise it asks.
+
+No guessing. No shortcuts. No silent failures.
+
+This is the expected standard.

@@ -263,21 +263,38 @@ def natural_language_handler(update: Update, context: CallbackContext):
         intent, query = detect_intent(text)
 
         if not intent:
-            # ── NLP fallback: OpenAI Responses API intent detection ────────────
-            # Triggered only when the regex router returns no match.
-            # Strictly isolated: only routes to existing handlers; never
-            # generates recommendations, lyrics, analysis, or any content.
+            # ══════════════════════════════════════════════════════════════════
+            # NLP FALLBACK — OpenAI Responses API (gpt-5.4-mini)
+            # Triggered ONLY when the regex router returns no match.
+            # Non-intrusive: only routes to existing handlers, never generates
+            # recommendations, lyrics, analysis, or any content itself.
+            #
+            # TWO INDEPENDENT SAFETY LAYERS:
+            #   Layer 1 — Confidence (probabilistic):
+            #       How certain is the model about intent + entities?
+            #       >= 0.7  → candidate for execution
+            #       0.4-0.7 → clarify
+            #       < 0.4   → ask for format
+            #
+            #   Layer 2 — Entity gate (deterministic, mandatory):
+            #       Do we have the correct entities required for this intent?
+            #       This runs after Layer 1 and can override it.
+            #       A high-confidence result with missing entities is BLOCKED.
+            # ══════════════════════════════════════════════════════════════════
             try:
                 from services.nlp_router import (
-                    parse_intent as nlp_parse,
-                    build_query as nlp_build_query,
-                    clarification_message as nlp_clarify,
+                    parse_intent       as nlp_parse,
+                    entity_gate        as nlp_entity_gate,
+                    build_query        as nlp_build_query,
+                    clarification_message  as nlp_clarify,
                     low_confidence_message as nlp_low_conf_msg,
                 )
 
-                nlp = nlp_parse(text)
+                nlp        = nlp_parse(text)
                 nlp_intent = nlp.get("intent", "unknown")
                 nlp_conf   = nlp.get("confidence", 0.0)
+                nlp_artist = nlp.get("artist")
+                nlp_song   = nlp.get("song")
 
                 _nlp_handler_map = {
                     'lyrics':    lyrics_command,
@@ -286,40 +303,80 @@ def natural_language_handler(update: Update, context: CallbackContext):
                     'analyze':   analyze_command,
                 }
 
-                if nlp_intent != "unknown" and nlp_conf >= 0.7:
-                    # High confidence — route directly to the existing handler.
-                    query = nlp_build_query(nlp)
+                # ── Layer 1: confidence tier ───────────────────────────────
+                if nlp_intent == "unknown" or nlp_conf < 0.4:
+                    conf_tier = "low_conf"
+                elif nlp_conf < 0.7:
+                    conf_tier = "clarify"
+                else:
+                    conf_tier = "execute"
+
+                # ── Layer 2: entity gate (mandatory, overrides Layer 1) ────
+                # Runs for ALL tiers so a high-confidence incomplete result
+                # is caught before it reaches any handler.
+                gate = nlp_entity_gate(nlp, text)
+
+                # ── Combine layers (decision table) ───────────────────────
+                # Both layers are independent; neither blindly overrides the
+                # other.  The rules below encode the correct priority:
+                #
+                #  1. execute  — ONLY when BOTH say execute.  If either layer
+                #                has a concern, we do not act.
+                #  2. low_conf — ONLY when BOTH say low_conf.  This means the
+                #                system has nothing specific to ask about.
+                #  3. clarify  — everything else:
+                #                • conf=execute  + gate=clarify  → clarify
+                #                • conf=clarify  + gate=anything → clarify
+                #                • conf=low_conf + gate=clarify  → clarify
+                #                  (gate found specific info to ask about,
+                #                   even though confidence is low)
+                if conf_tier == "execute" and gate == "execute":
+                    # Both layers green — safe to act.
+                    final = "execute"
+                elif conf_tier == "low_conf" and gate == "low_conf":
+                    # Both layers say nothing actionable — ask for format.
+                    final = "low_conf"
+                elif gate == "execute" and conf_tier == "low_conf":
+                    # Gate found a valid entity but model confidence is low.
+                    # We have something specific to ask about → clarify.
+                    final = "clarify"
+                elif gate == "clarify":
+                    # Gate flagged missing entities — always clarify.
+                    final = "clarify"
+                elif conf_tier == "low_conf":
+                    # No entity info, low confidence → ask for format.
+                    final = "low_conf"
+                else:
+                    # conf_tier=clarify, gate=execute → borderline, clarify.
+                    final = "clarify"
+
+                logger.info(
+                    f"[NLP] user={user_id} intent={nlp_intent!r} "
+                    f"artist={nlp_artist!r} song={nlp_song!r} "
+                    f"conf={nlp_conf:.2f} conf_tier={conf_tier} "
+                    f"gate={gate} final={final}"
+                )
+
+                if final == "execute":
+                    query   = nlp_build_query(nlp)
                     context.args = query.split() if query else []
                     handler = _nlp_handler_map.get(nlp_intent)
                     if handler:
-                        logger.info(
-                            f"[NLP] High-conf route: user={user_id} "
-                            f"intent={nlp_intent!r} query={query!r} conf={nlp_conf:.2f}"
-                        )
                         update.message.chat.send_action(action="typing")
                         handler(update, context)
 
-                elif nlp_intent != "unknown" and nlp_conf >= 0.4:
-                    # Medium confidence — ask the user to confirm before acting.
-                    msg = nlp_clarify(nlp)
-                    logger.info(
-                        f"[NLP] Clarification sent: user={user_id} "
-                        f"intent={nlp_intent!r} conf={nlp_conf:.2f}"
+                elif final == "clarify":
+                    update.message.reply_text(
+                        nlp_clarify(nlp), parse_mode='Markdown'
                     )
-                    update.message.reply_text(msg, parse_mode='Markdown')
 
-                else:
-                    # Low confidence or unknown — ask the user to be specific.
-                    logger.info(
-                        f"[NLP] Low-conf fallback: user={user_id} "
-                        f"intent={nlp_intent!r} conf={nlp_conf:.2f}"
-                    )
+                else:  # low_conf
                     update.message.reply_text(
                         nlp_low_conf_msg(), parse_mode='Markdown'
                     )
 
             except Exception as nlp_err:
-                # Any NLP failure must not break existing bot behaviour.
+                # Any NLP failure must never break existing bot behaviour.
                 logger.warning(f"[NLP] Fallback error for user {user_id}: {nlp_err}")
 
             return

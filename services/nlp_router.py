@@ -285,6 +285,105 @@ def parse_intent(text: str) -> Dict:
     return result
 
 
+# ── Hallucinated / placeholder values the model may fabricate ─────────────
+# These are systemic checks — not per-song hardcodes.
+# If the model cannot identify a real value it sometimes fills these in.
+_PLACEHOLDER_SONGS = frozenset({
+    "something", "some song", "a song", "unknown", "that song",
+    "this song", "it", "the song", "one", "anything",
+})
+
+
+def entity_gate(result: Dict, raw_text: str) -> str:
+    """
+    Mandatory second-layer safety check, independent of confidence score.
+
+    Confidence answers: "How sure is the model?"
+    This gate answers:  "Do we have enough correct data to act safely?"
+
+    These are two separate questions.  A result can have high confidence AND
+    still lack the entities required for safe execution — this gate catches that.
+
+    Returns one of three routing decisions:
+        'execute'  — entities are complete and valid for this intent
+        'clarify'  — intent is recognisable but entities are missing/ambiguous
+        'low_conf' — not enough to work with; ask for the Artist - Song format
+
+    Rules (numbered to match specification):
+
+    Rule 1 — lyrics / song / analyze require BOTH artist AND song.
+        These intents fetch data for ONE specific track.  Without the artist,
+        the system cannot know which version of the song to use; without the
+        song, there is nothing to fetch.
+
+    Rule 2 — Reject hallucinated / placeholder song values.
+        The model sometimes fills "something", "some song", "unknown", etc.
+        when it cannot identify the real song.  These must never be executed.
+
+    Rule 3 — recommend requires at least one real entity (artist OR song).
+        Recommendations need an anchor.  A vague request with no anchor
+        cannot produce meaningful results.
+
+    Rule 4 — Short inputs (≤ 2 words) without both artist + song.
+        Very short inputs are almost always ambiguous.  Even at high model
+        confidence they must not auto-execute without a complete entity pair.
+    """
+    intent = result.get("intent", "unknown")
+    artist = result.get("artist")
+    song   = result.get("song")
+    words  = raw_text.strip().split()
+
+    # Normalise for placeholder checks (case-insensitive)
+    song_lower = (song or "").lower().strip()
+
+    # Rule 2 — reject hallucinated placeholder song values (applied globally)
+    if song and song_lower in _PLACEHOLDER_SONGS:
+        logger.debug(f"[NLP][gate] Rule2 placeholder song={song!r} | {raw_text!r}")
+        return "clarify"
+
+    # Rule 1 — lyrics / song / analyze need both artist AND song.
+    # Distinguish two sub-cases:
+    #   a) Song is known but artist is missing  → clarify (ask for artist)
+    #   b) Song is also missing (nothing to act on) → low_conf (ask for format)
+    if intent in ("lyrics", "song", "analyze"):
+        if not song:
+            # No song at all — we have nothing specific to ask about
+            logger.debug(
+                f"[NLP][gate] Rule1a no song for {intent} | {raw_text!r}"
+            )
+            return "low_conf"
+        if not artist:
+            # Have a song but need the artist to fetch the right version
+            logger.debug(
+                f"[NLP][gate] Rule1b no artist for {intent}: song={song!r} | {raw_text!r}"
+            )
+            return "clarify"
+
+    # Rule 3 — recommend needs at least one real entity
+    if intent == "recommend":
+        if not artist and not song:
+            logger.debug(f"[NLP][gate] Rule3 recommend with no entities | {raw_text!r}")
+            return "low_conf"
+
+    # Rule 4 — short inputs (≤ 2 words) need both entities to auto-execute.
+    # If the intent is unknown AND there are no entities at all, the system
+    # has nothing specific to ask about → low_conf.
+    # If intent or at least one entity is present, we can ask a targeted
+    # question → clarify.
+    if len(words) <= 2 and not (artist and song):
+        if intent == "unknown" and not artist and not song:
+            logger.debug(
+                f"[NLP][gate] Rule4 short+empty — no intent or entities | {raw_text!r}"
+            )
+            return "low_conf"
+        logger.debug(
+            f"[NLP][gate] Rule4 short input, partial entities | {raw_text!r}"
+        )
+        return "clarify"
+
+    return "execute"
+
+
 def build_query(result: Dict) -> str:
     """
     Build an 'Artist - Song' query string from NLP result for handler routing.
