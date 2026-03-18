@@ -1,0 +1,133 @@
+Subject: Critical mismatch + wrong song resolution + performance regression — full system review required
+
+After testing the latest build, multiple issues are still present, and some are more serious than before.
+
+⸻
+
+❗ Current Problems Observed
+
+1. ❌ Wrong song resolution (critical)
+
+Input:
+duaa lipa one kiss
+
+Output:
+	•	Returned: Lucky Soul – One Kiss Don’t Make A Summer
+
+This is not a spelling issue anymore — this is incorrect song matching.
+
+The system is:
+	•	either picking the wrong result from the API
+	•	or fallback logic is overriding a correct match with a weaker one
+
+⸻
+
+2. ❌ Incorrect mapping for valid queries
+
+Input:
+love - kendrick
+
+Output:
+	•	Returned: Jay Rock – Hood Gone Love It (feat. Kendrick Lamar)
+
+This indicates:
+	•	the system is not respecting artist-song intent
+	•	likely prioritizing partial matches or related tracks instead of exact ones
+
+⸻
+
+3. ⚠️ Correction inconsistency still exists
+
+Even after fixes:
+	•	sometimes corrected names appear
+	•	sometimes completely different songs appear
+	•	sometimes casing differs (e.g., BLUE vs Blue)
+
+This means:
+👉 normalization is still not stable or not consistently applied across all paths
+
+⸻
+
+4. ⚠️ Performance regression (lag)
+
+Response feels slower than before.
+
+Possible causes:
+	•	multiple fallback paths executing unnecessarily
+	•	multiple API calls per request
+	•	no early exit when a strong match is already found
+	•	overlapping logic still active
+
+⸻
+
+🧠 What This Indicates
+
+This is no longer a single bug.
+
+This is a system-level issue involving:
+	•	query parsing
+	•	search prioritization
+	•	fallback ranking
+	•	normalization consistency
+	•	execution flow efficiency
+
+⸻
+
+🎯 Required Action
+
+Do NOT apply a small fix.
+
+Perform a full end-to-end system review:
+
+Investigate:
+	•	how queries are parsed into artist/song
+	•	how primary match is selected
+	•	how fallback paths override or replace results
+	•	how API results are ranked or chosen
+	•	where corrected names are injected and where they are lost
+	•	whether multiple branches are running in parallel or sequence unnecessarily
+
+⸻
+
+⚠️ Critical Requirements
+	•	Do NOT break existing working features
+	•	Do NOT remove current capabilities (analysis, buttons, flows, etc.)
+	•	Do NOT simplify logic at the cost of accuracy
+	•	Preserve all working behavior
+
+⸻
+
+🎯 Goal
+
+Achieve:
+	1.	Correct song selection first
+	•	exact match must always win over related/partial matches
+	2.	Stable normalization
+	•	one consistent artist/song across:
+	•	title
+	•	lyrics
+	•	buttons
+	•	callbacks
+	•	links
+	3.	Efficient execution
+	•	no unnecessary API calls
+	•	no redundant fallback execution
+	•	early exit when confident match is found
+
+⸻
+
+🧪 Must Pass Tests
+	•	duaa lipa one kiss → Dua Lipa – One Kiss
+	•	billie eilsh blue → Billie Eilish – Blue
+	•	love - kendrick → Kendrick Lamar – LOVE.
+
+All must return:
+	•	correct song
+	•	consistent naming
+	•	fast response
+
+⸻
+
+This requires a careful full-system cleanup and validation, not a patch.
+
+Please confirm findings after deep inspection before applying changes.
