@@ -1,0 +1,115 @@
+
+Perform a full independent audit of the current codebase after the recent rollback.
+
+Do not assume anything is correct. Validate everything end-to-end.
+
+⸻
+
+Scope of the audit
+
+1. ⚡ Performance & Latency
+	•	Trace the full execution flow for a typical request (from input → final response)
+	•	Identify any:
+	•	unnecessary API calls
+	•	duplicate processing steps
+	•	blocking operations
+	•	long timeouts
+	•	Verify that the system responds as fast as possible
+	•	Highlight any function that can introduce delay (even small ones)
+	•	Measure where time is actually spent
+
+⸻
+
+2. 🧠 Model Usage (Critical)
+	•	Identify every place where a model is being called
+	•	For each call:
+	•	Why is it being used?
+	•	Is it necessary?
+	•	Can it be avoided or replaced with deterministic logic?
+	•	Verify:
+	•	The correct model is used
+	•	The model is not being called:
+	•	on every request unnecessarily
+	•	for simple parsing tasks
+	•	inside loops or fallback chains
+	•	Ensure:
+	•	Model usage is minimal and intentional
+	•	No hidden or indirect calls are happening
+
+⸻
+
+3. 🔄 Flow Integrity
+	•	Trace how input is processed:
+	•	parsing
+	•	routing
+	•	fallback
+	•	search
+	•	final response
+	•	Detect:
+	•	conflicting paths
+	•	redundant fallbacks
+	•	logic that overrides correct results
+	•	any place where context might be lost
+
+⸻
+
+4. 🧪 Case Study (from attached example)
+
+Analyze this specific case deeply:
+
+Input:
+
+love - kendrick
+
+
+Tasks:
+	•	Trace exactly how this result was selected
+	•	Identify:
+	•	why “LOVE.” by Kendrick Lamar was not chosen
+	•	where the logic failed (parsing, scoring, search, or fallback)
+	•	Evaluate whether:
+	•	punctuation handling is missing
+	•	scoring logic is weak
+	•	query normalization is insufficient
+
+Do a step-by-step trace of this request through the system.
+
+⸻
+
+5. 🧹 Clean Architecture Check
+	•	Identify any:
+	•	dead code
+	•	unused services
+	•	overlapping logic
+	•	unnecessary complexity
+	•	Suggest simplifications only if they do not affect current stability
+
+⸻
+
+Important Constraints
+	•	Do NOT modify anything yet
+	•	Do NOT implement fixes
+	•	Do NOT assume previous fixes exist
+
+👉 This is analysis only
+
+⸻
+
+Output Requirements
+
+Provide:
+	1.	🔍 Full findings (clear and structured)
+	2.	⚠️ All detected issues (performance, logic, model usage)
+	3.	🧠 Exact root causes
+	4.	📊 Where time is being wasted
+	5.	🎯 Prioritized list of problems (most critical first)
+
+⸻
+
+Focus on:
+	•	speed
+	•	correctness
+	•	efficiency
+	•	minimal model usage
+
+Run the audit as if preparing the system for production.
