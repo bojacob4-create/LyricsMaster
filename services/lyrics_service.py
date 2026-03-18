@@ -198,12 +198,16 @@ def search_song_info(artist: str, song: str) -> Optional[Tuple[str, str, str]]:
         search_song   = song if song else artist
 
         if search_artist and search_song:
+            # Try direct lookup — primary ordering
             result = _fetch_from_lrclib_direct(search_artist, search_song)
             if result:
-                # result is (api_artist, api_track, lyrics) — propagate API-correct names
+                return result
+            # Try swapped ordering (handles "Song - Artist" inputs)
+            result = _fetch_from_lrclib_direct(search_song, search_artist)
+            if result:
                 return result
 
-        # Cap at 2 search queries
+        # Cap at 2 search queries via lrclib search API
         search_queries = []
         if search_artist and search_song:
             search_queries.append(f"{search_artist} {search_song}")
@@ -213,6 +217,16 @@ def search_song_info(artist: str, song: str) -> Optional[Tuple[str, str, str]]:
             result = _fetch_from_lrclib_search(query)
             if result:
                 return result
+
+        # Last-resort: lyrics.ovh (returns lyrics only — use passed-in names)
+        if search_artist and search_song:
+            ovh_lyrics = _fetch_from_lyrics_ovh(search_artist, search_song)
+            if ovh_lyrics:
+                logger.info(
+                    f"lyrics.ovh fallback hit in search_song_info: "
+                    f"'{search_artist} - {search_song}'"
+                )
+                return search_artist, search_song, ovh_lyrics
 
         return None
 

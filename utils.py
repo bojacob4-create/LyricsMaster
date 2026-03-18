@@ -40,7 +40,7 @@ def get_song_statistics(lyrics: str) -> Dict:
     # Remove section markers but preserve line breaks
     lyrics_clean = re.sub(r'\[.*?\]', '', lyrics_clean)
     # Special handling for contractions - preserve apostrophes in known contractions
-    lyrics_clean = re.sub(r"'(?!(ve|re|ll|s|m|d|t)\\b)", " ", lyrics_clean)
+    lyrics_clean = re.sub(r"'(?!(ve|re|ll|s|m|d|t)\b)", " ", lyrics_clean)
     # Remove other punctuation except apostrophes
     lyrics_clean = re.sub(r'[^\w\s\']', ' ', lyrics_clean)
     # Replace multiple spaces with single space

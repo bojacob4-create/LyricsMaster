@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import requests
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackContext, MessageHandler, Filters, CommandHandler
@@ -235,7 +236,6 @@ _INTENT_KEYWORDS = frozenset({
 })
 
 def _clean_ambiguous_query(text: str) -> str:
-    import re
     words = text.strip().split()
     cleaned = [w for w in words if w.lower() not in _AMBIGUOUS_NOISE]
     if not cleaned:
@@ -387,7 +387,7 @@ def natural_language_handler(update: Update, context: CallbackContext):
                 return
             _pending_recommend_artist.pop(user_id, None)
             context.args = song_query.split()
-            song_command(update, context)
+            recommend_command(update, context)
             return
 
     # ── Step 4: NLP fallback ─────────────────────────────────────────────────
@@ -857,7 +857,6 @@ def recommend_command(update: Update, context: CallbackContext):
 
 
 def _parse_translate_language(query: str):
-    import re
     match = re.search(r'\s+(?:to|into|in)\s+(\w+)\s*$', query, re.IGNORECASE)
     if match:
         lang_name = match.group(1).strip()
@@ -1169,7 +1168,6 @@ def _fetch_artist_top_songs(artist_name: str) -> list:
         return info['top_songs'][:5]
 
     try:
-        import requests
         api_key = os.environ.get('LASTFM_API_KEY')
         if api_key:
             resp = requests.get(
@@ -1191,7 +1189,6 @@ def _fetch_artist_top_songs(artist_name: str) -> list:
         logger.warning(f"Last.fm top tracks error for '{artist_name}': {e}")
 
     try:
-        import requests
         resp = requests.get(
             'https://itunes.apple.com/search',
             params={'term': artist_name, 'media': 'music', 'entity': 'song', 'limit': 50},
@@ -1248,7 +1245,6 @@ def _artist_songs_picker_command(update: Update, context: CallbackContext):
 def _clean_primary_artist(artist: str) -> str:
     if not artist:
         return artist
-    import re
     cleaned = re.split(r'\s+(?:feat\.?|ft\.?|featuring|&|,|x\s)\s*', artist, flags=re.IGNORECASE)[0].strip()
     return cleaned if cleaned else artist
 
@@ -1582,7 +1578,6 @@ def _build_fallback_artist_profile(query: str):
                 country = label
                 break
 
-        import re
         debut_match = re.search(r'(?:debut|career|started|began).{0,30}?(\d{4})', extract_lower[:500])
         if debut_match:
             debut = debut_match.group(1)
@@ -1704,7 +1699,10 @@ def _is_artist_only_query(query: str) -> bool:
                 data = resp.json()
                 artist_data = data.get('artist', {})
                 bio_content = artist_data.get('bio', {}).get('content', '')
-                listeners = int(artist_data.get('stats', {}).get('listeners', '0'))
+                try:
+                    listeners = int(artist_data.get('stats', {}).get('listeners', 0) or 0)
+                except (ValueError, TypeError):
+                    listeners = 0
                 if listeners > 5000 and len(bio_content) > 50:
                     return True
     except Exception:
@@ -1980,71 +1978,3 @@ def random_command(update: Update, context: CallbackContext):
             "Please try again! 🔄"
         )
 
-
-def main():
-    """Initialize bot handlers and start the bot."""
-    token = os.environ.get('TELEGRAM_TOKEN')
-    if not token:
-        logger.error("TELEGRAM_TOKEN not found in environment variables")
-        return
-
-    try:
-        updater = Updater(token=token, use_context=True)
-        dp = updater.dispatcher
-
-        # Add command handlers
-        dp.add_handler(CommandHandler("start", start_command))
-        dp.add_handler(CommandHandler("help", help_command))
-        dp.add_handler(CommandHandler("lyrics", lyrics_command))
-        dp.add_handler(CommandHandler("stats", stats_command))
-        dp.add_handler(CommandHandler("recommend", recommend_command))
-        dp.add_handler(CommandHandler("quiz", quiz_command))
-        dp.add_handler(CommandHandler("endquiz", end_quiz_command))
-        dp.add_handler(CommandHandler("translate", translate_lyrics_command))
-        dp.add_handler(CommandHandler("youtube", youtube_command))
-        dp.add_handler(CommandHandler("analyze", analyze_command))
-        dp.add_handler(CommandHandler("subscribe", subscribe_daily_command))
-        dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))
-        dp.add_handler(CommandHandler("wiki", wiki_command))
-        dp.add_handler(CommandHandler("artist", artist_command))
-        dp.add_handler(CommandHandler("trending", trending_command))
-        dp.add_handler(CommandHandler("song", song_command))
-        dp.add_handler(CommandHandler("top", top_command))
-        dp.add_handler(CommandHandler("random", random_command))
-
-        # Add message handler for quiz answers
-        dp.add_handler(MessageHandler(Filters.text & ~Filters.command, quiz_answer))
-
-        # Register commands in the menu
-        commands = [
-            BotCommand("start", "Welcome & overview"),
-            BotCommand("help", "Full command guide"),
-            BotCommand("song", "🎵 Full song dashboard"),
-            BotCommand("lyrics", "🎤 Get song lyrics"),
-            BotCommand("stats", "📊 Song word statistics"),
-            BotCommand("recommend", "🎵 Find similar songs"),
-            BotCommand("analyze", "🔍 Deep lyrical analysis"),
-            BotCommand("translate", "🌍 Translate lyrics to any language"),
-            BotCommand("artist", "🎤 Quick artist profile"),
-            BotCommand("top", "🔝 Top songs by genre"),
-            BotCommand("random", "🎲 Random song discovery"),
-            BotCommand("youtube", "🎬 Find the music video"),
-            BotCommand("quiz", "🎮 Lyrics guessing game"),
-            BotCommand("endquiz", "End current quiz"),
-            BotCommand("wiki", "📚 Artist Wikipedia info"),
-            BotCommand("trending", "📈 Trending songs now"),
-            BotCommand("subscribe", "🔔 Daily song picks"),
-            BotCommand("unsubscribe", "Stop daily updates"),
-        ]
-
-        updater.bot.set_my_commands(commands)
-
-        # Start the bot
-        updater.start_polling()
-        logger.info("Bot started successfully")
-
-    except Exception as e:
-        logger.error(f"Error starting bot: {str(e)}", exc_info=True)
-
-if __name__ == "__main__":
-    main()

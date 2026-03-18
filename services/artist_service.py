@@ -300,7 +300,9 @@ def get_artist_info(name: str) -> Optional[Dict]:
             return data
 
     for key, data in ARTIST_DATABASE.items():
-        if any(part in key for part in name_lower.split()):
+        key_words = set(key.split())
+        significant_parts = [p for p in name_lower.split() if len(p) > 2]
+        if significant_parts and all(p in key_words for p in significant_parts):
             return data
 
     return None

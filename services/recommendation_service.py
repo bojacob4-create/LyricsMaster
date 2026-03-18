@@ -787,7 +787,6 @@ ARTIST_STYLE = {
     'miley cyrus': 'emotional_pop',
     'bruno mars': 'pop_rnb',
     'michael jackson': 'pop_rnb',
-    'lizzo': 'pop_rnb',
     # ── R&B sub-styles ────────────────────────────────────────────────────────
     'sza': 'alt_rnb',
     'brent faiyaz': 'alt_rnb',
@@ -812,7 +811,6 @@ ARTIST_STYLE = {
     'mariah carey': 'soul',
     'stevie wonder': 'soul',
     'marvin gaye': 'soul',
-    'alicia keys': 'soul',
     # ── Afro sub-styles ───────────────────────────────────────────────────────
     'burna boy': 'afrobeats',
     'wizkid': 'afrobeats',
