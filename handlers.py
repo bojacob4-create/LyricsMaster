@@ -1791,7 +1791,12 @@ def song_command(update: Update, context: CallbackContext):
             )
             return
 
-        display_title = f"{artist} - {song}" if artist and song else (artist or song)
+        # Single source of truth: corrected artist/song from the lookup.
+        # Fall back to the raw query parts only if the service returned nothing.
+        final_artist = artist if artist else query
+        final_song   = song   if song   else query
+
+        display_title = f"{final_artist} - {final_song}" if artist and song else (artist or song or query)
 
         mood = detect_song_mood(lyrics)
         stats = get_song_statistics(lyrics)
@@ -1808,13 +1813,10 @@ def song_command(update: Update, context: CallbackContext):
         if len(lyrics_lines) > 4:
             lyrics_preview += "\n  ..."
 
-        use_artist = artist if artist else query
-        use_song = song if song else query
-
-        yt_url = get_youtube_link(use_artist, use_song)
+        yt_url = get_youtube_link(final_artist, final_song)
         yt_section = f"🎬 {yt_url}" if yt_url else "🎬 YouTube: not found"
 
-        recs = get_similar_songs(use_artist, use_song, mood)
+        recs = get_similar_songs(final_artist, final_song, mood)
         recs_lines = []
         for i, r in enumerate(recs[:3]):
             emoji = ['🔥', '✨', '💫'][i]
@@ -1844,8 +1846,8 @@ def song_command(update: Update, context: CallbackContext):
             f"  🎭 Themes: {themes_text}\n\n"
             f"🎵 Similar Songs:\n{recs_text}\n\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🎤 /lyrics {query} — full lyrics\n"
-            f"🔍 /analyze {query} — deep analysis"
+            f"🎤 /lyrics {final_artist} - {final_song} — full lyrics\n"
+            f"🔍 /analyze {final_artist} - {final_song} — deep analysis"
         )
 
         btn_query = display_title if display_title else query
