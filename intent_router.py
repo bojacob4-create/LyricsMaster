@@ -18,6 +18,14 @@ _PLAY_BY_ARTIST_RE = re.compile(
     re.IGNORECASE,
 )
 
+# "Artist - Song" explicit structured format.
+# Matches inputs like "Gemini - Hola", "Radiohead - Creep", etc.
+# Used as a last resort in detect_intent, after all keyword checks.
+_ARTIST_SONG_RE = re.compile(
+    r'^(.{2,60}?)\s*[-–—]\s*(.{2,60})$',
+    re.IGNORECASE,
+)
+
 LYRICS_KEYWORDS = [
     'lyrics', 'lyric', 'words to', 'words of', 'text of', 'text for',
     'show me the lyrics', 'get lyrics', 'find lyrics', 'what are the lyrics',
@@ -330,5 +338,16 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
     if _match_keywords(text, DOWNLOAD_KEYWORDS):
         query = _clean_query(text, ['download', 'save', 'get'])
         return 'download', query
+
+    # "Artist - Song" explicit structured format (last resort before NLP).
+    # Catches inputs like "Gemini - Hola", "Radiohead - Creep", etc.
+    # Both sides must be ≥2 characters to avoid matching partial/accidental dashes.
+    # No keyword-matching needed — if it looks like a clean pair, treat as /song.
+    _art_song = _ARTIST_SONG_RE.match(text)
+    if _art_song:
+        part_a = _art_song.group(1).strip()
+        part_b = _art_song.group(2).strip()
+        if len(part_a) >= 2 and len(part_b) >= 2:
+            return 'song', f"{part_a} - {part_b}"
 
     return None, text

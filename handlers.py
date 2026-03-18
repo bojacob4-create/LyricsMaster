@@ -206,6 +206,22 @@ def quiz_answer(update: Update, context: CallbackContext):
 
 _pending_recommend_artist = {}
 
+# Stores dominant-match confirmation waiting for user's "yes/no" reply.
+# Structure: {user_id: {'artist': str, 'song': str, 'intent_cmd': str}}
+_pending_confirmation: dict = {}
+
+_YES_WORDS = frozenset({
+    'yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'correct',
+    "that's it", "that one", 'y', 'right', 'affirmative', 'definitely',
+    'absolutely', 'exactly', 'of course', 'please', 'go ahead', 'do it',
+    'confirm', 'that', "yes please", 'sounds good', 'perfect',
+})
+_NO_WORDS = frozenset({
+    'no', 'nope', 'nah', 'wrong', 'cancel', 'nevermind', 'never mind',
+    'different', 'neither', 'n', 'nah', 'not that', 'not this',
+    'something else', 'other', 'others',
+})
+
 _AMBIGUOUS_NOISE = {'song', 'songs', 'music', 'track', 'tracks', 'video', 'audio', 'clip', 'artist'}
 
 def _clean_ambiguous_query(text: str) -> str:
@@ -275,6 +291,45 @@ def natural_language_handler(update: Update, context: CallbackContext):
         if len(answer) == 1 and answer in 'ABCD':
             quiz_answer(update, context)
             return
+
+    # ── Step 2.5: Pending dominant-match confirmation ────────────────────────
+    # When the disambiguation layer showed "Did you mean X - Y?" and the match
+    # was dominant (one clear winner), we store a pending confirmation.
+    # "yes" / "yeah" / "sure" → execute the suggested song/intent.
+    # "no" / "nope" / "cancel" → clear state and show format hint.
+    # Anything else (new request) → clear state and fall through.
+    if user_id in _pending_confirmation:
+        tl = text.lower().strip().rstrip('!.?,')
+        pend = _pending_confirmation[user_id]
+        if tl in _YES_WORDS:
+            _pending_confirmation.pop(user_id, None)
+            _conf_cmd_map = {
+                'song':      song_command,
+                'lyrics':    lyrics_command,
+                'recommend': recommend_command,
+                'analyze':   analyze_command,
+            }
+            confirmed_handler = _conf_cmd_map.get(pend['intent_cmd'])
+            if confirmed_handler:
+                context.args = f"{pend['artist']} - {pend['song']}".split()
+                update.message.chat.send_action(action="typing")
+                confirmed_handler(update, context)
+            return
+        elif tl in _NO_WORDS:
+            _pending_confirmation.pop(user_id, None)
+            update.message.reply_text(
+                "No problem! You can type the full format:\n"
+                "`Artist - Song`\n\n"
+                "For example: `Adele - Hello`",
+                parse_mode='Markdown',
+            )
+            return
+        else:
+            # User moved on to something else — clear and fall through.
+            logger.info(
+                f"[NLP] Clearing stale confirmation for user {user_id}: {text!r}"
+            )
+            _pending_confirmation.pop(user_id, None)
 
     # ── Step 3: Pending artist-recommend flow ────────────────────────────────
     # The user is in the middle of picking a seed song for artist-based
@@ -427,11 +482,24 @@ def natural_language_handler(update: Update, context: CallbackContext):
 
             if song_to_search:
                 try:
+                    from services.nlp_router import is_dominant_match as _is_dom
                     candidates = nlp_search_candidates(song_to_search)
                     if candidates:
                         _display_intent = (
                             nlp_intent if nlp_intent != "unknown" else "song"
                         )
+                        # Store pending confirmation when there is one clear
+                        # dominant match so the user can reply "yes" to confirm.
+                        if _is_dom(candidates):
+                            top = candidates[0]
+                            _pending_confirmation[user_id] = {
+                                'artist':     top['artist'],
+                                'song':       top['song'],
+                                'intent_cmd': _display_intent,
+                            }
+                        else:
+                            # Multiple options shown — no single "yes" target.
+                            _pending_confirmation.pop(user_id, None)
                         msg = nlp_disambig_msg(
                             song_to_search, _display_intent, candidates
                         )

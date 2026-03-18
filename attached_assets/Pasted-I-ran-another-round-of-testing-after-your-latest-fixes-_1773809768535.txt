@@ -1,0 +1,72 @@
+I ran another round of testing after your latest fixes. Overall, the system has clearly improved — especially with request isolation and routing stability. That’s a big step forward.
+
+There are still a few areas where behavior feels inconsistent or could be refined. I’m sharing them here as observations to help guide further improvements:
+
+⸻
+
+	1.	Candidate quality in some disambiguation flows
+
+Input:
+“give me songs like creep”
+
+The system correctly asks for clarification, but some of the suggested options don’t feel strong or clearly related (e.g. entries like “Days” or certain remix-style results).
+
+Even if they come from the API, the list doesn’t always feel like a confident or clean set for the user to choose from.
+
+⸻
+
+	2.	Follow-up handling after disambiguation
+
+Flow tested:
+	•	“Hola” → multiple options (good)
+	•	“Gemini hola” → confirmation suggestion (good)
+	•	“Yes” → system starts a new disambiguation for “Yes”
+
+Here the system seems to treat “Yes” as a new input instead of confirming the previous suggestion.
+
+Also:
+	•	“Gemini - hola” (valid format) → fallback message instead of execution
+
+So there may be some inconsistency in:
+	•	handling confirmation replies
+	•	maintaining context across the clarification step
+
+⸻
+
+	3.	Structured input parsing inconsistency
+
+Input:
+“Gemini - hola”
+
+This is a valid structured format (Artist - Song), but it falls back to the generic help message.
+
+This suggests the parser might not be consistently recognizing valid formatted inputs in all cases.
+
+⸻
+
+	4.	General consistency across flows
+
+Some parts of the system are now working very well:
+	•	“lyrics skyfall adele”
+	•	“analyze yellow by coldplay”
+	•	clear artist + song inputs
+
+So the core pipeline is strong — the main gaps seem to appear in:
+	•	disambiguation quality
+	•	follow-up interactions
+	•	consistency in parsing similar input styles
+
+⸻
+
+Summary
+
+The system is clearly moving in the right direction. The main focus now should be on polishing behavior and making it more consistent across different types of user inputs.
+
+For the next step, it would be helpful to:
+	•	test similar patterns with different songs/artists
+	•	verify how the system behaves across multi-step interactions
+	•	ensure consistent handling of structured inputs and confirmations
+
+No need to focus on these exact examples — treat them as signals of broader patterns to validate.
+
+Overall, really solid progress so far.

@@ -2915,19 +2915,36 @@ def _get_lastfm_similar_candidates(artist: str, song: str) -> tuple:
             logger.info(f"[LASTFM] No similar tracks found for '{artist} - {song}'")
             return ()
 
+        # Words in track names that signal low-quality / derivative results.
+        _NOISE_WORDS = frozenset({
+            'remix', 'cover', 'karaoke', 'instrumental', 'version',
+            'tribute', 'acoustic', 'piano', 'mashup', 'medley', 'parody',
+            'reprise', 'edit', 'remaster', 'remastered', 'live', 'demo',
+            'bootleg', 'mix', 'extended', 'radio edit',
+        })
+        seed_artist_lower = artist.lower().strip()
+
         candidates = []
         for t in tracks:
             try:
                 a_name = t['artist']['name'].strip()
                 t_name = t['name'].strip()
                 match  = float(t.get('match', 0))
-                if a_name and t_name and match > 0.02:
-                    candidates.append({
-                        'artist':        a_name,
-                        'name':          t_name,
-                        'reason':        '',   # generated later
-                        'lastfm_match':  match,
-                    })
+                if not a_name or not t_name or match <= 0.02:
+                    continue
+                # Skip noise: derivative / low-quality versions
+                t_lower = t_name.lower()
+                if any(nw in t_lower.split() for nw in _NOISE_WORDS):
+                    continue
+                # Skip same artist as seed (user wants DIFFERENT artists)
+                if a_name.lower().strip() == seed_artist_lower:
+                    continue
+                candidates.append({
+                    'artist':        a_name,
+                    'name':          t_name,
+                    'reason':        '',   # generated later
+                    'lastfm_match':  match,
+                })
             except (KeyError, ValueError, TypeError):
                 continue
 
