@@ -4,43 +4,52 @@ NLP Router — lightweight OpenAI-powered intent detection.
 This module is a strictly non-intrusive add-on.  It is called ONLY when the
 existing regex-based intent_router returns no match for a user message.
 
+Responsibilities (ONLY):
+  - detect user intent (lyrics / song / recommend / analyze / unknown)
+  - extract artist and song names from free-form text
+
 It does NOT:
   - generate recommendations
-  - fetch lyrics or song data
-  - produce analysis
+  - analyze songs
+  - fetch lyrics
+  - rewrite any bot responses
   - modify any existing service, handler, or scoring logic
 
-Its sole responsibility is to detect what the user wants (intent) and extract
-the artist/song entity from free-form text, returning structured output that
-the caller uses to route to an existing handler.
-
 Routing is always done by the caller (handlers.py) using existing functions.
+
+Confidence tiers (enforced by caller in handlers.py):
+  >= 0.7  → route to existing handler directly
+  0.4–0.7 → ask user to clarify
+  < 0.4   → ask user to use "Artist - Song" format
 """
 
 import os
 import json
 import logging
 import hashlib
-from typing import Dict, Optional
+from typing import Dict
 
 logger = logging.getLogger(__name__)
 
-# ── Model configuration ────────────────────────────────────────────────────
-# The user spec requests "gpt-5.4-mini"; that model does not exist in the
-# OpenAI API as of this implementation.  We default to gpt-4o-mini, which
-# is the established cost-efficient model for lightweight classification tasks.
-# Override by setting OPENAI_NLP_MODEL in environment.
-_MODEL = os.environ.get("OPENAI_NLP_MODEL", "gpt-4o-mini")
+# ── Model ──────────────────────────────────────────────────────────────────
+# gpt-5.4-mini confirmed available via OpenAI models API.
+# Override with OPENAI_NLP_MODEL env var if needed.
+_MODEL = os.environ.get("OPENAI_NLP_MODEL", "gpt-5.4-mini")
 
 # ── In-process cache ───────────────────────────────────────────────────────
-# Keyed by MD5 of lowercased input to avoid repeat API calls for identical
-# messages within the same process lifetime.
+# MD5 of lowercased input → result dict.  Same message never hits the API
+# twice within the same process lifetime.
 _CACHE: Dict[str, dict] = {}
 
 # ── System prompt ──────────────────────────────────────────────────────────
+# Placed inside the input list (not as `instructions`) so that the Responses
+# API json_object format requirement ("input must contain 'json'") is met —
+# this prompt contains the word "JSON".
 _SYSTEM_PROMPT = """\
-You are a music bot intent parser. Read the user's message and return ONLY a
-JSON object with this exact structure — no extra text:
+You are a music bot intent parser. Your only job is to read a user's natural
+language message and return a structured JSON object.
+
+Return ONLY this JSON object — no explanation, no extra text:
 
 {
   "intent": "lyrics | song | recommend | analyze | unknown",
@@ -49,19 +58,23 @@ JSON object with this exact structure — no extra text:
   "confidence": 0.0 to 1.0
 }
 
+Intent definitions:
+  lyrics    → user wants to read the lyrics of a song
+  song      → user wants info or a dashboard for a song
+  recommend → user wants song recommendations or similar songs
+  analyze   → user wants a deep lyric or theme analysis
+  unknown   → intent is unclear
+
 Rules:
-- intent values and their meanings:
-    lyrics    → user wants to read song lyrics
-    song      → user wants general info / dashboard for a song
-    recommend → user wants similar song suggestions
-    analyze   → user wants a deep lyric/theme analysis
-    unknown   → intent is unclear
-- confidence reflects how certain you are about the full result (0.0–1.0)
-- Extract artist and song only when you are confident they are correct
-- If you cannot identify artist or song reliably, set them to null
-- Do NOT invent or guess artist/song names
-- Return ONLY the JSON object — nothing else
+  - confidence is how sure you are about the full result (intent + entities)
+  - Extract artist and song ONLY when confident they are correct
+  - Do NOT invent or guess artist/song names
+  - If artist or song cannot be reliably identified, set to null
+  - Handle any natural language phrasing — do not assume specific keywords
+  - Return ONLY the JSON object, nothing else
 """
+
+_FALLBACK = {"intent": "unknown", "artist": None, "song": None, "confidence": 0.0}
 
 
 def _cache_key(text: str) -> str:
@@ -69,7 +82,7 @@ def _cache_key(text: str) -> str:
 
 
 def _get_client():
-    """Lazy-load OpenAI client.  Returns None if key is absent or package missing."""
+    """Lazy-load OpenAI client. Returns None if key absent or package missing."""
     try:
         from openai import OpenAI
         api_key = os.environ.get("OPENAI_API_KEY")
@@ -82,21 +95,18 @@ def _get_client():
         return None
 
 
-_FALLBACK = {"intent": "unknown", "artist": None, "song": None, "confidence": 0.0}
-
-
 def parse_intent(text: str) -> Dict:
     """
-    Send user text to OpenAI and return structured intent + entities.
+    Send user text to OpenAI Responses API and return structured intent + entities.
 
-    Returns a dict with keys:
-        intent     — one of: lyrics, song, recommend, analyze, unknown
+    Returns a dict:
+        intent     — lyrics | song | recommend | analyze | unknown
         artist     — extracted artist name or None
         song       — extracted song name or None
         confidence — float 0.0–1.0
 
-    Never raises.  Returns _FALLBACK on any failure so the caller degrades
-    gracefully to existing behaviour.
+    Never raises.  Returns _FALLBACK dict on any failure so the caller
+    degrades gracefully without breaking existing bot behaviour.
     """
     text = (text or "").strip()
     if not text:
@@ -112,23 +122,21 @@ def parse_intent(text: str) -> Dict:
         return dict(_FALLBACK)
 
     try:
-        # Chat Completions — stable across SDK versions and reliable with
-        # json_object response_format (Responses API json_object requires
-        # the literal word "json" in the user message, which our arbitrary
-        # user inputs won't always contain).
-        response = client.chat.completions.create(
+        # Use the OpenAI Responses API.
+        # The system prompt is placed as a "system" role message inside the
+        # `input` list — this satisfies the API's requirement that the input
+        # contains the word "json" when using text.format json_object mode.
+        response = client.responses.create(
             model=_MODEL,
-            messages=[
+            input=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user",   "content": text},
             ],
-            response_format={"type": "json_object"},
-            max_tokens=120,
-            temperature=0.0,
+            text={"format": {"type": "json_object"}},
         )
-        raw = response.choices[0].message.content.strip()
+        raw = response.output_text.strip()
     except Exception as e:
-        logger.error(f"[NLP] API call failed: {e}")
+        logger.error(f"[NLP] Responses API call failed ({type(e).__name__}): {e}")
         return dict(_FALLBACK)
 
     try:
@@ -149,8 +157,9 @@ def parse_intent(text: str) -> Dict:
     }
 
     logger.info(
-        f"[NLP] intent={result['intent']!r} artist={result['artist']!r} "
-        f"song={result['song']!r} conf={result['confidence']:.2f} | input={text!r}"
+        f"[NLP] model={_MODEL} intent={result['intent']!r} "
+        f"artist={result['artist']!r} song={result['song']!r} "
+        f"conf={result['confidence']:.2f} | input={text!r}"
     )
 
     _CACHE[key] = result
@@ -176,8 +185,7 @@ def build_query(result: Dict) -> str:
 def clarification_message(result: Dict) -> str:
     """
     Return a user-facing clarification prompt for medium-confidence results
-    (0.4 ≤ confidence < 0.7).  Tells the user what the bot thinks they meant
-    and how to confirm it precisely.
+    (0.4 <= confidence < 0.7).
     """
     artist = result.get("artist")
     song   = result.get("song")
@@ -214,4 +222,23 @@ def clarification_message(result: Dict) -> str:
         "🤔 I'm not quite sure what you're looking for.\n"
         "Use the format: `Artist - Song`\n\n"
         "Example: `The Weeknd - Blinding Lights`"
+    )
+
+
+def low_confidence_message() -> str:
+    """
+    Return a user-facing message for low-confidence results (< 0.4).
+    Asks the user to be more specific with the 'Artist - Song' format.
+    """
+    return (
+        "🎵 I wasn't able to understand your request.\n\n"
+        "Please use the format:\n"
+        "`Artist - Song`\n\n"
+        "Examples:\n"
+        "• `The Weeknd - Blinding Lights`\n"
+        "• `SZA - Kill Bill`\n"
+        "• `OneRepublic - Counting Stars`\n\n"
+        "Or use a command directly:\n"
+        "`/lyrics Artist - Song`\n"
+        "`/recommend Artist - Song`"
     )

@@ -263,15 +263,17 @@ def natural_language_handler(update: Update, context: CallbackContext):
         intent, query = detect_intent(text)
 
         if not intent:
-            # ── NLP fallback: OpenAI intent detection ─────────────────────────
-            # The regex router found no match.  Try the NLP layer as a fallback.
-            # This block is strictly isolated: it only routes to existing handlers
-            # and never generates content itself.
-            nlp_routed = False
+            # ── NLP fallback: OpenAI Responses API intent detection ────────────
+            # Triggered only when the regex router returns no match.
+            # Strictly isolated: only routes to existing handlers; never
+            # generates recommendations, lyrics, analysis, or any content.
             try:
-                from services.nlp_router import parse_intent as nlp_parse, \
-                    build_query as nlp_build_query, \
-                    clarification_message as nlp_clarify
+                from services.nlp_router import (
+                    parse_intent as nlp_parse,
+                    build_query as nlp_build_query,
+                    clarification_message as nlp_clarify,
+                    low_confidence_message as nlp_low_conf_msg,
+                )
 
                 nlp = nlp_parse(text)
                 nlp_intent = nlp.get("intent", "unknown")
@@ -296,34 +298,30 @@ def natural_language_handler(update: Update, context: CallbackContext):
                         )
                         update.message.chat.send_action(action="typing")
                         handler(update, context)
-                        nlp_routed = True
 
                 elif nlp_intent != "unknown" and nlp_conf >= 0.4:
                     # Medium confidence — ask the user to confirm before acting.
                     msg = nlp_clarify(nlp)
                     logger.info(
-                        f"[NLP] Clarification: user={user_id} "
+                        f"[NLP] Clarification sent: user={user_id} "
                         f"intent={nlp_intent!r} conf={nlp_conf:.2f}"
                     )
                     update.message.reply_text(msg, parse_mode='Markdown')
-                    nlp_routed = True
 
-                # Low confidence (< 0.4) falls through to the existing path below.
+                else:
+                    # Low confidence or unknown — ask the user to be specific.
+                    logger.info(
+                        f"[NLP] Low-conf fallback: user={user_id} "
+                        f"intent={nlp_intent!r} conf={nlp_conf:.2f}"
+                    )
+                    update.message.reply_text(
+                        nlp_low_conf_msg(), parse_mode='Markdown'
+                    )
 
             except Exception as nlp_err:
+                # Any NLP failure must not break existing bot behaviour.
                 logger.warning(f"[NLP] Fallback error for user {user_id}: {nlp_err}")
 
-            if nlp_routed:
-                return
-
-            # ── Existing short-text ambiguous-button path ─────────────────────
-            if len(text.split()) <= 3 and not text.startswith('/'):
-                clean = _clean_ambiguous_query(text)
-                logger.info(f"Ambiguous input from user {user_id}: '{text}' -> clean='{clean}'")
-                update.message.reply_text(
-                    f"What would you like for \"{clean}\"?",
-                    reply_markup=ambiguous_buttons(clean)
-                )
             return
 
         logger.info(f"NL intent for user {user_id}: intent='{intent}', query='{query}', raw='{text}'")

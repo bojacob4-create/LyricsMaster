@@ -1,0 +1,69 @@
+This is close, but it is not fully aligned with the requested implementation.
+
+Please make the following corrections so the NLP layer matches the original specification exactly, while remaining completely non-intrusive and safe to the existing system:
+
+1) Use the requested model:
+gpt-5.4-mini
+Do not use gpt-4o-mini.
+
+2) Use the OpenAI Responses API as requested.
+Do not switch to Chat Completions unless there is a confirmed blocking issue, and if so, explain it clearly first.
+
+3) Keep the OpenAI API usage strictly limited to:
+- intent detection
+- artist/song extraction
+
+It must NOT be used for:
+- generating recommendations
+- analyzing songs
+- fetching lyrics
+- rewriting responses
+
+All existing services must remain exactly as they are.
+
+4) Match the confidence behavior exactly:
+- confidence >= 0.7 → route normally to existing handlers
+- confidence between 0.4 and 0.7 → return a clear clarification message
+- confidence < 0.4 → return a clear fallback asking the user to specify:
+  "Artist - Song"
+
+Do NOT fall through to any existing ambiguous or legacy behavior for low confidence.
+
+5) Ensure the router returns the exact structured JSON format:
+{
+  "intent": "lyrics | song | recommend | analyze | unknown",
+  "artist": "string or null",
+  "song": "string or null",
+  "confidence": 0.0-1.0
+}
+
+6) The NLP layer must remain strictly a non-intrusive ADD-ON:
+- Do NOT modify any existing command handlers
+- Do NOT change recommendation logic, scoring, ecosystems, or services
+- Do NOT alter output formatting
+- Only route to existing internal functions
+
+7) VERY IMPORTANT:
+The NLP system must GENERALIZE to real natural language input.
+
+It must NOT be tuned only to the specific test examples used in the workflow.
+
+It should correctly handle varied user inputs such as:
+- "i want lyrics for hello"
+- "show me songs like blinding lights"
+- "analyze kill bill"
+- "weeknd blinding lights"
+- "lyrics for counting stars by onerepublic"
+- "give me similar songs to water"
+
+Important:
+- Do NOT hardcode logic for specific phrases
+- Do NOT optimize only for test cases
+- The parser must work for a wide range of natural language variations
+
+8) Fallback safety:
+If anything fails in the NLP layer, it must fail safely and allow the existing system to continue working normally.
+
+The current bot behavior must NEVER be broken by this addition.
+
+Please update the implementation accordingly and confirm that all rules above are strictly followed.
