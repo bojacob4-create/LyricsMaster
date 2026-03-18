@@ -367,27 +367,64 @@ def natural_language_handler(update: Update, context: CallbackContext):
                         update.message.chat.send_action(action="typing")
                         handler(update, context)
 
-                elif final == "clarify":
-                    # ── Disambiguation layer ───────────────────────────────
-                    # When a song name was extracted but no artist is known,
-                    # search Last.fm for real matches and present them.
-                    # This replaces generic clarification with verified data.
-                    # Falls back to generic clarify on any search failure.
-                    if nlp_song and not nlp_artist:
-                        try:
-                            candidates = nlp_search_candidates(nlp_song)
-                            msg = nlp_disambig_msg(nlp_song, nlp_intent, candidates)
-                        except Exception as _de:
-                            logger.warning(f"[NLP] Disambiguation failed: {_de}")
-                            msg = nlp_clarify(nlp)
-                    else:
-                        msg = nlp_clarify(nlp)
-                    update.message.reply_text(msg, parse_mode='Markdown')
+                else:
+                    # ── Unified non-execute path ───────────────────────────
+                    # Disambiguation is triggered by ENTITY STATE, not by
+                    # the confidence tier.
+                    #
+                    # Rule A: Song extracted, artist missing.
+                    #   Always search Last.fm and show real candidates.
+                    #   Applies even if final=low_conf.
+                    #
+                    # Rule B: No entities extracted, input ≤ 2 words.
+                    #   The short text itself may be a song name.
+                    #   Try Last.fm with the raw input as song name.
+                    #   If results found → show them; otherwise show format prompt.
+                    #
+                    # Rule C: Generic clarify / format prompt.
+                    #   Shown when A and B don't apply or Last.fm returns nothing.
 
-                else:  # low_conf
-                    update.message.reply_text(
-                        nlp_low_conf_msg(), parse_mode='Markdown'
-                    )
+                    _raw_words = text.strip().split()
+                    song_to_search = None
+
+                    if nlp_song and not nlp_artist:
+                        # Rule A — song was extracted, no artist
+                        song_to_search = nlp_song
+
+                    elif not nlp_song and not nlp_artist and len(_raw_words) <= 2:
+                        # Rule B — short unrecognised input could be a song title
+                        song_to_search = text.strip()
+
+                    if song_to_search:
+                        try:
+                            candidates = nlp_search_candidates(song_to_search)
+                            if candidates:
+                                _display_intent = (
+                                    nlp_intent
+                                    if nlp_intent != "unknown"
+                                    else "song"
+                                )
+                                msg = nlp_disambig_msg(
+                                    song_to_search, _display_intent, candidates
+                                )
+                            else:
+                                # Last.fm found nothing — ask for format
+                                msg = nlp_low_conf_msg()
+                        except Exception as _de:
+                            logger.warning(f"[NLP] Disambiguation error: {_de}")
+                            msg = (
+                                nlp_clarify(nlp)
+                                if final == "clarify"
+                                else nlp_low_conf_msg()
+                            )
+                    elif final == "clarify":
+                        # Rule C — we have partial info but no song to search
+                        msg = nlp_clarify(nlp)
+                    else:
+                        # Rule C — genuine low confidence, nothing actionable
+                        msg = nlp_low_conf_msg()
+
+                    update.message.reply_text(msg, parse_mode='Markdown')
 
             except Exception as nlp_err:
                 # Any NLP failure must never break existing bot behaviour.

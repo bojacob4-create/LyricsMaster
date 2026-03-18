@@ -42,8 +42,17 @@ logger = logging.getLogger(__name__)
 
 # ── Last.fm search constants ───────────────────────────────────────────────
 _LASTFM_BASE   = "http://ws.audioscrobbler.com/2.0/"
-_SEARCH_LIMIT  = 5    # fetch 5, show at most 3
-_DOM_RATIO     = 5.0  # top result is dominant if listeners ≥ DOM_RATIO × #2
+_SEARCH_LIMIT  = 8    # fetch more so we have room to filter
+_DOM_RATIO     = 4.0  # top result is dominant if listeners ≥ DOM_RATIO × #2
+
+# ── Candidate quality filter ───────────────────────────────────────────────
+# Words that indicate a track is not a clean original — covers, remixes, etc.
+# Applied to the TRACK NAME (case-insensitive).  Never applied to artist name.
+_FILTER_WORDS = frozenset({
+    "remix", "cover", "karaoke", "instrumental", "version",
+    "lyrics", "tribute", "acoustic", "piano", "mashup",
+    "medley", "parody", "reprise", "edit", "remaster",
+})
 
 
 def search_song_candidates(song_name: str) -> List[Dict]:
@@ -89,17 +98,31 @@ def search_song_candidates(song_name: str) -> List[Dict]:
             artist_name = (t.get("artist") or "").strip()
             track_name  = (t.get("name")   or "").strip()
             listeners   = int(t.get("listeners", 0) or 0)
-            if artist_name and track_name:
-                results.append({
-                    "artist":    artist_name,
-                    "song":      track_name,
-                    "listeners": listeners,
-                })
+            if not artist_name or not track_name:
+                continue
+            # Quality filter: skip covers, remixes, karaoke, etc.
+            # Check each word in track name against the filter list.
+            track_lower = track_name.lower()
+            if any(fw in track_lower for fw in _FILTER_WORDS):
+                logger.debug(
+                    f"[NLP][search] filtered dirty track: "
+                    f"{artist_name!r} - {track_name!r}"
+                )
+                continue
+            results.append({
+                "artist":    artist_name,
+                "song":      track_name,
+                "listeners": listeners,
+            })
 
         # Sort by listener count descending; Last.fm already returns them
-        # ranked, but an explicit sort makes the contract clear.
+        # ranked, but an explicit sort makes the contract explicit.
         results.sort(key=lambda x: x["listeners"], reverse=True)
-        logger.debug(f"[NLP][search] song={song_name!r} → {len(results)} candidates")
+        # Cap at 3 clean results
+        results = results[:3]
+        logger.debug(
+            f"[NLP][search] song={song_name!r} → {len(results)} clean candidates"
+        )
         return results
 
     except Exception as e:
@@ -221,8 +244,13 @@ Return ONLY this JSON object — no explanation, no extra text:
 
 === INTENT DEFINITIONS ===
   lyrics    → user wants to READ the lyrics of a specific song
-  song      → user wants info or a dashboard for a specific song
-  recommend → user wants song recommendations or songs similar to something
+  song      → user wants info or a dashboard for ONE specific song
+  recommend → user wants song recommendations or songs similar to something,
+              OR wants to discover music from/like a specific artist.
+              Use recommend when the user says "play something by X",
+              "songs by X", "music by X", "give me songs by X",
+              "play songs by X", or any phrasing that means
+              "show me music FROM this artist" without naming one song.
   analyze   → user wants a deep lyric or theme analysis of a specific song
   unknown   → intent is not clear or not music-related
 
@@ -271,8 +299,11 @@ Rules for when confidence may be HIGH (0.70+):
   "lyrics blinding lights" → intent=lyrics artist=null song=Blinding Lights conf=0.55
   "show lyrics" → intent=lyrics artist=null song=null conf=0.10
   "recommend me something like tame impala" → intent=recommend artist=Tame Impala song=null conf=0.82
-  "analyze kill bill by sza" → intent=analyze artist=SZA song=Kill Bill conf=0.95
+  "analyze kill bill by sza"   → intent=analyze  artist=SZA        song=Kill Bill  conf=0.95
   "songs like counting stars onerepublic" → intent=recommend artist=OneRepublic song=Counting Stars conf=0.92
+  "play something by adele"    → intent=recommend artist=Adele      song=null      conf=0.85
+  "play songs by drake"        → intent=recommend artist=Drake      song=null      conf=0.85
+  "give me music by the weeknd"→ intent=recommend artist=The Weeknd song=null      conf=0.85
   "pizza" → intent=unknown artist=null song=null conf=0.02
 
 Return ONLY the JSON object.
@@ -418,10 +449,31 @@ def parse_intent(text: str) -> Dict:
     if intent not in ("lyrics", "song", "recommend", "analyze", "unknown"):
         intent = "unknown"
 
+    raw_song   = data.get("song") or None
+    raw_artist = data.get("artist") or None
+
+    # ── Post-model corrections ─────────────────────────────────────────────
+
+    # 1) Null out placeholder song names the model sometimes fabricates.
+    #    e.g. "play something by drake" → song="something" → null it.
+    if raw_song and raw_song.lower().strip() in _PLACEHOLDER_SONGS:
+        logger.debug(f"[NLP] Nulled placeholder song={raw_song!r}")
+        raw_song = None
+
+    # 2) Reclassify intent=song to intent=recommend when the user wants music
+    #    FROM an artist (artist present, no specific song identified).
+    #    "play something by X" / "give me songs by X" patterns.
+    #    The model sometimes returns intent=song for these.
+    if intent == "song" and raw_artist and not raw_song:
+        logger.debug(
+            f"[NLP] Reclassified song→recommend: artist={raw_artist!r} song=None"
+        )
+        intent = "recommend"
+
     result = {
         "intent":     intent,
-        "artist":     data.get("artist") or None,
-        "song":       data.get("song") or None,
+        "artist":     raw_artist,
+        "song":       raw_song,
         "confidence": float(data.get("confidence", 0.0)),
     }
 
