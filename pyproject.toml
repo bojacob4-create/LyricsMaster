@@ -27,4 +27,5 @@ dependencies = [
     "flask-wtf>=1.2.2",
     "uwsgi>=2.0.28",
     "apscheduler>=3.6.3",
+    "openai>=2.29.0",
 ]
