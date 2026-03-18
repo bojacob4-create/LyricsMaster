@@ -468,8 +468,7 @@ def natural_language_handler(update: Update, context: CallbackContext):
             # ── Unified non-execute path ───────────────────────────────────
             # Disambiguation is driven by ENTITY STATE, not confidence tier.
             #
-            # Rule A: Song extracted, artist missing → try full-text first,
-            #         then Last.fm candidates if that fails.
+            # Rule A: Song extracted, artist missing → Last.fm candidates.
             # Rule B: ≤2 words, no entities extracted → try text as song name.
             # Rule C: No song to search → generic clarify / format prompt.
 
@@ -477,24 +476,6 @@ def natural_language_handler(update: Update, context: CallbackContext):
             song_to_search = None
 
             if nlp_song and not nlp_artist:
-                # NLP found a song fragment but lost the artist context (common
-                # when the artist name is misspelled).  Before falling back to
-                # song-only disambiguation, try resolving the FULL input through
-                # the lyrics engine — which handles typos via lrclib fuzzy search.
-                try:
-                    from input_parser import search_lyrics_with_fallback as _sfw
-                    _r_a, _r_s, _r_lyr, _ = _sfw(text.strip())
-                    if _r_lyr and _r_a and _r_s:
-                        _resolved = f"{_r_a} - {_r_s}"
-                        context.args = _resolved.split()
-                        update.message.chat.send_action(action="typing")
-                        _disp_intent = (
-                            nlp_intent if nlp_intent in _nlp_handler_map else "song"
-                        )
-                        _nlp_handler_map.get(_disp_intent, song_command)(update, context)
-                        return
-                except Exception:
-                    pass
                 song_to_search = nlp_song
             elif not nlp_song and not nlp_artist and len(_raw_words) <= 2:
                 song_to_search = text.strip()
@@ -1707,8 +1688,6 @@ def _is_artist_only_query(query: str) -> bool:
             return True
         if set(query_words) < set(name_words):
             return True
-    if len(clean.split()) >= 3:
-        return False
     try:
         import requests
         api_key = os.environ.get('LASTFM_API_KEY')
@@ -1717,7 +1696,7 @@ def _is_artist_only_query(query: str) -> bool:
                 'https://ws.audioscrobbler.com/2.0/',
                 params={'method': 'artist.getInfo', 'artist': clean,
                         'api_key': api_key, 'format': 'json'},
-                timeout=2
+                timeout=5
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -1726,6 +1705,21 @@ def _is_artist_only_query(query: str) -> bool:
                 listeners = int(artist_data.get('stats', {}).get('listeners', '0'))
                 if listeners > 5000 and len(bio_content) > 50:
                     return True
+    except Exception:
+        pass
+    try:
+        import requests
+        resp = requests.get(
+            'https://en.wikipedia.org/api/rest_v1/page/summary/' + clean.replace(' ', '_'),
+            timeout=5, headers={'User-Agent': 'LyricsMasterBot/1.0'}
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            desc = (data.get('description', '') or '').lower()
+            extract = (data.get('extract', '') or '').lower()
+            music_words = ['singer', 'rapper', 'musician', 'songwriter', 'artist', 'band', 'group', 'vocalist', 'producer', 'dj', 'mc']
+            if any(w in desc for w in music_words) or any(w in extract[:300] for w in music_words):
+                return True
     except Exception:
         pass
     return False
@@ -1797,12 +1791,7 @@ def song_command(update: Update, context: CallbackContext):
             )
             return
 
-        # Single source of truth: corrected artist/song from the lookup.
-        # Fall back to the raw query parts only if the service returned nothing.
-        final_artist = artist if artist else query
-        final_song   = song   if song   else query
-
-        display_title = f"{final_artist} - {final_song}" if artist and song else (artist or song or query)
+        display_title = f"{artist} - {song}" if artist and song else (artist or song)
 
         mood = detect_song_mood(lyrics)
         stats = get_song_statistics(lyrics)
@@ -1819,10 +1808,13 @@ def song_command(update: Update, context: CallbackContext):
         if len(lyrics_lines) > 4:
             lyrics_preview += "\n  ..."
 
-        yt_url = get_youtube_link(final_artist, final_song)
+        use_artist = artist if artist else query
+        use_song = song if song else query
+
+        yt_url = get_youtube_link(use_artist, use_song)
         yt_section = f"🎬 {yt_url}" if yt_url else "🎬 YouTube: not found"
 
-        recs = get_similar_songs(final_artist, final_song, mood)
+        recs = get_similar_songs(use_artist, use_song, mood)
         recs_lines = []
         for i, r in enumerate(recs[:3]):
             emoji = ['🔥', '✨', '💫'][i]
@@ -1852,8 +1844,8 @@ def song_command(update: Update, context: CallbackContext):
             f"  🎭 Themes: {themes_text}\n\n"
             f"🎵 Similar Songs:\n{recs_text}\n\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🎤 /lyrics {final_artist} - {final_song} — full lyrics\n"
-            f"🔍 /analyze {final_artist} - {final_song} — deep analysis"
+            f"🎤 /lyrics {query} — full lyrics\n"
+            f"🔍 /analyze {query} — deep analysis"
         )
 
         btn_query = display_title if display_title else query

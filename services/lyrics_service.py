@@ -11,14 +11,6 @@ from requests.packages.urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
 
-_PUNCT_RE = re.compile(r"[^\w\s]")
-
-
-def _word_set(text: str) -> set:
-    text = text.lower().replace('-', ' ')
-    return set(w for w in _PUNCT_RE.sub("", text).split() if w)
-
-
 session = requests.Session()
 retries = Retry(
     total=3,
@@ -31,7 +23,7 @@ session.mount('http://', adapter)
 session.mount('https://', adapter)
 
 
-def _fetch_from_lrclib_direct(artist: str, song: str) -> Optional[Tuple[str, str, str]]:
+def _fetch_from_lrclib_direct(artist: str, song: str) -> Optional[str]:
     if not artist or not song:
         return None
     try:
@@ -44,24 +36,20 @@ def _fetch_from_lrclib_direct(artist: str, song: str) -> Optional[Tuple[str, str
             data = response.json()
             lyrics = data.get('plainLyrics', '')
             if lyrics and len(lyrics) > 30:
-                api_artist = data.get('artistName') or artist
-                api_track = data.get('trackName') or song
-                logger.info(f"lrclib direct hit: '{api_artist} - {api_track}'")
-                return api_artist, api_track, _clean_lyrics(lyrics)
+                logger.info(f"lrclib direct hit: artist='{artist}', song='{song}'")
+                return _clean_lyrics(lyrics)
     except Exception as e:
         logger.debug(f"lrclib direct failed: {e}")
     return None
 
 
 def _track_relevance(query_lower: str, artist: str, track: str) -> int:
-    query_words = _word_set(query_lower)
-    song_words = _word_set(artist) | _word_set(track)
-    if not song_words or not query_words:
-        return 0
-    overlap = len(song_words & query_words)
-    query_cov = overlap / len(query_words)
-    song_cov = overlap / len(song_words)
-    return int((query_cov + song_cov) * 50)
+    query_words = set(query_lower.split())
+    track_words = set(track.lower().split())
+    artist_words = set(artist.lower().split())
+    track_overlap = len(track_words & query_words)
+    artist_overlap = len(artist_words & query_words)
+    return artist_overlap * 10 + track_overlap * 20
 
 
 def _fetch_from_lrclib_search(query: str) -> Optional[Tuple[str, str, str]]:
@@ -86,7 +74,7 @@ def _fetch_from_lrclib_search(query: str) -> Optional[Tuple[str, str, str]]:
                         if score > best_score:
                             best_score = score
                             best = (found_artist, found_track, _clean_lyrics(lyrics))
-                if best and best_score > 0:
+                if best:
                     logger.info(f"lrclib search hit: '{best[0]} - {best[1]}' (score={best_score}) for query '{query}'")
                     return best
     except Exception as e:
@@ -144,11 +132,11 @@ def get_song_lyrics(artist: str, song: str) -> Optional[str]:
         if search_artist and search_song:
             result = _fetch_from_lrclib_direct(search_artist, search_song)
             if result:
-                return result[2]
+                return result
 
             result = _fetch_from_lrclib_direct(search_song, search_artist)
             if result:
-                return result[2]
+                return result
 
         search_queries = []
         if search_artist and search_song:
@@ -194,13 +182,12 @@ def search_song_info(artist: str, song: str) -> Optional[Tuple[str, str, str]]:
         if search_artist and search_song:
             result = _fetch_from_lrclib_direct(search_artist, search_song)
             if result:
-                return result
+                return search_artist, search_song, result
 
         search_queries = []
         if search_artist and search_song:
             search_queries.append(f"{search_artist} {search_song}")
-        if not search_artist or len(search_song.split()) > 1:
-            search_queries.append(search_song)
+        search_queries.append(search_song)
 
         for query in search_queries:
             result = _fetch_from_lrclib_search(query)
