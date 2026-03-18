@@ -129,7 +129,7 @@ def get_youtube_link(artist: str, song: str) -> Optional[str]:
             encoded_query = quote(query)
             search_url = f"https://www.youtube.com/results?search_query={encoded_query}"
 
-            r = session.get(search_url, timeout=10)
+            r = session.get(search_url, timeout=5)
             if r.status_code != 200:
                 continue
 

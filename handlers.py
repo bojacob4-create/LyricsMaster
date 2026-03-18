@@ -2,6 +2,8 @@ import logging
 import os
 import re
 import requests
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackContext, MessageHandler, Filters, CommandHandler
 from telegram.error import TelegramError
@@ -36,7 +38,8 @@ from utils import (
     get_song_statistics,
     format_statistics,
     get_detailed_song_analysis,
-    format_detailed_analysis
+    format_detailed_analysis,
+    detect_themes,
 )
 from services.youtube_service import get_youtube_link, format_youtube_response
 from services.youtube_downloader_service import download_youtube_video, download_youtube_audio, download_audio_for_song, cleanup_video
@@ -1674,6 +1677,7 @@ def trending_command(update: Update, context: CallbackContext):
         )
 
 
+@lru_cache(maxsize=200)
 def _is_artist_only_query(query: str) -> bool:
     clean = clean_input(query)
     if '-' in clean:
@@ -1780,7 +1784,6 @@ def song_command(update: Update, context: CallbackContext):
 
         mood = detect_song_mood(lyrics)
         stats = get_song_statistics(lyrics)
-        analysis = get_detailed_song_analysis(lyrics)
 
         mood_emoji = {
             'happy': '😊', 'sad': '😢', 'romantic': '💖',
@@ -1796,10 +1799,15 @@ def song_command(update: Update, context: CallbackContext):
         use_artist = artist if artist else query
         use_song = song if song else query
 
-        yt_url = get_youtube_link(use_artist, use_song)
+        # Run YouTube + recommendations in parallel — both are independent HTTP calls
+        with ThreadPoolExecutor(max_workers=2) as _pool:
+            _yt_fut  = _pool.submit(get_youtube_link, use_artist, use_song)
+            _rec_fut = _pool.submit(get_similar_songs, use_artist, use_song, mood)
+            yt_url = _yt_fut.result()
+            recs   = _rec_fut.result()
+
         yt_section = f"🎬 {yt_url}" if yt_url else "🎬 YouTube: not found"
 
-        recs = get_similar_songs(use_artist, use_song, mood)
         recs_lines = []
         for i, r in enumerate(recs[:3]):
             emoji = ['🔥', '✨', '💫'][i]
@@ -1814,7 +1822,7 @@ def song_command(update: Update, context: CallbackContext):
         else:
             vocab_label = "Repetitive"
 
-        themes = analysis.get('themes', [])
+        themes = detect_themes(lyrics)
         themes_text = ', '.join(t.title() for t in themes[:3]) if themes else 'General'
 
         response = (
@@ -1921,9 +1929,6 @@ def random_command(update: Update, context: CallbackContext):
 
         display_title = f"{artist} - {song}" if artist and song else (artist or song or f"{artist_name} - {song_name}")
 
-        yt_url = get_youtube_link(artist_name, song_name)
-        yt_section = f"🎬 {yt_url}" if yt_url else ""
-
         lyrics_preview = ""
         if lyrics:
             lyrics_lines = [l.strip() for l in lyrics.strip().split('\n') if l.strip()]
@@ -1938,7 +1943,14 @@ def random_command(update: Update, context: CallbackContext):
             'energetic': '⚡', 'relaxed': '😌'
         }.get(mood, '🎵')
 
-        recs = get_similar_songs(artist_name, song_name, mood)
+        # Run YouTube + recommendations in parallel
+        with ThreadPoolExecutor(max_workers=2) as _pool:
+            _yt_fut  = _pool.submit(get_youtube_link, artist_name, song_name)
+            _rec_fut = _pool.submit(get_similar_songs, artist_name, song_name, mood)
+            yt_url = _yt_fut.result()
+            recs   = _rec_fut.result()
+
+        yt_section = f"🎬 {yt_url}" if yt_url else ""
         recs_lines = []
         for i, r in enumerate(recs[:3]):
             emoji = ['🔥', '✨', '💫'][i]

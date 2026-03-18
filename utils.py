@@ -239,9 +239,6 @@ def analyze_rhyme_pattern(lyrics: str) -> Dict:
 
 def get_detailed_song_analysis(lyrics: str) -> Dict:
     """Get comprehensive song analysis including mood, structure, and rhymes."""
-    from typing import List, Dict
-    import re
-
     basic_stats = get_song_statistics(lyrics)
     rhyme_analysis = analyze_rhyme_pattern(lyrics)
     mood = detect_song_mood(lyrics)

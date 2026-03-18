@@ -1,0 +1,110 @@
+Subject: Investigate latency in /song flow + validate outputs via logs
+
+Proceed with a focused investigation on the /song command and song dashboard flow.
+
+⸻
+
+🎯 Objective
+
+Identify why there is still noticeable latency when:
+	•	using /song <query>
+	•	or when a song is triggered via natural language (same dashboard)
+
+Even when results are correct, the response time is slower than expected.
+
+⸻
+
+🔍 What you need to do
+
+1. Trace full execution flow
+
+For a typical request (e.g. /song halo or love kendrick):
+	•	Follow the request from input → final response
+	•	Measure where time is spent at each step
+
+Break it down into:
+	•	parsing / routing
+	•	artist-only detection
+	•	lyrics fetching
+	•	fallback paths
+	•	enrichment (YouTube, stats, analysis, recommendations)
+	•	response building
+
+⸻
+
+2. Analyze logs (critical)
+	•	Read the live logs during real requests
+	•	Identify:
+	•	slow API calls
+	•	retries
+	•	fallback chains being triggered unnecessarily
+	•	duplicate calls
+	•	any errors or warnings affecting flow
+
+👉 Use logs to correlate:
+	•	input → internal steps → output timing
+
+⸻
+
+3. Identify latency sources
+
+Look specifically for:
+	•	sequential API calls that could be avoided
+	•	fallbacks triggering even when a valid result already exists
+	•	unnecessary enrichment steps blocking response
+	•	functions that always execute even when not needed
+
+⸻
+
+4. Validate output correctness from logs
+	•	Compare:
+	•	user input
+	•	resolved artist/song
+	•	final output shown to user
+	•	Detect:
+	•	wrong matches
+	•	inconsistent naming
+	•	fallback overriding correct results
+	•	any mismatch between API response and displayed result
+
+⸻
+
+5. Fix issues carefully
+	•	Reduce latency without breaking current working behavior
+	•	Do NOT remove important functionality
+	•	Do NOT increase model usage
+	•	Do NOT introduce new flows
+
+Focus on:
+	•	early exit when confident result is found
+	•	avoiding unnecessary calls
+	•	keeping responses fast and stable
+
+⸻
+
+⚠️ Important constraints
+	•	Preserve all current correct outputs
+	•	Do not modify working logic unless it directly affects latency or correctness
+	•	Keep changes minimal and targeted
+
+⸻
+
+✅ Expected result
+	•	/song responses are noticeably faster
+	•	no unnecessary delays before showing the dashboard
+	•	logs show clean, efficient execution (no redundant calls)
+	•	outputs remain correct and consistent
+
+⸻
+
+📌 Deliver back
+
+Provide:
+	1.	where latency was occurring
+	2.	what caused it
+	3.	what was changed
+	4.	confirmation via logs or traced flow
+
+⸻
+
+Do not wait for further instructions — proceed with full investigation and fixes.
