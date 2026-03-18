@@ -1,7 +1,7 @@
 import re
 import logging
 from typing import Optional, Tuple, List
-from services.lyrics_service import get_song_lyrics, search_song_info
+from services.lyrics_service import search_song_info
 
 logger = logging.getLogger(__name__)
 
@@ -86,26 +86,26 @@ def search_lyrics_with_fallback(raw_input: str) -> Tuple[Optional[str], Optional
 
         if artist_part and song_part:
             logger.info(f"Trying direct: artist='{artist_part}', song='{song_part}'")
-            lyrics = get_song_lyrics(artist_part, song_part)
-            if lyrics:
-                return artist_part, song_part, lyrics, "direct"
+            result = search_song_info(artist_part, song_part)
+            if result:
+                return result[0], result[1], result[2], "direct"
 
             logger.info(f"Trying swapped: artist='{song_part}', song='{artist_part}'")
-            lyrics = get_song_lyrics(song_part, artist_part)
-            if lyrics:
-                return song_part, artist_part, lyrics, "swapped"
+            result = search_song_info(song_part, artist_part)
+            if result:
+                return result[0], result[1], result[2], "swapped"
 
     elif '-' in cleaned and not cleaned.startswith('-'):
         parts = cleaned.split('-', 1)
         artist_part = parts[0].strip()
         song_part = parts[1].strip()
         if artist_part and song_part:
-            lyrics = get_song_lyrics(artist_part, song_part)
-            if lyrics:
-                return artist_part, song_part, lyrics, "direct"
-            lyrics = get_song_lyrics(song_part, artist_part)
-            if lyrics:
-                return song_part, artist_part, lyrics, "swapped"
+            result = search_song_info(artist_part, song_part)
+            if result:
+                return result[0], result[1], result[2], "direct"
+            result = search_song_info(song_part, artist_part)
+            if result:
+                return result[0], result[1], result[2], "swapped"
 
     result = search_song_info('', cleaned)
     if result:
@@ -119,13 +119,15 @@ def search_lyrics_with_fallback(raw_input: str) -> Tuple[Optional[str], Optional
             part1 = ' '.join(words[:i])
             part2 = ' '.join(words[i:])
 
-            lyrics = get_song_lyrics(part1, part2)
-            if lyrics:
-                return part1, part2, lyrics, "word_split"
+            result = search_song_info(part1, part2)
+            if result:
+                found_artist, found_track, lyrics = result
+                return found_artist, found_track, lyrics, "word_split"
 
-            lyrics = get_song_lyrics(part2, part1)
-            if lyrics:
-                return part2, part1, lyrics, "word_split_swap"
+            result = search_song_info(part2, part1)
+            if result:
+                found_artist, found_track, lyrics = result
+                return found_artist, found_track, lyrics, "word_split_swap"
 
     logger.info(f"All search attempts failed for: '{raw_input}'")
     return None, None, None, "not_found"

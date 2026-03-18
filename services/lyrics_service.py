@@ -23,7 +23,7 @@ session.mount('http://', adapter)
 session.mount('https://', adapter)
 
 
-def _fetch_from_lrclib_direct(artist: str, song: str) -> Optional[str]:
+def _fetch_from_lrclib_direct(artist: str, song: str) -> Optional[Tuple[str, str, str]]:
     if not artist or not song:
         return None
     try:
@@ -36,8 +36,10 @@ def _fetch_from_lrclib_direct(artist: str, song: str) -> Optional[str]:
             data = response.json()
             lyrics = data.get('plainLyrics', '')
             if lyrics and len(lyrics) > 30:
-                logger.info(f"lrclib direct hit: artist='{artist}', song='{song}'")
-                return _clean_lyrics(lyrics)
+                api_artist = data.get('artistName') or artist
+                api_track = data.get('trackName') or song
+                logger.info(f"lrclib direct hit: '{api_artist} - {api_track}'")
+                return api_artist, api_track, _clean_lyrics(lyrics)
     except Exception as e:
         logger.debug(f"lrclib direct failed: {e}")
     return None
@@ -132,11 +134,11 @@ def get_song_lyrics(artist: str, song: str) -> Optional[str]:
         if search_artist and search_song:
             result = _fetch_from_lrclib_direct(search_artist, search_song)
             if result:
-                return result
+                return result[2]
 
             result = _fetch_from_lrclib_direct(search_song, search_artist)
             if result:
-                return result
+                return result[2]
 
         search_queries = []
         if search_artist and search_song:
@@ -182,7 +184,7 @@ def search_song_info(artist: str, song: str) -> Optional[Tuple[str, str, str]]:
         if search_artist and search_song:
             result = _fetch_from_lrclib_direct(search_artist, search_song)
             if result:
-                return search_artist, search_song, result
+                return result
 
         search_queries = []
         if search_artist and search_song:

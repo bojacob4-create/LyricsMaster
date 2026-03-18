@@ -1688,6 +1688,8 @@ def _is_artist_only_query(query: str) -> bool:
             return True
         if set(query_words) < set(name_words):
             return True
+    if len(clean.split()) >= 3:
+        return False
     try:
         import requests
         api_key = os.environ.get('LASTFM_API_KEY')

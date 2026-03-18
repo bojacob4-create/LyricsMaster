@@ -1,0 +1,51 @@
+I tested the latest build again, and the issue is still not fully resolved.
+
+The core problem remains:
+
+When a misspelled query is corrected internally, the bot is still displaying and reusing the uncorrected version in parts of the output. In the latest test with:
+“duaa lipa one kiss”
+
+the response still shows:
+	•	title/header using the misspelled form
+	•	inline text links using the misspelled form
+	•	follow-up output continuing to use the misspelled form
+
+So the corrected entity is either not being propagated consistently, or some parts of the flow are still reading from the raw query instead of the resolved one.
+
+There is also a second issue now:
+the response feels slower / laggier than before.
+
+That suggests there may be:
+	•	duplicated work
+	•	dead or overlapping logic
+	•	repeated lookups
+	•	old code paths still executing alongside the newer ones
+	•	unnecessary fallback chains
+	•	state or normalization code being applied more than once
+
+Please do a full scan of the relevant codebase and treat this as a code health review, not just a one-line patch.
+
+What to investigate:
+	•	any place still using raw query after correction/resolution
+	•	overlapping normalization paths
+	•	duplicated handler logic
+	•	stale fallback branches
+	•	old code that is no longer needed but still runs
+	•	multiple command flows doing similar work separately
+	•	anything that may be causing extra latency or inconsistent output state
+
+Important:
+	•	Do not break the working logic
+	•	Do not remove the progress we achieved in NLP, routing, disambiguation, confirmation handling, or structured input support
+	•	Do not change behavior that is already correct
+	•	Keep the current successful flows intact
+
+Goal:
+Make the full code healthier, cleaner, and more consistent, while preserving all working behavior.
+
+Please verify with real end-to-end tests after the review, especially around:
+	•	misspelled artist/song input
+	•	corrected entity propagation across title, text links, buttons, callbacks, and follow-up actions
+	•	response speed / latency compared to before
+
+This needs a careful full review, not a narrow patch.
