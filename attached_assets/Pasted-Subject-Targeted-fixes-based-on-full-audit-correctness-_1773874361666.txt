@@ -1,0 +1,211 @@
+Subject: Targeted fixes based on full audit — correctness, latency, and efficiency
+
+Apply the following changes exactly as specified. This is a focused correction pass based on the audit. Do not introduce new features or redesign the system.
+
+⸻
+
+🔴 Priority P0 — Core correctness fixes (must be done first)
+
+1. Fix punctuation handling in relevance scoring
+
+Location: services/lyrics_service.py → _track_relevance
+
+Problem:
+	•	Tokens like "LOVE.", "don't", "Anti-Hero" are not normalized
+	•	Causes incorrect scoring and wrong song selection
+
+Required:
+	•	Normalize all tokens before comparison:
+	•	lowercase
+	•	strip punctuation from boundaries
+	•	split hyphenated words into separate tokens
+
+Example:
+	•	"LOVE." → {"love"}
+	•	"Anti-Hero" → {"anti", "hero"}
+	•	"don't" → {"dont"}
+
+Apply normalization consistently to:
+	•	query words
+	•	track words
+	•	artist words
+
+⸻
+
+2. Fix incorrect artist/song parsing for “A - B” format
+
+Locations:
+	•	input_parser.py
+	•	search_lyrics_with_fallback in lyrics_service.py
+
+Problem:
+	•	Current logic assumes: left = artist, right = song
+	•	This is incorrect for inputs like:
+	•	"love - kendrick"
+
+Required:
+	•	Implement bidirectional evaluation:
+	•	try (left=artist, right=song)
+	•	try (left=song, right=artist)
+	•	Score both interpretations using existing relevance logic
+	•	Choose the higher-confidence interpretation
+
+Do NOT hardcode assumptions about position.
+
+⸻
+
+🟠 Priority P1 — Data integrity & correctness
+
+3. Preserve correct artist and track names from APIs
+
+Locations:
+	•	get_song_lyrics
+	•	search_lyrics_with_fallback
+
+Problem:
+	•	API returns correct metadata (artistName, trackName)
+	•	System discards them and returns raw user input
+
+Required:
+	•	Propagate and return:
+	•	normalized artist name from API
+	•	normalized track name from API
+	•	Ensure final output uses API-correct names
+
+⸻
+
+4. Fix high latency in _is_artist_only_query
+
+Location: handlers.py
+
+Problem:
+	•	Sequential calls:
+	•	Last.fm (5s timeout)
+	•	Wikipedia (5s timeout)
+	•	Adds up to 10s delay before actual search
+
+Required:
+	•	Remove Wikipedia lookup entirely
+	•	Reduce Last.fm timeout to ≤ 2 seconds
+	•	Ensure this function returns quickly
+
+⸻
+
+🟡 Priority P2 — Performance optimization
+
+5. Reduce excessive timeouts and retries
+
+Location: lyrics_service.py
+
+Problem:
+	•	Timeouts:
+	•	lrclib: 10s
+	•	lyrics.ovh: 8s
+	•	Retries: total=3 with backoff
+	•	Causes extreme blocking
+
+Required:
+	•	Reduce timeouts:
+	•	lrclib: ≤ 3 seconds
+	•	lyrics.ovh: ≤ 3 seconds
+	•	Reduce retries:
+	•	max 1 retry OR disable retries for non-critical providers
+
+⸻
+
+6. Limit search cascade depth
+
+Locations:
+	•	get_song_lyrics
+	•	search_lyrics_with_fallback
+
+Problem:
+	•	Up to 14+ sequential API calls per request
+	•	Word-split loop multiplies calls
+
+Required:
+	•	Add early exit:
+	•	stop immediately on strong match
+	•	Limit:
+	•	max number of attempts per request
+	•	Restrict word-split:
+	•	do not allow unbounded combinations
+
+⸻
+
+7. Add caching to search_song_info
+
+Location: lyrics_service.py
+
+Problem:
+	•	No caching → repeated identical API calls
+
+Required:
+	•	Add @lru_cache(maxsize=200) (or equivalent)
+	•	Cache by (artist, song) key
+
+⸻
+
+🟡 Priority P3 — Code quality cleanup
+
+8. Remove duplicate and redundant code
+	•	Eliminate duplicate _fetch_from_lrclib_direct calls across functions
+	•	Ensure shared logic is centralized
+
+9. Move constant allocations to module level
+	•	_INTENT_KEYWORDS must not be recreated per request
+
+10. Remove duplicate imports
+	•	Remove repeated import requests inside functions
+
+11. Optimize word-split loop
+	•	Ensure it does not trigger excessive API calls
+	•	Add strict limits or conditions before entering it
+
+⸻
+
+🧠 Model usage — validation only
+
+12. Verify model usage remains optimal
+
+Location: services/nlp_router.py
+
+Ensure:
+	•	Model is NOT:
+	•	called inside loops
+	•	called during fallback chains
+	•	called for structured inputs
+	•	Model is ONLY used when:
+	•	regex routing fails
+	•	true NLP interpretation is needed
+	•	Confirm no hidden or duplicate calls exist
+
+Do not increase model usage.
+
+⸻
+
+🧪 Mandatory validation after changes
+
+Test all of the following:
+	•	love - kendrick → Kendrick Lamar – LOVE.
+	•	duaa lipa one kiss → Dua Lipa – One Kiss
+	•	billie eilsh blue → Billie Eilish – BLUE
+	•	halo → fast response (< 2–3 seconds)
+	•	repeated same query → faster due to caching
+
+⸻
+
+⚠️ Constraints
+	•	Do NOT break existing working behavior
+	•	Do NOT introduce new features
+	•	Do NOT increase model usage
+	•	Do NOT redesign the system
+
+This is a precision fix pass:
+	•	correctness
+	•	speed
+	•	efficiency
+
+⸻
+
+Implement carefully and verify each section.

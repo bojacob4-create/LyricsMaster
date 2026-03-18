@@ -1,5 +1,6 @@
 import logging
 import os
+import requests
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackContext, MessageHandler, Filters, CommandHandler
 from telegram.error import TelegramError
@@ -224,6 +225,15 @@ _NO_WORDS = frozenset({
 
 _AMBIGUOUS_NOISE = {'song', 'songs', 'music', 'track', 'tracks', 'video', 'audio', 'clip', 'artist'}
 
+# Keywords that indicate the user has moved on to a new request (Step 3 guard).
+# Defined at module level to avoid re-allocating on every message.
+_INTENT_KEYWORDS = frozenset({
+    'lyrics', 'lyric', 'analyze', 'analyse', 'recommend', 'recommendation',
+    'play', 'find', 'give', 'search', 'similar', 'like', 'something',
+    'translate', 'youtube', 'trending', 'chart', 'top', 'random',
+    'by', 'from', 'want', 'need', 'show', 'get', 'tell', 'what',
+})
+
 def _clean_ambiguous_query(text: str) -> str:
     import re
     words = text.strip().split()
@@ -339,13 +349,6 @@ def natural_language_handler(update: Update, context: CallbackContext):
     # song title — short (≤5 words) and free of intent-bearing keywords.
     # Any longer or keyword-carrying input means the user started a new
     # request, so we clear the pending state and fall through to NLP.
-    _INTENT_KEYWORDS = {
-        'lyrics', 'lyric', 'analyze', 'analyse', 'recommend', 'recommendation',
-        'play', 'find', 'give', 'search', 'similar', 'like', 'something',
-        'translate', 'youtube', 'trending', 'chart', 'top', 'random',
-        'by', 'from', 'want', 'need', 'show', 'get', 'tell', 'what',
-    }
-
     if user_id in _pending_recommend_artist:
         words = text.strip().split()
         text_lower = text.lower()
@@ -1689,14 +1692,13 @@ def _is_artist_only_query(query: str) -> bool:
         if set(query_words) < set(name_words):
             return True
     try:
-        import requests
         api_key = os.environ.get('LASTFM_API_KEY')
         if api_key:
             resp = requests.get(
                 'https://ws.audioscrobbler.com/2.0/',
                 params={'method': 'artist.getInfo', 'artist': clean,
                         'api_key': api_key, 'format': 'json'},
-                timeout=5
+                timeout=2
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -1705,21 +1707,6 @@ def _is_artist_only_query(query: str) -> bool:
                 listeners = int(artist_data.get('stats', {}).get('listeners', '0'))
                 if listeners > 5000 and len(bio_content) > 50:
                     return True
-    except Exception:
-        pass
-    try:
-        import requests
-        resp = requests.get(
-            'https://en.wikipedia.org/api/rest_v1/page/summary/' + clean.replace(' ', '_'),
-            timeout=5, headers={'User-Agent': 'LyricsMasterBot/1.0'}
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            desc = (data.get('description', '') or '').lower()
-            extract = (data.get('extract', '') or '').lower()
-            music_words = ['singer', 'rapper', 'musician', 'songwriter', 'artist', 'band', 'group', 'vocalist', 'producer', 'dj', 'mc']
-            if any(w in desc for w in music_words) or any(w in extract[:300] for w in music_words):
-                return True
     except Exception:
         pass
     return False
