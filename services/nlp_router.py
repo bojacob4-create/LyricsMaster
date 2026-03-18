@@ -35,9 +35,162 @@ import os
 import json
 import logging
 import hashlib
-from typing import Dict
+import requests
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# ── Last.fm search constants ───────────────────────────────────────────────
+_LASTFM_BASE   = "http://ws.audioscrobbler.com/2.0/"
+_SEARCH_LIMIT  = 5    # fetch 5, show at most 3
+_DOM_RATIO     = 5.0  # top result is dominant if listeners ≥ DOM_RATIO × #2
+
+
+def search_song_candidates(song_name: str) -> List[Dict]:
+    """
+    Search Last.fm for real tracks matching song_name (no artist given).
+
+    Returns a list of dicts (sorted descending by listener count):
+        [{"artist": "...", "song": "...", "listeners": int}, ...]
+
+    Maximum _SEARCH_LIMIT results, never raises.
+    Returns [] on any failure.
+
+    This function is the only source of truth for disambiguation —
+    it NEVER invents artist names.
+    """
+    try:
+        api_key = os.environ.get("LASTFM_API_KEY", "")
+        if not api_key:
+            logger.debug("[NLP][search] LASTFM_API_KEY not set")
+            return []
+
+        r = requests.get(
+            _LASTFM_BASE,
+            params={
+                "method":  "track.search",
+                "track":   song_name,
+                "api_key": api_key,
+                "format":  "json",
+                "limit":   _SEARCH_LIMIT,
+            },
+            timeout=5,
+        )
+        r.raise_for_status()
+        data    = r.json()
+        matches = (
+            data.get("results", {})
+                .get("trackmatches", {})
+                .get("track", [])
+        )
+
+        results = []
+        for t in matches:
+            artist_name = (t.get("artist") or "").strip()
+            track_name  = (t.get("name")   or "").strip()
+            listeners   = int(t.get("listeners", 0) or 0)
+            if artist_name and track_name:
+                results.append({
+                    "artist":    artist_name,
+                    "song":      track_name,
+                    "listeners": listeners,
+                })
+
+        # Sort by listener count descending; Last.fm already returns them
+        # ranked, but an explicit sort makes the contract clear.
+        results.sort(key=lambda x: x["listeners"], reverse=True)
+        logger.debug(f"[NLP][search] song={song_name!r} → {len(results)} candidates")
+        return results
+
+    except Exception as e:
+        logger.warning(f"[NLP][search] search_song_candidates failed: {e}")
+        return []
+
+
+def is_dominant_match(candidates: List[Dict]) -> bool:
+    """
+    Return True if the top candidate is dominant — i.e. it is so far ahead
+    of all others in listener count that showing multiple options would be
+    misleading.
+
+    Conditions for dominance:
+      - Only one candidate found, OR
+      - Top candidate has ≥ DOM_RATIO × the next candidate's listeners
+    """
+    if len(candidates) == 0:
+        return False
+    if len(candidates) == 1:
+        return True
+    top  = candidates[0]["listeners"]
+    next_ = candidates[1]["listeners"]
+    # Guard: if next_ is 0, avoid division by zero; treat as dominant
+    if next_ == 0:
+        return True
+    return (top / next_) >= _DOM_RATIO
+
+
+def disambiguation_message(
+    song_name: str,
+    intent:    str,
+    candidates: List[Dict],
+) -> str:
+    """
+    Build a user-facing disambiguation message.
+
+    Three cases:
+      A) Dominant single match → "Did you mean The Weeknd — Blinding Lights?"
+      B) Multiple matches      → list top ≤ 3 real options with command hints
+      C) No results            → generic "use Artist - Song" format prompt
+
+    NEVER fabricates artist names.  Only uses data from candidates.
+    """
+    _INTENT_LABELS = {
+        "lyrics":    "lyrics for",
+        "song":      "info on",
+        "recommend": "songs similar to",
+        "analyze":   "an analysis of",
+    }
+    action = _INTENT_LABELS.get(intent, "info on")
+
+    _INTENT_CMD = {
+        "lyrics":    "/lyrics",
+        "song":      "/song",
+        "recommend": "/recommend",
+        "analyze":   "/analyze",
+    }
+    cmd = _INTENT_CMD.get(intent, "/lyrics")
+
+    if not candidates:
+        # Case C — nothing found
+        return (
+            f"🔍 I couldn't find a song called *{song_name}*.\n\n"
+            f"Please use the format:\n"
+            f"`Artist - Song`\n\n"
+            f"Example: `Tyla - Water`"
+        )
+
+    if is_dominant_match(candidates):
+        # Case A — one clearly dominant real match
+        top = candidates[0]
+        return (
+            f"🎵 Did you mean *{top['artist']}* — *{top['song']}*?\n\n"
+            f"Reply: `{cmd} {top['artist']} - {top['song']}`\n"
+            f"or type `Artist - Song` to choose a different version."
+        )
+
+    # Case B — multiple plausible matches
+    top3 = candidates[:3]
+    lines = []
+    for c in top3:
+        lines.append(f"• `{cmd} {c['artist']} - {c['song']}`")
+
+    options_str = "\n".join(lines)
+    return (
+        f"🎵 Several songs match *{song_name}*.\n"
+        f"Which one did you mean?\n\n"
+        f"{options_str}\n\n"
+        f"Or type: `Artist - {song_name}` to be more specific."
+    )
 
 # ── Model ──────────────────────────────────────────────────────────────────
 # gpt-5.4-mini confirmed available via OpenAI models API.

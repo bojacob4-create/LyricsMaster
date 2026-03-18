@@ -1,0 +1,216 @@
+We are now in the final refinement stage. The system architecture is strong, but there are still critical correctness issues in how ambiguous inputs are handled and how suggestions are generated.
+
+This is NOT about intent detection anymore — it is about output correctness and user trust.
+
+⸻
+
+🚨 Critical Issues Identified
+
+1) Wrong execution for partial inputs
+
+Example:
+Input: lyrics water
+
+Current behavior:
+→ Executes and returns a random song:
+“King Gizzard & The Lizard Wizard – Hot Water”
+
+This is WRONG.
+
+Why:
+	•	The user did NOT specify the artist
+	•	“water” is ambiguous
+	•	The system guessed and executed
+
+This violates the core rule:
+
+NEVER execute when multiple valid interpretations exist
+
+⸻
+
+2) Incorrect example suggestions
+
+Example:
+For input: blinding lights
+
+Bot says:
+Example:
+Adele — Blinding Lights ❌
+
+This is factually incorrect and breaks trust.
+
+We must NEVER show random or invalid artist-song combinations.
+
+⸻
+
+3) Recommendation hallucination
+
+Example:
+Input: give me similar songs to water
+
+Bot assumes:
+→ Maroon 5 – Come Away To The Water ❌
+
+This is a silent incorrect assumption.
+
+⸻
+
+🎯 Required Behavior (Strict)
+
+We now enforce a new principle:
+
+If the system is not certain WHICH exact song the user means, it must NOT execute — it must ask.
+
+⸻
+
+✅ Correct Handling Strategy
+
+Case 1: Partial song (no artist)
+
+Input:
+lyrics water
+
+Expected behavior:
+
+DO NOT execute
+
+Instead:
+
+Did you mean to look up:
+• Tyla — Water
+• King Gizzard & The Lizard Wizard — Hot Water
+• (optional top 2–3 real matches only)
+
+If you cannot confidently provide multiple matches:
+→ Ask for format:
+“Artist - Song”
+
+⸻
+
+Case 2: Single detected song (high confidence)
+
+Input:
+blinding lights
+
+If system detects ONE strong match:
+
+Did you mean to look up:
+The Weeknd — Blinding Lights?
+
+NOT multiple fake examples
+NOT random artists
+
+⸻
+
+Case 3: Invalid examples must NEVER happen
+
+This is forbidden:
+
+❌ Adele — Blinding Lights
+❌ adele — something
+
+If data is not real → DO NOT SHOW IT
+
+⸻
+
+Case 4: Recommendation with ambiguous song
+
+Input:
+similar songs to water
+
+Correct behavior:
+
+DO NOT pick a random “water” song
+
+Instead:
+	•	Ask clarification
+OR
+	•	Suggest the most likely real match:
+
+Did you mean:
+Tyla — Water?
+
+Only proceed after confirmation
+
+⸻
+
+🧠 Implementation Requirements
+
+1) Add “disambiguation layer”
+
+After entity extraction:
+
+if song is not None and artist is None:
+    candidates = search_song_candidates(song)
+
+    if len(candidates) == 1:
+        return confirm_single_candidate(candidates[0])
+
+    elif len(candidates) > 1:
+        return show_top_candidates(candidates[:3])
+
+    else:
+        return ask_for_format()
+
+
+⸻
+
+2) Candidate quality rules
+	•	Only show REAL songs from your database/service
+	•	Max 3 suggestions
+	•	Ranked by relevance/popularity
+
+⸻
+
+3) NEVER fabricate
+
+If no reliable match:
+→ DO NOT guess
+→ DO NOT fill artist
+
+⸻
+
+4) Modify Entity Gate Rule
+
+Current:
+song exists → allow execution
+
+NEW:
+song exists WITHOUT artist → NEVER execute directly
+
+Must go through:
+→ clarification or disambiguation
+
+⸻
+
+5) Output Quality Standard
+
+The system must behave like:
+	•	A smart assistant
+	•	Not a search guesser
+	•	Not autocomplete
+	•	Not hallucination engine
+
+⸻
+
+🔚 Final Expected Behavior
+
+Input	Behavior
+lyrics water	ask clarification with real options
+blinding lights	confirm The Weeknd
+lyrics	ask for format
+show lyrics	ask for format
+play something by adele	recommend
+similar songs to water	ask clarification
+lyrics hello adele	execute
+
+
+⸻
+
+💡 Final Principle
+
+If there is ambiguity → ask
+If there is certainty → execute
+If there is doubt → NEVER guess
+
+This is mandatory for production-level reliability.

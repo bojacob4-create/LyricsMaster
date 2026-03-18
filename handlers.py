@@ -283,11 +283,13 @@ def natural_language_handler(update: Update, context: CallbackContext):
             # ══════════════════════════════════════════════════════════════════
             try:
                 from services.nlp_router import (
-                    parse_intent       as nlp_parse,
-                    entity_gate        as nlp_entity_gate,
-                    build_query        as nlp_build_query,
+                    parse_intent           as nlp_parse,
+                    entity_gate            as nlp_entity_gate,
+                    build_query            as nlp_build_query,
                     clarification_message  as nlp_clarify,
                     low_confidence_message as nlp_low_conf_msg,
+                    search_song_candidates as nlp_search_candidates,
+                    disambiguation_message as nlp_disambig_msg,
                 )
 
                 nlp        = nlp_parse(text)
@@ -366,9 +368,21 @@ def natural_language_handler(update: Update, context: CallbackContext):
                         handler(update, context)
 
                 elif final == "clarify":
-                    update.message.reply_text(
-                        nlp_clarify(nlp), parse_mode='Markdown'
-                    )
+                    # ── Disambiguation layer ───────────────────────────────
+                    # When a song name was extracted but no artist is known,
+                    # search Last.fm for real matches and present them.
+                    # This replaces generic clarification with verified data.
+                    # Falls back to generic clarify on any search failure.
+                    if nlp_song and not nlp_artist:
+                        try:
+                            candidates = nlp_search_candidates(nlp_song)
+                            msg = nlp_disambig_msg(nlp_song, nlp_intent, candidates)
+                        except Exception as _de:
+                            logger.warning(f"[NLP] Disambiguation failed: {_de}")
+                            msg = nlp_clarify(nlp)
+                    else:
+                        msg = nlp_clarify(nlp)
+                    update.message.reply_text(msg, parse_mode='Markdown')
 
                 else:  # low_conf
                     update.message.reply_text(
