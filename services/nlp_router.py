@@ -21,6 +21,14 @@ Confidence tiers (enforced by caller in handlers.py):
   >= 0.7  → route to existing handler directly
   0.4–0.7 → ask user to clarify
   < 0.4   → ask user to use "Artist - Song" format
+
+Systemic calibration rules (applied in _apply_safety_calibration):
+  These rules are NOT per-song hardcodes.  They are logical invariants:
+  - You cannot fetch the right lyrics/song without knowing the artist
+  - A single word with no artist can refer to hundreds of different songs
+  - Empty entity extraction (no artist, no song) means there is nothing to act on
+  These rules cap confidence AFTER the model responds, ensuring the
+  LLM's over-confidence does not propagate to the routing layer.
 """
 
 import os
@@ -42,12 +50,12 @@ _MODEL = os.environ.get("OPENAI_NLP_MODEL", "gpt-5.4-mini")
 _CACHE: Dict[str, dict] = {}
 
 # ── System prompt ──────────────────────────────────────────────────────────
-# Placed inside the input list (not as `instructions`) so that the Responses
-# API json_object format requirement ("input must contain 'json'") is met —
-# this prompt contains the word "JSON".
+# Placed inside the input list (as a system role message) so that the
+# Responses API json_object format requirement is satisfied — this prompt
+# contains the word "JSON".
 _SYSTEM_PROMPT = """\
-You are a music bot intent parser. Your only job is to read a user's natural
-language message and return a structured JSON object.
+You are a music bot intent parser. Your only job is to classify a user's
+natural language message and extract music entities.
 
 Return ONLY this JSON object — no explanation, no extra text:
 
@@ -58,23 +66,69 @@ Return ONLY this JSON object — no explanation, no extra text:
   "confidence": 0.0 to 1.0
 }
 
-Intent definitions:
-  lyrics    → user wants to read the lyrics of a song
-  song      → user wants info or a dashboard for a song
-  recommend → user wants song recommendations or similar songs
-  analyze   → user wants a deep lyric or theme analysis
-  unknown   → intent is unclear
+=== INTENT DEFINITIONS ===
+  lyrics    → user wants to READ the lyrics of a specific song
+  song      → user wants info or a dashboard for a specific song
+  recommend → user wants song recommendations or songs similar to something
+  analyze   → user wants a deep lyric or theme analysis of a specific song
+  unknown   → intent is not clear or not music-related
 
-Rules:
-  - confidence is how sure you are about the full result (intent + entities)
-  - Extract artist and song ONLY when confident they are correct
-  - Do NOT invent or guess artist/song names
-  - If artist or song cannot be reliably identified, set to null
-  - Handle any natural language phrasing — do not assume specific keywords
-  - Return ONLY the JSON object, nothing else
+=== CONFIDENCE CALIBRATION — READ CAREFULLY ===
+
+Confidence must reflect the quality of the FULL result (intent + entities),
+NOT just how clearly you detected the intent.
+
+Rules for when confidence must be LOW (below 0.5):
+  - artist is null AND song name is a single common word (could match hundreds
+    of songs — e.g. everyday words like "hello", "stay", "water", "love")
+  - no artist AND no song could be extracted from the message
+  - the message is so short or vague that multiple very different
+    interpretations are equally plausible
+  - the user only said the intent keyword (e.g. "lyrics", "songs") with
+    nothing else to identify a specific track
+  - you are guessing or inferring the artist from a popular association
+    (e.g. hearing a song title and inferring the most famous artist who has
+    that title) rather than the user explicitly naming them
+
+Rules for when confidence should be MEDIUM (0.4–0.69):
+  - intent is clear but only ONE of artist/song is identified
+  - the artist or song could plausibly refer to multiple people/tracks
+  - the phrasing is indirect or requires inference
+
+Rules for when confidence may be HIGH (0.70+):
+  - intent is unmistakably clear
+  - AND artist is explicitly named by the user
+  - AND song is explicitly named by the user
+  - OR for recommend/analyze: at least one clearly identifiable, unambiguous
+    entity (artist or song) is explicitly stated by the user
+
+=== ENTITY EXTRACTION ===
+  - Extract artist and song ONLY from what the user EXPLICITLY says
+  - Do NOT infer or hallucinate the artist from a popular song name
+  - If a song name is widely associated with one artist but the user did
+    NOT name the artist, set artist to null
+  - If the input is ambiguous (could be many different songs), set
+    confidence below 0.5 even if the intent seems clear
+  - Preserve the casing and spelling as the user wrote it
+
+=== EXAMPLES OF CORRECT CALIBRATION ===
+  "lyrics hello adele" → intent=lyrics artist=Adele song=Hello conf=0.95
+  "hello" → intent=unknown artist=null song=null conf=0.10
+  "blinding lights" → intent=song artist=null song=Blinding Lights conf=0.55
+  "lyrics blinding lights" → intent=lyrics artist=null song=Blinding Lights conf=0.55
+  "show lyrics" → intent=lyrics artist=null song=null conf=0.10
+  "recommend me something like tame impala" → intent=recommend artist=Tame Impala song=null conf=0.82
+  "analyze kill bill by sza" → intent=analyze artist=SZA song=Kill Bill conf=0.95
+  "songs like counting stars onerepublic" → intent=recommend artist=OneRepublic song=Counting Stars conf=0.92
+  "pizza" → intent=unknown artist=null song=null conf=0.02
+
+Return ONLY the JSON object.
 """
 
 _FALLBACK = {"intent": "unknown", "artist": None, "song": None, "confidence": 0.0}
+
+# ── Intents that require both artist AND song for high-confidence routing ──
+_REQUIRES_ARTIST = {"lyrics", "song", "analyze"}
 
 
 def _cache_key(text: str) -> str:
@@ -95,6 +149,69 @@ def _get_client():
         return None
 
 
+def _apply_safety_calibration(result: dict, raw_text: str) -> dict:
+    """
+    Apply post-model calibration rules that enforce logical invariants.
+
+    These are NOT per-song hardcodes.  They are invariants that hold for
+    ANY song, artist, and language:
+
+    Rule 1 — No entities, no action:
+        If neither artist nor song was extracted, the system cannot route
+        meaningfully to any handler.  Cap confidence at 0.30.
+
+    Rule 2 — Lyrics/song/analyze without an artist:
+        These intents fetch data for ONE specific track.  Without the artist,
+        the system does not know which version of the song to fetch, and the
+        wrong result is certain.  Cap confidence at 0.55 (forces clarification).
+
+    Rule 3 — Short input (≤ 2 words) without full entity pair:
+        Very short inputs that lack both artist and song are almost always
+        ambiguous.  Even if the model is confident, cap at 0.35.
+
+    Rule 4 — Intent keyword with nothing else:
+        If the intent is a music action (lyrics/recommend/etc.) but the
+        remaining token count (after stripping the keyword) is 0, there is
+        nothing to act on.  Cap at 0.20.
+    """
+    intent   = result.get("intent", "unknown")
+    artist   = result.get("artist")
+    song     = result.get("song")
+    conf     = result.get("confidence", 0.0)
+    words    = raw_text.strip().split()
+
+    # Rule 1: no entities at all
+    if not artist and not song:
+        if conf > 0.30:
+            logger.debug(f"[NLP][calibrate] Rule1 no-entities: {conf:.2f}→0.30 | {raw_text!r}")
+            conf = 0.30
+
+    # Rule 2: lyrics/song/analyze without artist (ambiguous which version)
+    if intent in _REQUIRES_ARTIST and not artist:
+        if conf > 0.55:
+            logger.debug(f"[NLP][calibrate] Rule2 no-artist for {intent}: {conf:.2f}→0.55 | {raw_text!r}")
+            conf = 0.55
+
+    # Rule 3: very short input without both entities
+    if len(words) <= 2 and not (artist and song):
+        if conf > 0.35:
+            logger.debug(f"[NLP][calibrate] Rule3 short-input no-pair: {conf:.2f}→0.35 | {raw_text!r}")
+            conf = 0.35
+
+    # Rule 4: only the intent keyword was typed, nothing else actionable
+    _INTENT_KEYWORDS = {"lyrics", "recommend", "song", "analyze", "songs",
+                        "lyric", "similar", "analysis"}
+    remaining = [w for w in words if w.lower() not in _INTENT_KEYWORDS]
+    if intent != "unknown" and len(remaining) == 0:
+        if conf > 0.20:
+            logger.debug(f"[NLP][calibrate] Rule4 keyword-only: {conf:.2f}→0.20 | {raw_text!r}")
+            conf = 0.20
+
+    result = dict(result)
+    result["confidence"] = round(conf, 4)
+    return result
+
+
 def parse_intent(text: str) -> Dict:
     """
     Send user text to OpenAI Responses API and return structured intent + entities.
@@ -103,7 +220,7 @@ def parse_intent(text: str) -> Dict:
         intent     — lyrics | song | recommend | analyze | unknown
         artist     — extracted artist name or None
         song       — extracted song name or None
-        confidence — float 0.0–1.0
+        confidence — float 0.0–1.0, after safety calibration
 
     Never raises.  Returns _FALLBACK dict on any failure so the caller
     degrades gracefully without breaking existing bot behaviour.
@@ -122,10 +239,9 @@ def parse_intent(text: str) -> Dict:
         return dict(_FALLBACK)
 
     try:
-        # Use the OpenAI Responses API.
-        # The system prompt is placed as a "system" role message inside the
-        # `input` list — this satisfies the API's requirement that the input
-        # contains the word "json" when using text.format json_object mode.
+        # OpenAI Responses API.
+        # System prompt is a "system" role message inside `input` so that the
+        # json_object format requirement (input must contain "json") is met.
         response = client.responses.create(
             model=_MODEL,
             input=[
@@ -155,6 +271,9 @@ def parse_intent(text: str) -> Dict:
         "song":       data.get("song") or None,
         "confidence": float(data.get("confidence", 0.0)),
     }
+
+    # Apply post-model safety calibration rules (systemic, not per-song)
+    result = _apply_safety_calibration(result, text)
 
     logger.info(
         f"[NLP] model={_MODEL} intent={result['intent']!r} "
@@ -210,7 +329,8 @@ def clarification_message(result: Dict) -> str:
         return (
             f"🤔 I found a song called *{song}*.\n"
             f"Could you add the artist name?\n\n"
-            f"Try: `Artist - {song}`"
+            f"Try: `Artist - {song}`\n\n"
+            f"Example: `Adele - {song}` or `The Weeknd - {song}`"
         )
     if artist:
         return (

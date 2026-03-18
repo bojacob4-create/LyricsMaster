@@ -1,0 +1,63 @@
+The current NLP layer is not behaving correctly in real usage.
+
+There are clear issues based on actual outputs:
+
+- "Lyrics Hello" returned the WRONG song (Sunny Sweeney - Easy as Hello instead of Adele - Hello)
+- Ambiguous inputs like "hello" are being executed instead of handled safely
+- The system is overconfident and making incorrect matches instead of asking for clarification
+- Some outputs show that artist/song disambiguation is weak or unreliable
+- The behavior suggests the model is not properly handling ambiguity and multiple possible matches
+
+This is not acceptable.
+
+The goal is NOT to pass a few test examples.
+The goal is to work correctly with REAL, varied, unpredictable natural language input.
+
+Right now the system appears:
+- Overfitted to certain patterns
+- Not robust to ambiguity
+- Not safely handling uncertain cases
+
+Key problem:
+The NLP layer is making decisions when it should NOT be making decisions.
+
+What we need instead:
+
+- Strong ambiguity detection
+- Safer confidence behavior (do not execute on uncertain matches)
+- Better handling of common ambiguous song names (e.g. "Hello", "Stay", "Water")
+- Proper prioritization when artist is missing or unclear
+- Consistent extraction quality across different phrasing styles
+
+Important:
+Do NOT fix only these exact cases.
+
+Do NOT hardcode solutions for:
+- "hello"
+- "blinding lights"
+- or any specific examples
+
+This must be solved at a SYSTEM LEVEL, not by patching edge cases.
+
+The NLP layer must:
+- Generalize across all natural language inputs
+- Handle ambiguity intelligently
+- Prefer asking the user over making wrong assumptions
+- Be reliable across different phrasings, not just tested ones
+
+Also verify:
+- Confidence scores are meaningful and calibrated (not always high)
+- Low-confidence cases are actually treated as low-confidence
+- The system does NOT force a result when uncertain
+
+The current behavior shows that confidence handling is not aligned with real-world ambiguity.
+
+Please review the implementation and improve the robustness of:
+- intent detection
+- entity extraction (artist/song)
+- ambiguity handling
+- confidence calibration
+
+This needs to behave like a real-world natural language system, not a demo.
+
+Do a full review and fix it at the core level.
