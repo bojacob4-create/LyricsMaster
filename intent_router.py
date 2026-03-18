@@ -8,6 +8,16 @@ YOUTUBE_URL_PATTERN = re.compile(
     r'(?:https?://)?(?:www\.)?(?:youtube\.com/(?:watch\?v=|shorts/)|youtu\.be/)([a-zA-Z0-9_-]{11})'
 )
 
+# "play something by X" / "give me songs by X" → artist-based recommend.
+# Must be compiled once and checked BEFORE the generic YouTube keyword scan
+# because 'play' sits in YOUTUBE_KEYWORDS and would wrongly capture these.
+_PLAY_BY_ARTIST_RE = re.compile(
+    r'^(?:play|give\s+me|get\s+me|show\s+me|find\s+me|put\s+on)\s+'
+    r'(?:something|anything|songs?|music|a\s+song|some\s+music|tracks?)\s+'
+    r'(?:by|from)\s+(.+)$',
+    re.IGNORECASE,
+)
+
 LYRICS_KEYWORDS = [
     'lyrics', 'lyric', 'words to', 'words of', 'text of', 'text for',
     'show me the lyrics', 'get lyrics', 'find lyrics', 'what are the lyrics',
@@ -291,6 +301,12 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
         if not query:
             query = _clean_query(text, ['who', 'is', 'are', 'tell', 'about', 'artist', 'info', 'biography', 'bio'])
         return 'artist', query
+
+    # "play something by X" → artist-based recommend (must precede YouTube scan)
+    _play_by = _PLAY_BY_ARTIST_RE.match(text)
+    if _play_by:
+        artist = _play_by.group(1).strip().rstrip('.')
+        return 'recommend', artist
 
     if _match_keywords(text, YOUTUBE_KEYWORDS):
         query = _clean_query(text, ['video', 'music video', 'watch', 'play', 'youtube',

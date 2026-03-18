@@ -1,0 +1,61 @@
+I ran broader natural-language testing, and the current implementation still has several systemic issues. These are not isolated edge cases. Please review them as general behavior problems, not case-by-case bugs.
+
+1) Some ambiguous short inputs are handled well, but others are inconsistent.
+- "Believer" behaved well.
+- "Hello" behaved well.
+- "Stay" and "Halo" fell back to the generic format message instead of going through the same kind of meaningful disambiguation behavior.
+
+This suggests inconsistency in how short ambiguous song-title inputs are being classified and routed.
+
+2) Artist-only recommendation phrasing is still broken.
+- "Play something by Drake"
+- "Play something by Taylor Swift"
+
+Both still produced fake song-style outputs like:
+- "drake — something"
+- "Taylor swift — something"
+
+This is a serious correctness issue. The system is still fabricating a song entity instead of treating the request as a recommendation/discovery request.
+
+3) Some disambiguation candidate lists are still low quality or semantically wrong.
+- "Give me songs like creep" produced a poor candidate list with noisy / irrelevant-looking options and weak normalization.
+- The result quality did not look trustworthy enough for a real user decision flow.
+
+This means the candidate-selection layer is still not consistently clean and reliable.
+
+4) Context/state contamination is happening across turns.
+This is the most serious issue I found.
+
+After asking:
+- "Give me songs like creep"
+
+subsequent unrelated inputs such as:
+- "Lyrics skyfall adele"
+- "Lyrics adele skyfall"
+- "Lyrics adele sky fall"
+- "Analyze yellow by coldplay"
+
+were incorrectly interpreted through the previous "Creep" context, leading to outputs like:
+- "I couldn't find ... by Creep"
+
+This indicates the bot is leaking prior disambiguation state into later independent user inputs. That should never happen. Each new natural-language request must be parsed and resolved independently unless the user is explicitly replying to a clarification step.
+
+5) Some successful cases still coexist with these failures.
+The following worked well:
+- "Believer"
+- "Hello"
+- "Someone like you"
+- "analyze bad guy by billie eilish"
+- "lyrics shape of you ed sheeran"
+
+So this is not a total failure. The problem is inconsistency, state leakage, and incorrect routing in specific categories of natural-language input.
+
+Please do a full troubleshooting pass focused on:
+- consistency of disambiguation behavior
+- correctness of recommendation-intent handling
+- candidate quality / trustworthiness
+- strict isolation of one user request from another
+- preventing previous clarification state from corrupting future unrelated requests
+
+Important:
+Do not patch only the examples above. Treat these as symptoms of broader logic issues and fix them at the system level.

@@ -227,215 +227,23 @@ def natural_language_handler(update: Update, context: CallbackContext):
     if not text:
         return
 
-    if user_id in _pending_recommend_artist:
-        artist_name = _pending_recommend_artist[user_id]
-        from services.lyrics_service import search_song_info
-        update.message.chat.send_action(action="typing")
-        result = search_song_info(artist_name, text)
-        valid = False
-        song_query = None
-        if result:
-            found_artist, found_song, _ = result
-            a1 = artist_name.lower().strip()
-            a2 = found_artist.lower().strip()
-            if a1 in a2 or a2 in a1:
-                valid = True
-                song_query = f"{found_artist} - {found_song}"
-        if not valid:
-            update.message.reply_text(
-                f"❌ I couldn't find \"{text}\" by {artist_name}.\n\n"
-                f"Please try another {artist_name} song title, or pick one from the buttons above."
-            )
-            return
-        _pending_recommend_artist.pop(user_id)
-        context.args = song_query.split()
-        song_command(update, context)
-        return
-
-    quiz_data = active_quizzes.get(user_id)
-    if quiz_data and quiz_data.get("state") == "active":
-        answer = text.upper()
-        if len(answer) == 1 and answer in 'ABCD':
-            quiz_answer(update, context)
-            return
-
+    # ── Step 1: Regex router — always runs first ────────────────────────────
+    # Deterministic, zero-latency, and must take priority over ALL stored
+    # state.  If the user typed a new structured request, clear any pending
+    # artist context immediately so it can never contaminate the new request.
     try:
         intent, query = detect_intent(text)
+    except Exception:
+        intent, query = None, None
 
-        if not intent:
-            # ══════════════════════════════════════════════════════════════════
-            # NLP FALLBACK — OpenAI Responses API (gpt-5.4-mini)
-            # Triggered ONLY when the regex router returns no match.
-            # Non-intrusive: only routes to existing handlers, never generates
-            # recommendations, lyrics, analysis, or any content itself.
-            #
-            # TWO INDEPENDENT SAFETY LAYERS:
-            #   Layer 1 — Confidence (probabilistic):
-            #       How certain is the model about intent + entities?
-            #       >= 0.7  → candidate for execution
-            #       0.4-0.7 → clarify
-            #       < 0.4   → ask for format
-            #
-            #   Layer 2 — Entity gate (deterministic, mandatory):
-            #       Do we have the correct entities required for this intent?
-            #       This runs after Layer 1 and can override it.
-            #       A high-confidence result with missing entities is BLOCKED.
-            # ══════════════════════════════════════════════════════════════════
-            try:
-                from services.nlp_router import (
-                    parse_intent           as nlp_parse,
-                    entity_gate            as nlp_entity_gate,
-                    build_query            as nlp_build_query,
-                    clarification_message  as nlp_clarify,
-                    low_confidence_message as nlp_low_conf_msg,
-                    search_song_candidates as nlp_search_candidates,
-                    disambiguation_message as nlp_disambig_msg,
-                )
-
-                nlp        = nlp_parse(text)
-                nlp_intent = nlp.get("intent", "unknown")
-                nlp_conf   = nlp.get("confidence", 0.0)
-                nlp_artist = nlp.get("artist")
-                nlp_song   = nlp.get("song")
-
-                _nlp_handler_map = {
-                    'lyrics':    lyrics_command,
-                    'song':      song_command,
-                    'recommend': recommend_command,
-                    'analyze':   analyze_command,
-                }
-
-                # ── Layer 1: confidence tier ───────────────────────────────
-                if nlp_intent == "unknown" or nlp_conf < 0.4:
-                    conf_tier = "low_conf"
-                elif nlp_conf < 0.7:
-                    conf_tier = "clarify"
-                else:
-                    conf_tier = "execute"
-
-                # ── Layer 2: entity gate (mandatory, overrides Layer 1) ────
-                # Runs for ALL tiers so a high-confidence incomplete result
-                # is caught before it reaches any handler.
-                gate = nlp_entity_gate(nlp, text)
-
-                # ── Combine layers (decision table) ───────────────────────
-                # Both layers are independent; neither blindly overrides the
-                # other.  The rules below encode the correct priority:
-                #
-                #  1. execute  — ONLY when BOTH say execute.  If either layer
-                #                has a concern, we do not act.
-                #  2. low_conf — ONLY when BOTH say low_conf.  This means the
-                #                system has nothing specific to ask about.
-                #  3. clarify  — everything else:
-                #                • conf=execute  + gate=clarify  → clarify
-                #                • conf=clarify  + gate=anything → clarify
-                #                • conf=low_conf + gate=clarify  → clarify
-                #                  (gate found specific info to ask about,
-                #                   even though confidence is low)
-                if conf_tier == "execute" and gate == "execute":
-                    # Both layers green — safe to act.
-                    final = "execute"
-                elif conf_tier == "low_conf" and gate == "low_conf":
-                    # Both layers say nothing actionable — ask for format.
-                    final = "low_conf"
-                elif gate == "execute" and conf_tier == "low_conf":
-                    # Gate found a valid entity but model confidence is low.
-                    # We have something specific to ask about → clarify.
-                    final = "clarify"
-                elif gate == "clarify":
-                    # Gate flagged missing entities — always clarify.
-                    final = "clarify"
-                elif conf_tier == "low_conf":
-                    # No entity info, low confidence → ask for format.
-                    final = "low_conf"
-                else:
-                    # conf_tier=clarify, gate=execute → borderline, clarify.
-                    final = "clarify"
-
-                logger.info(
-                    f"[NLP] user={user_id} intent={nlp_intent!r} "
-                    f"artist={nlp_artist!r} song={nlp_song!r} "
-                    f"conf={nlp_conf:.2f} conf_tier={conf_tier} "
-                    f"gate={gate} final={final}"
-                )
-
-                if final == "execute":
-                    query   = nlp_build_query(nlp)
-                    context.args = query.split() if query else []
-                    handler = _nlp_handler_map.get(nlp_intent)
-                    if handler:
-                        update.message.chat.send_action(action="typing")
-                        handler(update, context)
-
-                else:
-                    # ── Unified non-execute path ───────────────────────────
-                    # Disambiguation is triggered by ENTITY STATE, not by
-                    # the confidence tier.
-                    #
-                    # Rule A: Song extracted, artist missing.
-                    #   Always search Last.fm and show real candidates.
-                    #   Applies even if final=low_conf.
-                    #
-                    # Rule B: No entities extracted, input ≤ 2 words.
-                    #   The short text itself may be a song name.
-                    #   Try Last.fm with the raw input as song name.
-                    #   If results found → show them; otherwise show format prompt.
-                    #
-                    # Rule C: Generic clarify / format prompt.
-                    #   Shown when A and B don't apply or Last.fm returns nothing.
-
-                    _raw_words = text.strip().split()
-                    song_to_search = None
-
-                    if nlp_song and not nlp_artist:
-                        # Rule A — song was extracted, no artist
-                        song_to_search = nlp_song
-
-                    elif not nlp_song and not nlp_artist and len(_raw_words) <= 2:
-                        # Rule B — short unrecognised input could be a song title
-                        song_to_search = text.strip()
-
-                    if song_to_search:
-                        try:
-                            candidates = nlp_search_candidates(song_to_search)
-                            if candidates:
-                                _display_intent = (
-                                    nlp_intent
-                                    if nlp_intent != "unknown"
-                                    else "song"
-                                )
-                                msg = nlp_disambig_msg(
-                                    song_to_search, _display_intent, candidates
-                                )
-                            else:
-                                # Last.fm found nothing — ask for format
-                                msg = nlp_low_conf_msg()
-                        except Exception as _de:
-                            logger.warning(f"[NLP] Disambiguation error: {_de}")
-                            msg = (
-                                nlp_clarify(nlp)
-                                if final == "clarify"
-                                else nlp_low_conf_msg()
-                            )
-                    elif final == "clarify":
-                        # Rule C — we have partial info but no song to search
-                        msg = nlp_clarify(nlp)
-                    else:
-                        # Rule C — genuine low confidence, nothing actionable
-                        msg = nlp_low_conf_msg()
-
-                    update.message.reply_text(msg, parse_mode='Markdown')
-
-            except Exception as nlp_err:
-                # Any NLP failure must never break existing bot behaviour.
-                logger.warning(f"[NLP] Fallback error for user {user_id}: {nlp_err}")
-
-            return
-
-        logger.info(f"NL intent for user {user_id}: intent='{intent}', query='{query}', raw='{text}'")
-
+    if intent:
+        # Structured regex match — discard stale pending state and handle.
+        _pending_recommend_artist.pop(user_id, None)
+        logger.info(
+            f"NL intent for user {user_id}: intent='{intent}', "
+            f"query='{query}', raw='{text}'"
+        )
         context.args = query.split() if query else []
-
         handler_map = {
             'lyrics': lyrics_command,
             'recommend': recommend_command,
@@ -453,15 +261,198 @@ def natural_language_handler(update: Update, context: CallbackContext):
             'unsubscribe': unsubscribe_daily_command,
             'wiki': wiki_command,
         }
-
         handler = handler_map.get(intent)
         if handler:
             handler(update, context)
         else:
             logger.debug(f"Unknown intent '{intent}' for user {user_id}")
+        return
 
-    except Exception as e:
-        logger.error(f"Error in NL handler for user {user_id}: {str(e)}")
+    # ── Step 2: Quiz state ───────────────────────────────────────────────────
+    quiz_data = active_quizzes.get(user_id)
+    if quiz_data and quiz_data.get("state") == "active":
+        answer = text.upper()
+        if len(answer) == 1 and answer in 'ABCD':
+            quiz_answer(update, context)
+            return
+
+    # ── Step 3: Pending artist-recommend flow ────────────────────────────────
+    # The user is in the middle of picking a seed song for artist-based
+    # recommendations (triggered by /recommend <artist>).
+    #
+    # GUARD: only use the pending state when the input looks like a bare
+    # song title — short (≤5 words) and free of intent-bearing keywords.
+    # Any longer or keyword-carrying input means the user started a new
+    # request, so we clear the pending state and fall through to NLP.
+    _INTENT_KEYWORDS = {
+        'lyrics', 'lyric', 'analyze', 'analyse', 'recommend', 'recommendation',
+        'play', 'find', 'give', 'search', 'similar', 'like', 'something',
+        'translate', 'youtube', 'trending', 'chart', 'top', 'random',
+        'by', 'from', 'want', 'need', 'show', 'get', 'tell', 'what',
+    }
+
+    if user_id in _pending_recommend_artist:
+        words = text.strip().split()
+        text_lower = text.lower()
+        is_new_request = (
+            len(words) > 5
+            or any(kw in text_lower.split() for kw in _INTENT_KEYWORDS)
+        )
+        if is_new_request:
+            # User moved on — clear stale state and fall through to NLP.
+            logger.info(
+                f"[NLP] Clearing stale pending artist for user {user_id} "
+                f"(new request detected): {text!r}"
+            )
+            _pending_recommend_artist.pop(user_id, None)
+        else:
+            # Plain short text — treat as song title for pending artist.
+            artist_name = _pending_recommend_artist[user_id]
+            from services.lyrics_service import search_song_info
+            update.message.chat.send_action(action="typing")
+            result = search_song_info(artist_name, text)
+            valid = False
+            song_query = None
+            if result:
+                found_artist, found_song, _ = result
+                a1 = artist_name.lower().strip()
+                a2 = found_artist.lower().strip()
+                if a1 in a2 or a2 in a1:
+                    valid = True
+                    song_query = f"{found_artist} - {found_song}"
+            if not valid:
+                update.message.reply_text(
+                    f"❌ I couldn't find \"{text}\" by {artist_name}.\n\n"
+                    f"Please try another {artist_name} song title, "
+                    f"or pick one from the buttons above."
+                )
+                return
+            _pending_recommend_artist.pop(user_id, None)
+            context.args = song_query.split()
+            song_command(update, context)
+            return
+
+    # ── Step 4: NLP fallback ─────────────────────────────────────────────────
+    # Clear any remaining stale pending state before handing off to NLP,
+    # so the NLP path always starts from a clean slate.
+    _pending_recommend_artist.pop(user_id, None)
+
+    # ── Step 4 (continued): NLP FALLBACK ─────────────────────────────────────
+    # OpenAI Responses API (gpt-5.4-mini) — only reached when the regex
+    # router returned no match.  Non-intrusive: only routes to existing
+    # handlers, never generates content itself.
+    #
+    # TWO INDEPENDENT SAFETY LAYERS:
+    #   Layer 1 — Confidence:  >= 0.7 execute / 0.4–0.7 clarify / < 0.4 low_conf
+    #   Layer 2 — Entity gate: deterministic check for required entities.
+    try:
+        from services.nlp_router import (
+            parse_intent           as nlp_parse,
+            entity_gate            as nlp_entity_gate,
+            build_query            as nlp_build_query,
+            clarification_message  as nlp_clarify,
+            low_confidence_message as nlp_low_conf_msg,
+            search_song_candidates as nlp_search_candidates,
+            disambiguation_message as nlp_disambig_msg,
+        )
+
+        nlp        = nlp_parse(text)
+        nlp_intent = nlp.get("intent", "unknown")
+        nlp_conf   = nlp.get("confidence", 0.0)
+        nlp_artist = nlp.get("artist")
+        nlp_song   = nlp.get("song")
+
+        _nlp_handler_map = {
+            'lyrics':    lyrics_command,
+            'song':      song_command,
+            'recommend': recommend_command,
+            'analyze':   analyze_command,
+        }
+
+        # ── Layer 1: confidence tier ───────────────────────────────────────
+        if nlp_intent == "unknown" or nlp_conf < 0.4:
+            conf_tier = "low_conf"
+        elif nlp_conf < 0.7:
+            conf_tier = "clarify"
+        else:
+            conf_tier = "execute"
+
+        # ── Layer 2: entity gate ───────────────────────────────────────────
+        gate = nlp_entity_gate(nlp, text)
+
+        # ── Combine layers (decision table) ───────────────────────────────
+        if conf_tier == "execute" and gate == "execute":
+            final = "execute"
+        elif conf_tier == "low_conf" and gate == "low_conf":
+            final = "low_conf"
+        elif gate == "execute" and conf_tier == "low_conf":
+            final = "clarify"
+        elif gate == "clarify":
+            final = "clarify"
+        elif conf_tier == "low_conf":
+            final = "low_conf"
+        else:
+            final = "clarify"
+
+        logger.info(
+            f"[NLP] user={user_id} intent={nlp_intent!r} "
+            f"artist={nlp_artist!r} song={nlp_song!r} "
+            f"conf={nlp_conf:.2f} conf_tier={conf_tier} "
+            f"gate={gate} final={final}"
+        )
+
+        if final == "execute":
+            nlp_query = nlp_build_query(nlp)
+            context.args = nlp_query.split() if nlp_query else []
+            handler = _nlp_handler_map.get(nlp_intent)
+            if handler:
+                update.message.chat.send_action(action="typing")
+                handler(update, context)
+
+        else:
+            # ── Unified non-execute path ───────────────────────────────────
+            # Disambiguation is driven by ENTITY STATE, not confidence tier.
+            #
+            # Rule A: Song extracted, artist missing → Last.fm candidates.
+            # Rule B: ≤2 words, no entities extracted → try text as song name.
+            # Rule C: No song to search → generic clarify / format prompt.
+
+            _raw_words = text.strip().split()
+            song_to_search = None
+
+            if nlp_song and not nlp_artist:
+                song_to_search = nlp_song
+            elif not nlp_song and not nlp_artist and len(_raw_words) <= 2:
+                song_to_search = text.strip()
+
+            if song_to_search:
+                try:
+                    candidates = nlp_search_candidates(song_to_search)
+                    if candidates:
+                        _display_intent = (
+                            nlp_intent if nlp_intent != "unknown" else "song"
+                        )
+                        msg = nlp_disambig_msg(
+                            song_to_search, _display_intent, candidates
+                        )
+                    else:
+                        msg = nlp_low_conf_msg()
+                except Exception as _de:
+                    logger.warning(f"[NLP] Disambiguation error: {_de}")
+                    msg = (
+                        nlp_clarify(nlp)
+                        if final == "clarify"
+                        else nlp_low_conf_msg()
+                    )
+            elif final == "clarify":
+                msg = nlp_clarify(nlp)
+            else:
+                msg = nlp_low_conf_msg()
+
+            update.message.reply_text(msg, parse_mode='Markdown')
+
+    except Exception as nlp_err:
+        logger.warning(f"[NLP] Fallback error for user {user_id}: {nlp_err}")
 
 
 def callback_query_handler(update: Update, context: CallbackContext):
