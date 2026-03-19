@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import requests
+import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
@@ -1690,6 +1691,13 @@ def _is_artist_only_query(query: str) -> bool:
             return True
         if set(query_words) < set(name_words):
             return True
+
+    # 3+ word queries are never artist-only names not already in our local DB
+    # (e.g. "love story taylor swift", "blinding lights the weeknd") — skip Last.fm
+    # to avoid a 200-2000ms HTTP round-trip that always returns False.
+    if len(clean.split()) >= 3:
+        return False
+
     try:
         api_key = os.environ.get('LASTFM_API_KEY')
         if api_key:
@@ -1697,7 +1705,7 @@ def _is_artist_only_query(query: str) -> bool:
                 'https://ws.audioscrobbler.com/2.0/',
                 params={'method': 'artist.getInfo', 'artist': clean,
                         'api_key': api_key, 'format': 'json'},
-                timeout=2
+                timeout=1
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -1764,13 +1772,22 @@ def song_command(update: Update, context: CallbackContext):
             "Just a moment! ✨"
         )
 
+        _t0 = time.time()
+
+        _ta0 = time.time()
         if _is_artist_only_query(query):
+            logger.info("[song_timing] artist_check=%.0fms (redirected to artist summary)",
+                        (time.time() - _ta0) * 1000)
             _artist_summary_for_song(query, update, processing_msg)
             return
+        _ta1 = time.time()
 
         artist, song, lyrics, status = search_lyrics_with_fallback(query)
+        _tl1 = time.time()
 
         if not lyrics:
+            logger.info("[song_timing] artist_check=%.0fms  lyrics_fetch=%.0fms [%s] -> not found",
+                        (_ta1 - _ta0) * 1000, (_tl1 - _ta1) * 1000, status)
             processing_msg.edit_text(
                 "😕 Couldn't find that song.\n\n"
                 "Try:\n"
@@ -1782,8 +1799,10 @@ def song_command(update: Update, context: CallbackContext):
 
         display_title = f"{artist} - {song}" if artist and song else (artist or song)
 
+        _tan0 = time.time()
         mood = detect_song_mood(lyrics)
         stats = get_song_statistics(lyrics)
+        _tan1 = time.time()
 
         mood_emoji = {
             'happy': '😊', 'sad': '😢', 'romantic': '💖',
@@ -1800,11 +1819,24 @@ def song_command(update: Update, context: CallbackContext):
         use_song = song if song else query
 
         # Run YouTube + recommendations in parallel — both are independent HTTP calls
+        _tpar0 = time.time()
         with ThreadPoolExecutor(max_workers=2) as _pool:
             _yt_fut  = _pool.submit(get_youtube_link, use_artist, use_song)
             _rec_fut = _pool.submit(get_similar_songs, use_artist, use_song, mood)
             yt_url = _yt_fut.result()
             recs   = _rec_fut.result()
+        _tpar1 = time.time()
+
+        logger.info(
+            "[song_timing] q=%r  artist_check=%.0fms  lyrics[%s]=%.0fms  analysis=%.0fms  "
+            "parallel(yt+recs)=%.0fms  TOTAL=%.0fms",
+            query,
+            (_ta1 - _ta0) * 1000,
+            status, (_tl1 - _ta1) * 1000,
+            (_tan1 - _tan0) * 1000,
+            (_tpar1 - _tpar0) * 1000,
+            (time.time() - _t0) * 1000,
+        )
 
         yt_section = f"🎬 {yt_url}" if yt_url else "🎬 YouTube: not found"
 

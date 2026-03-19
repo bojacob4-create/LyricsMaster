@@ -3078,6 +3078,7 @@ def _get_lastfm_recommendations(artist: str, song: str,
 # Public API (unchanged signatures)
 # ──────────────────────────────────────────────────────────────────────────────
 
+@lru_cache(maxsize=512)
 def get_similar_songs(artist: str, song: str, mood: str) -> List[Dict]:
     """
     Return 5 recommended songs similar in vibe to the source.
