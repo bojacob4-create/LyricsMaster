@@ -391,9 +391,7 @@ def natural_language_handler(update: Update, context: CallbackContext):
                 update.message.reply_text(
                     "No problem! You can type the full format:\n"
                     "`Artist - Song`\n\n"
-                    "For example: `Adele - Hello`\n\n"
-                    "—\n\n"
-                    "And from that the recommendations command will activate.",
+                    "For example: `Adele - Hello`",
                     parse_mode='Markdown',
                 )
             else:
