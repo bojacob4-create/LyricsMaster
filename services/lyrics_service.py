@@ -25,6 +25,13 @@ session.mount('https://', adapter)
 # Used by _track_relevance to ensure "LOVE." == "love", "Anti-Hero" == "anti hero"
 _PUNCT_RE = re.compile(r'[^\w\s]')
 
+# Words that indicate a track is NOT the canonical original release.
+# Applied to track name only (never to artist name).
+# Conservative list — only unambiguous non-original markers.
+_COVER_WORDS = frozenset({
+    'cover', 'karaoke', 'tribute', 'parody', 'bootleg', 'mashup', 'vip', 'remix',
+})
+
 
 def _normalize_tokens(text: str) -> set:
     """Return a set of clean lowercase tokens, stripping punctuation and splitting hyphens."""
@@ -34,6 +41,12 @@ def _normalize_tokens(text: str) -> set:
     return set(text.split())
 
 
+def _is_non_original(track: str) -> bool:
+    """Return True when the track name clearly flags a non-original (cover/remix/VIP/etc.)."""
+    tl = track.lower()
+    return any(cw in tl for cw in _COVER_WORDS)
+
+
 def _track_relevance(query_lower: str, artist: str, track: str) -> int:
     query_words  = _normalize_tokens(query_lower)
     track_words  = _normalize_tokens(track)
@@ -41,6 +54,25 @@ def _track_relevance(query_lower: str, artist: str, track: str) -> int:
     track_overlap  = len(track_words  & query_words)
     artist_overlap = len(artist_words & query_words)
     return artist_overlap * 10 + track_overlap * 20
+
+
+def _clean_slug_title(slug: str, artist: str) -> str:
+    """Convert a URL slug like 'Artist-Name-Song-Title-' into 'Song Title'.
+
+    Only fires when *slug* has no spaces (all-hyphen format) and ≥ 3 hyphens.
+    Strips the artist-name prefix when it appears at the start of the un-slugged string.
+    """
+    if ' ' in slug or slug.count('-') < 3:
+        return slug
+    unslug = slug.replace('-', ' ').strip()
+    if artist:
+        artist_lower = artist.lower().replace('-', ' ').strip()
+        unslug_lower = unslug.lower()
+        if unslug_lower.startswith(artist_lower):
+            remainder = unslug[len(artist):].strip()
+            if remainder:
+                unslug = remainder
+    return unslug.title() if unslug else slug
 
 
 def _fetch_from_lrclib_direct(artist: str, song: str) -> Optional[Tuple[str, str, str]]:
@@ -66,7 +98,21 @@ def _fetch_from_lrclib_direct(artist: str, song: str) -> Optional[Tuple[str, str
     return None
 
 
-def _fetch_from_lrclib_search(query: str) -> Optional[Tuple[str, str, str]]:
+def _fetch_from_lrclib_search(
+    query: str,
+    expected_artist: str = '',
+) -> Optional[Tuple[str, str, str]]:
+    """Search lrclib and return the best-matching (artist, track, lyrics) tuple.
+
+    Two-pass preference:
+      1. Prefer clean originals (tracks without cover/remix/VIP markers).
+      2. Fall back to non-originals only when no clean result exists.
+
+    When *expected_artist* is provided (non-empty), results whose artist matches
+    gain a +25 bonus; those that don't match get a −25 penalty.  This prevents
+    "Hood Gone Love It (Jay Rock)" from outscoring "LOVE. (Kendrick Lamar)"
+    when the user explicitly typed the artist name.
+    """
     try:
         response = session.get(
             'https://lrclib.net/api/search',
@@ -77,23 +123,46 @@ def _fetch_from_lrclib_search(query: str) -> Optional[Tuple[str, str, str]]:
             data = response.json()
             if isinstance(data, list) and len(data) > 0:
                 query_lower = query.lower()
-                best       = None
-                best_score = -1
+                ea_toks = _normalize_tokens(expected_artist) if expected_artist else set()
+
+                best_clean       = None
+                best_clean_score = -1
+                best_any         = None
+                best_any_score   = -1
+
                 for item in data:
                     lyrics = item.get('plainLyrics', '')
-                    if lyrics and len(lyrics) > 30:
-                        found_artist = item.get('artistName', '')
-                        found_track  = item.get('trackName',  '')
-                        score = _track_relevance(query_lower, found_artist, found_track)
-                        if score > best_score:
-                            best_score = score
-                            best = (found_artist, found_track, _clean_lyrics(lyrics))
-                if best:
+                    if not lyrics or len(lyrics) <= 30:
+                        continue
+                    found_artist = item.get('artistName', '')
+                    found_track  = item.get('trackName',  '')
+                    score = _track_relevance(query_lower, found_artist, found_track)
+
+                    if ea_toks:
+                        fa_toks = _normalize_tokens(found_artist)
+                        if ea_toks & fa_toks:
+                            score += 25
+                        else:
+                            score -= 25
+
+                    entry = (found_artist, found_track, _clean_lyrics(lyrics))
+
+                    if score > best_any_score:
+                        best_any_score = score
+                        best_any = entry
+
+                    if not _is_non_original(found_track) and score > best_clean_score:
+                        best_clean_score = score
+                        best_clean = entry
+
+                result = best_clean if best_clean is not None else best_any
+                if result:
                     logger.info(
-                        f"lrclib search hit: '{best[0]} - {best[1]}' "
-                        f"(score={best_score}) for query '{query}'"
+                        f"lrclib search hit: '{result[0]} - {result[1]}' "
+                        f"(score={best_clean_score if best_clean else best_any_score},"
+                        f" clean={'yes' if best_clean else 'no'}) for query '{query}'"
                     )
-                    return best
+                return result
     except Exception as e:
         logger.debug(f"lrclib search failed: {e}")
     return None
@@ -207,26 +276,32 @@ def search_song_info(artist: str, song: str) -> Optional[Tuple[str, str, str]]:
             if result:
                 return result
 
-        # Cap at 2 search queries via lrclib search API
+        # Cap at 2 search queries via lrclib search API.
+        # Pass search_artist as expected_artist so the scorer can reward
+        # results whose artist matches the explicitly-named artist in the query
+        # and penalise results from unrelated artists.
         search_queries = []
         if search_artist and search_song:
             search_queries.append(f"{search_artist} {search_song}")
         search_queries.append(search_song)
 
         for query in search_queries[:2]:
-            result = _fetch_from_lrclib_search(query)
+            result = _fetch_from_lrclib_search(query, expected_artist=search_artist)
             if result:
                 return result
 
-        # Last-resort: lyrics.ovh (returns lyrics only — use passed-in names)
+        # Last-resort: lyrics.ovh (returns lyrics only — use passed-in names).
+        # Clean slug-style song names (e.g. "Billie-Eilish-Happier-Than-Ever-")
+        # that the user may have copy-pasted from a URL before displaying them.
         if search_artist and search_song:
             ovh_lyrics = _fetch_from_lyrics_ovh(search_artist, search_song)
             if ovh_lyrics:
+                clean_song = _clean_slug_title(search_song, search_artist)
                 logger.info(
                     f"lyrics.ovh fallback hit in search_song_info: "
-                    f"'{search_artist} - {search_song}'"
+                    f"'{search_artist} - {clean_song}'"
                 )
-                return search_artist, search_song, ovh_lyrics
+                return search_artist, clean_song, ovh_lyrics
 
         return None
 

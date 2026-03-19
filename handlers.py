@@ -394,6 +394,22 @@ def natural_language_handler(update: Update, context: CallbackContext):
             recommend_command(update, context)
             return
 
+    # ── Step 3.5: Yes / No without a pending state ──────────────────────────
+    # "yes" / "no" are only meaningful inside an active confirmation or quiz.
+    # If neither state is live, treat the message as a stray reply and prompt
+    # the user — do NOT pass it to the NLP layer which would interpret "Yes"
+    # as a song title and trigger a Last.fm disambiguation search.
+    _tl_guard = text.lower().strip().rstrip('!.?,')
+    if _tl_guard in _YES_WORDS or _tl_guard in _NO_WORDS:
+        update.message.reply_text(
+            "🤔 Not sure what you're replying to!\n\n"
+            "Try a command like:\n"
+            "• /song Adele - Hello\n"
+            "• /lyrics The Weeknd - Blinding Lights\n"
+            "• /recommend Counting Stars"
+        )
+        return
+
     # ── Step 4: NLP fallback ─────────────────────────────────────────────────
     # Clear any remaining stale pending state before handing off to NLP,
     # so the NLP path always starts from a clean slate.
@@ -443,12 +459,17 @@ def natural_language_handler(update: Update, context: CallbackContext):
         gate = nlp_entity_gate(nlp, text)
 
         # ── Combine layers (decision table) ───────────────────────────────
+        # Rule: if the entity gate says we have enough to act (artist + song
+        # present for song/lyrics/analyze, or at least one entity for recommend),
+        # execute regardless of confidence.  Confidence reflects how sure the
+        # model is about *intent*, but if we already have concrete entities,
+        # the search itself will confirm or fail gracefully.
         if conf_tier == "execute" and gate == "execute":
+            final = "execute"
+        elif gate == "execute":
             final = "execute"
         elif conf_tier == "low_conf" and gate == "low_conf":
             final = "low_conf"
-        elif gate == "execute" and conf_tier == "low_conf":
-            final = "clarify"
         elif gate == "clarify":
             final = "clarify"
         elif conf_tier == "low_conf":
@@ -485,7 +506,12 @@ def natural_language_handler(update: Update, context: CallbackContext):
             if nlp_song and not nlp_artist:
                 song_to_search = nlp_song
             elif not nlp_song and not nlp_artist and len(_raw_words) <= 2:
-                song_to_search = text.strip()
+                # Only treat bare text as a song name if it contains at least
+                # 2 alphabetic characters.  Inputs like "???" or "123" have no
+                # meaningful content and would only produce junk Last.fm results.
+                _candidate = text.strip()
+                if sum(1 for c in _candidate if c.isalpha()) >= 2:
+                    song_to_search = _candidate
 
             if song_to_search:
                 try:

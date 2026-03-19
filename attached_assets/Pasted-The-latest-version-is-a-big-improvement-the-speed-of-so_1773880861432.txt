@@ -1,0 +1,124 @@
+The latest version is a big improvement — the speed of /song and the natural language routing is now very good and acceptable. I’m satisfied with the performance and I do NOT want any changes that negatively impact latency.
+
+However, after running a full comprehensive test, I found a few correctness issues that need to be fixed carefully without breaking the current speed.
+
+Please read the following issues carefully and address them precisely:
+
+❗ 1. Wrong song selected (cover vs original)
+Example:
+Input: lyrics hello adele  
+Output: Dayseeker – Hello (Adele Cover)
+
+This is incorrect. The system should strongly prioritize the original artist when the user clearly specifies it.
+
+Fix requirement:
+- If the artist is explicitly mentioned (e.g., "adele"), prioritize exact artist match over covers.
+- Covers should only appear if no original match exists or if explicitly requested.
+
+---
+
+❗ 2. Recommendation seed is incorrect
+Example:
+Input: recommend songs like nightcall  
+Output: uses "London Grammar – Nightcall (Special Request VIP)"
+
+This is wrong. The canonical version is:
+Kavinsky – Nightcall
+
+Fix requirement:
+- Normalize to the canonical/original track before generating recommendations.
+- Avoid remix/VIP/cover versions as seed unless explicitly requested.
+
+---
+
+❗ 3. Title formatting is broken
+Example:
+Billie Eilish - Billie-Eilish-Happier-Than-Ever-
+
+This is clearly a slug, not a clean title.
+
+Fix requirement:
+- Always use clean API fields (trackName / artistName).
+- Never display slugified or URL-style titles.
+
+---
+
+❗ 4. Confirmation loop is broken
+Example:
+Input: billie eilsh blue  
+Bot suggests correction  
+User retries correctly → still loops asking for exact format
+
+Fix requirement:
+- Once confidence is high, execute directly.
+- Do NOT force strict "/song Artist - Song" format if the intent is already clear.
+- Avoid repeated confirmation loops.
+
+---
+
+❗ 5. Completely wrong match (critical)
+Example:
+Input: Kendrick - love  
+Output: Jay Rock - Hood Gone Love It
+
+This is a major relevance failure.
+
+Fix requirement:
+- Strongly prioritize:
+  - Exact artist match
+  - Exact token match on song title
+- Penalize partial matches like "love" appearing inside unrelated titles.
+- The query "kendrick love" should resolve to "LOVE. – Kendrick Lamar"
+
+---
+
+❗ 6. "???" handling is broken
+Example:
+Input: ???  
+Output: random artists (Danny Ocean, etc.)
+
+Fix requirement:
+- Treat non-meaningful input as invalid
+- Return a fallback message instead of fake disambiguation
+
+---
+
+❗ 7. Confirmation system misinterprets replies
+Example:
+User: Yes  
+Bot treats it as a search query
+
+Fix requirement:
+- "yes" / "no" must ONLY act within a valid pending confirmation state
+- Otherwise, ignore or respond with a fallback message
+
+---
+
+⚠️ CRITICAL CONSTRAINT:
+Do NOT introduce:
+- extra API calls
+- additional external lookups
+- longer timeouts
+- deeper fallback loops
+
+All fixes must be:
+- logic-level (scoring, filtering, normalization)
+- deterministic
+- lightweight
+
+Performance MUST remain at current level or better.
+
+---
+
+Summary:
+The system is now fast — this is great.  
+The remaining issues are correctness, not performance.
+
+Focus on:
+- improving ranking logic
+- fixing normalization
+- stabilizing intent handling
+
+Do NOT touch anything that may slow the bot down.
+
+Take your time and fix this cleanly.
