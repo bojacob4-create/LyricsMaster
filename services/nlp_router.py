@@ -193,8 +193,13 @@ def disambiguation_message(
         )
 
     if is_dominant_match(candidates):
-        # Case A — one clearly dominant real match
+        # Case A — one clearly dominant real match.
+        # For recommend: show a clean yes/no prompt — the pending_confirmation
+        # state handles "yes" (→ execute) and "no" (→ fallback hint).
+        # For other intents: keep the command hint so users can act without typing.
         top = candidates[0]
+        if intent == "recommend":
+            return f"🎵 Did you mean *{top['artist']}* — *{top['song']}*?"
         return (
             f"🎵 Did you mean *{top['artist']}* — *{top['song']}*?\n\n"
             f"Reply: `{cmd} {top['artist']} - {top['song']}`\n"

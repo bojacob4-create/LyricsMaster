@@ -330,13 +330,24 @@ def natural_language_handler(update: Update, context: CallbackContext):
                 confirmed_handler(update, context)
             return
         elif tl in _NO_WORDS:
+            _no_intent = pend.get('intent_cmd', '')
             _pending_confirmation.pop(user_id, None)
-            update.message.reply_text(
-                "No problem! You can type the full format:\n"
-                "`Artist - Song`\n\n"
-                "For example: `Adele - Hello`",
-                parse_mode='Markdown',
-            )
+            if _no_intent == 'recommend':
+                update.message.reply_text(
+                    "No problem! You can type the full format:\n"
+                    "`Artist - Song`\n\n"
+                    "For example: `Adele - Hello`\n\n"
+                    "—\n\n"
+                    "And from that the recommendations command will activate.",
+                    parse_mode='Markdown',
+                )
+            else:
+                update.message.reply_text(
+                    "No problem! You can type the full format:\n"
+                    "`Artist - Song`\n\n"
+                    "For example: `Adele - Hello`",
+                    parse_mode='Markdown',
+                )
             return
         else:
             # User moved on to something else — clear and fall through.
@@ -485,12 +496,70 @@ def natural_language_handler(update: Update, context: CallbackContext):
         )
 
         if final == "execute":
-            nlp_query = nlp_build_query(nlp)
-            context.args = nlp_query.split() if nlp_query else []
-            handler = _nlp_handler_map.get(nlp_intent)
-            if handler:
-                update.message.chat.send_action(action="typing")
-                handler(update, context)
+            # ── Recommend without explicit artist → confirm before executing ──
+            # When the intent is recommendation and the user did NOT name an
+            # artist, firing immediately would pick an arbitrary version of the
+            # song.  Instead run a disambiguation step so the user controls
+            # exactly which seed track is used.
+            #
+            # • Dominant single match → "Did you mean X — Song?" (yes / no)
+            # • Multiple matches      → list of /recommend commands to pick from
+            # • No candidates         → generic format hint
+            #
+            # This block applies ONLY to recommend/similar.  Lyrics, song, and
+            # analyze flows are unaffected.
+            if nlp_intent == "recommend" and not nlp_artist and nlp_song:
+                try:
+                    from services.nlp_router import is_dominant_match as _is_dom
+                    _rec_cands = nlp_search_candidates(nlp_song)
+                    if _rec_cands:
+                        if _is_dom(_rec_cands):
+                            top = _rec_cands[0]
+                            _pending_confirmation[user_id] = {
+                                'artist':     top['artist'],
+                                'song':       top['song'],
+                                'intent_cmd': 'recommend',
+                            }
+                            _rec_msg = (
+                                f"🎵 Did you mean *{top['artist']}* — *{top['song']}*?"
+                            )
+                        else:
+                            _pending_confirmation.pop(user_id, None)
+                            top3 = _rec_cands[:3]
+                            _lines = [
+                                f"• `/recommend {c['artist']} - {c['song']}`"
+                                for c in top3
+                            ]
+                            _rec_msg = (
+                                f"🎵 Several songs match *{nlp_song}*.\n"
+                                f"Which one did you mean?\n\n"
+                                + "\n".join(_lines)
+                                + f"\n\nOr type: `Artist - {nlp_song}` to be more specific."
+                            )
+                    else:
+                        _pending_confirmation.pop(user_id, None)
+                        _rec_msg = (
+                            f"🔍 I couldn't find a song called *{nlp_song}*.\n\n"
+                            f"Please use the format: `Artist - Song`\n"
+                            f"Example: `Kavinsky - Nightcall`"
+                        )
+                    update.message.reply_text(_rec_msg, parse_mode='Markdown')
+                except Exception as _rec_err:
+                    logger.warning(f"[NLP] Recommend disambig error: {_rec_err}")
+                    # Something broke — fall through to direct execute as a safe fallback
+                    nlp_query = nlp_build_query(nlp)
+                    context.args = nlp_query.split() if nlp_query else []
+                    handler = _nlp_handler_map.get(nlp_intent)
+                    if handler:
+                        update.message.chat.send_action(action="typing")
+                        handler(update, context)
+            else:
+                nlp_query = nlp_build_query(nlp)
+                context.args = nlp_query.split() if nlp_query else []
+                handler = _nlp_handler_map.get(nlp_intent)
+                if handler:
+                    update.message.chat.send_action(action="typing")
+                    handler(update, context)
 
         else:
             # ── Unified non-execute path ───────────────────────────────────
