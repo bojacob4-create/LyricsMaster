@@ -273,6 +273,61 @@ def natural_language_handler(update: Update, context: CallbackContext):
             f"NL intent for user {user_id}: intent='{intent}', "
             f"query='{query}', raw='{text}'"
         )
+
+        # ── Recommend without explicit artist → disambiguation first ─────────
+        # The regex router strips keywords and returns, e.g., query='nightcall'
+        # when the user typed "recommend songs like nightcall".  Executing that
+        # directly picks an arbitrary artist/version of the song.  Instead:
+        #   • Dominant single match → "Did you mean X — Song?" (yes / no)
+        #   • Multiple matches      → list of /recommend commands
+        #   • No candidates         → generic format hint
+        # When the user already specified "Artist - Song" (separator present),
+        # the query is unambiguous — execute normally.
+        if intent == 'recommend' and query and ' - ' not in query and ' – ' not in query:
+            try:
+                from services.nlp_router import (
+                    search_song_candidates as _sc,
+                    is_dominant_match      as _is_dom,
+                )
+                _seed = query.strip()
+                _cands = _sc(_seed)
+                if _cands:
+                    if _is_dom(_cands):
+                        top = _cands[0]
+                        _pending_confirmation[user_id] = {
+                            'artist':     top['artist'],
+                            'song':       top['song'],
+                            'intent_cmd': 'recommend',
+                        }
+                        _rmsg = f"🎵 Did you mean *{top['artist']}* — *{top['song']}*?"
+                    else:
+                        _pending_confirmation.pop(user_id, None)
+                        _lines = [
+                            f"• `/recommend {c['artist']} - {c['song']}`"
+                            for c in _cands[:3]
+                        ]
+                        _rmsg = (
+                            f"🎵 Several songs match *{_seed}*.\n"
+                            f"Which one did you mean?\n\n"
+                            + "\n".join(_lines)
+                            + f"\n\nOr type: `Artist - {_seed}` to be more specific."
+                        )
+                else:
+                    _pending_confirmation.pop(user_id, None)
+                    _rmsg = (
+                        f"🔍 I couldn't find a song called *{_seed}*.\n\n"
+                        f"Please use the format: `Artist - Song`\n"
+                        f"Example: `Kavinsky - Nightcall`"
+                    )
+                update.message.reply_text(_rmsg, parse_mode='Markdown')
+            except Exception as _re:
+                logger.warning(f"[regex-recommend] Disambig error: {_re}")
+                # Safe fallback — execute directly
+                context.args = query.split()
+                recommend_command(update, context)
+            return
+        # ─────────────────────────────────────────────────────────────────────
+
         context.args = query.split() if query else []
         handler_map = {
             'lyrics': lyrics_command,
