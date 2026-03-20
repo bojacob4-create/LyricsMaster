@@ -1027,8 +1027,8 @@ def translate_lyrics_command(update: Update, context: CallbackContext):
                 "⚠️ Please tell me what song to translate!\n\n"
                 "Examples:\n"
                 "• /translate Adele - Hello\n"
-                "• /translate Hello Adele to spanish\n"
-                "• /translate Blinding Lights to french\n\n"
+                "• /translate Coldplay - Yellow to spanish\n"
+                "• /translate Dua Lipa - One Kiss to french\n\n"
                 f"Supported languages: {supported}\n\n"
                 "Let's try again! 🎵"
             )
