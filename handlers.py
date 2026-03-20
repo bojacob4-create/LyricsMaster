@@ -1042,7 +1042,7 @@ def translate_lyrics_command(update: Update, context: CallbackContext):
                 f"😕 Sorry, I don't support \"{lang_name}\" as a language.\n\n"
                 f"Supported languages: {supported}\n\n"
                 "Examples:\n"
-                "• /translate Dua Lipa - One Kiss to arabic\n"
+                "• /translate Dua Lipa - One Kiss to French\n"
                 "• /translate Coldplay - Yellow to spanish"
             )
             return
