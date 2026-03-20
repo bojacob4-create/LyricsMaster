@@ -2153,7 +2153,12 @@ def random_command(update: Update, context: CallbackContext):
         )
 
         response = ''.join(parts)
-        processing_msg.edit_text(response, disable_web_page_preview=True)
+        btn_query = f"{artist} - {song}" if artist and song else display_title
+        processing_msg.edit_text(
+            response,
+            disable_web_page_preview=True,
+            reply_markup=song_dashboard_buttons(btn_query),
+        )
         logger.info(f"Successfully sent random song to user {user_id}")
 
     except Exception as e:
