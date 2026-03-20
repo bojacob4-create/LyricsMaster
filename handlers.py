@@ -793,8 +793,7 @@ def lyrics_command(update: Update, context: CallbackContext):
                 "⚠️ Please tell me what song you're looking for!\n\n"
                 "You can use any of these formats:\n"
                 "• /lyrics Tyla - Water\n"
-                "• /lyrics Water Tyla\n"
-                "• /lyrics Water\n\n"
+                "• /lyrics Water Tyla\n\n"
                 "Give it a try! 🎵"
             )
             return
@@ -808,9 +807,8 @@ def lyrics_command(update: Update, context: CallbackContext):
             update.message.reply_text(
                 "😕 Sorry, I couldn't find those lyrics.\n\n"
                 "Try different formats:\n"
-                "• /lyrics Water\n"
-                "• /lyrics Water Tyla\n"
-                "• /lyrics Tyla - Water\n\n"
+                "• /lyrics Tyla - Water\n"
+                "• /lyrics Water Tyla\n\n"
                 "Tips:\n"
                 "• Check the spelling\n"
                 "• Try just the song name\n"
@@ -880,8 +878,7 @@ def stats_command(update: Update, context: CallbackContext):
                 "⚠️ Please tell me what song to analyze!\n\n"
                 "Examples:\n"
                 "• /stats Ed Sheeran - Perfect\n"
-                "• /stats Perfect Ed Sheeran\n"
-                "• /stats Perfect\n\n"
+                "• /stats Perfect Ed Sheeran\n\n"
                 "Give it another try! 📊"
             )
             return
@@ -900,9 +897,8 @@ def stats_command(update: Update, context: CallbackContext):
             processing_msg.edit_text(
                 "😕 Sorry, I couldn't find that song.\n\n"
                 "Try different formats:\n"
-                "• /stats Perfect\n"
-                "• /stats Perfect Ed Sheeran\n"
-                "• /stats Ed Sheeran - Perfect\n\n"
+                "• /stats Ed Sheeran - Perfect\n"
+                "• /stats Perfect Ed Sheeran\n\n"
                 "Need help? Use /help to see examples! 🔍"
             )
             return
@@ -1047,8 +1043,8 @@ def translate_lyrics_command(update: Update, context: CallbackContext):
                 f"Supported languages: {supported}\n\n"
                 "Examples:\n"
                 "• /translate Hello Adele to spanish\n"
-                "• /translate Blinding Lights to french\n"
-                "• /translate Counting Stars to arabic"
+                "• /translate The Weeknd - Blinding Lights to french\n"
+                "• /translate OneRepublic - Counting Stars to arabic"
             )
             return
 
@@ -1413,8 +1409,7 @@ def analyze_command(update: Update, context: CallbackContext):
                 "⚠️ Please tell me what song to analyze!\n\n"
                 "Examples:\n"
                 "• /analyze Eminem - Lose Yourself\n"
-                "• /analyze Lose Yourself Eminem\n"
-                "• /analyze Lose Yourself\n\n"
+                "• /analyze Lose Yourself Eminem\n\n"
                 "I'll give you a detailed analysis! 📊"
             )
             return
@@ -1438,8 +1433,8 @@ def analyze_command(update: Update, context: CallbackContext):
             update.message.reply_text(
                 "😕 Sorry, I couldn't find that song.\n\n"
                 "Try different formats:\n"
-                "• /analyze Lose Yourself\n"
-                "• /analyze Eminem - Lose Yourself\n\n"
+                "• /analyze Eminem - Lose Yourself\n"
+                "• /analyze Lose Yourself Eminem\n\n"
                 "Check the spelling and try again! 🔍"
             )
             return
@@ -1905,10 +1900,10 @@ def song_command(update: Update, context: CallbackContext):
                 "🎵 Song Dashboard\n"
                 "━━━━━━━━━━━━━━━━━━━━━\n\n"
                 "Get a full overview of any song!\n\n"
-                "Usage: /song [artist and/or song]\n\n"
+                "Usage: /song Artist - Song\n\n"
                 "Examples:\n"
-                "• /song Counting Stars\n"
-                "• /song Shape of You\n"
+                "• /song OneRepublic - Counting Stars\n"
+                "• /song Ed Sheeran - Shape of You\n"
                 "• /song Adele - Hello"
             )
             return

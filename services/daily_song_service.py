@@ -111,6 +111,36 @@ def get_daily_song() -> Tuple[Dict, str, Dict]:
         logger.error(f"Error getting daily song: {str(e)}")
         return None, None, None
 
+
+def get_daily_songs(count: int) -> List[Tuple[Dict, str, Dict]]:
+    """Get *count* distinct daily songs, each verified to have lyrics."""
+    results: List[Tuple[Dict, str, Dict]] = []
+    seen: set = set()
+    try:
+        pool = _fetch_apple_music_top100()
+        if not pool:
+            pool = list(DAILY_SONGS)
+
+        random.shuffle(pool)
+        for song_choice in pool:
+            if len(results) >= count:
+                break
+            key = (song_choice["artist"].lower(), song_choice["song"].lower())
+            if key in seen:
+                continue
+            lyrics = get_song_lyrics(song_choice["artist"], song_choice["song"])
+            if not lyrics:
+                continue
+            seen.add(key)
+            mood = detect_song_mood(lyrics)
+            stats = get_song_statistics(lyrics)
+            results.append((song_choice, lyrics, {"mood": mood, "stats": stats}))
+
+    except Exception as e:
+        logger.error(f"Error getting daily songs: {e}")
+
+    return results
+
 def subscribe_user(user_id: int, chat_id: int, daily_count: int = 1) -> bool:
     """Subscribe a user to daily songs."""
     try:
@@ -191,31 +221,69 @@ def format_daily_song(song: Dict, lyrics: str, analysis: Dict) -> str:
     )
 
 def send_daily_song(context) -> None:
-    """Send daily song to all subscribed users."""
+    """Send daily song(s) to all subscribed users.
+
+    Delivery depends on the user's chosen daily_count:
+      count == 1  →  Full song dashboard text + action buttons (Lyrics / Analyze
+                      / Video / MP3 / Similar).  Same quality as /song.
+      count >= 2  →  Compact "Daily Picks" list with one inline button per song.
+                      Tapping a button fires the full Song Dashboard (callback
+                      action='song') exactly as the /song command would.
+    """
+    from buttons import daily_song_buttons, daily_picker_buttons
+
     try:
         logger.info("Starting daily song distribution")
+        active = get_subscribed_users()
+        logger.info(f"Sending daily songs to {len(active)} users")
 
-        song, lyrics, analysis = get_daily_song()
-        if not all([song, lyrics, analysis]):
-            logger.error("Failed to get daily song")
-            return
+        for user_id, data in active.items():
+            daily_count = int(data.get("daily_count", 1))
+            chat_id = data["chat_id"]
 
-        message = format_daily_song(song, lyrics, analysis)
-
-        # Send to all subscribed users
-        subscribed_users = get_subscribed_users()
-        logger.info(f"Sending daily song to {len(subscribed_users)} users")
-
-        for user_id, data in subscribed_users.items():
             try:
-                context.bot.send_message(
-                    chat_id=data["chat_id"],
-                    text=message,
-                    parse_mode=None  # Ensure no parsing issues
-                )
-                logger.info(f"Sent daily song to user {user_id}")
+                if daily_count == 1:
+                    # ── Single song: full dashboard ──────────────────────────
+                    song, lyrics, analysis = get_daily_song()
+                    if not all([song, lyrics, analysis]):
+                        logger.error(f"Could not fetch daily song for user {user_id}")
+                        continue
+                    message = format_daily_song(song, lyrics, analysis)
+                    btn_query = f"{song['artist']} - {song['song']}"
+                    context.bot.send_message(
+                        chat_id=chat_id,
+                        text=message,
+                        parse_mode=None,
+                        reply_markup=daily_song_buttons(btn_query),
+                    )
+                    logger.info(f"Sent 1 daily song to user {user_id}: {btn_query}")
+
+                else:
+                    # ── Multi-song: compact picker list ──────────────────────
+                    songs_data = get_daily_songs(daily_count)
+                    if not songs_data:
+                        logger.error(f"Could not fetch daily songs for user {user_id}")
+                        continue
+                    songs = [sd[0] for sd in songs_data]
+                    lines = "\n".join(
+                        f"• {s['artist']} — {s['song']}" for s in songs
+                    )
+                    message = (
+                        f"🎵 Daily Picks:\n\n"
+                        f"{lines}\n\n"
+                        f"Tap a song to see its full details:"
+                    )
+                    context.bot.send_message(
+                        chat_id=chat_id,
+                        text=message,
+                        parse_mode=None,
+                        reply_markup=daily_picker_buttons(songs),
+                    )
+                    names = ", ".join(f"{s['artist']} - {s['song']}" for s in songs)
+                    logger.info(f"Sent {len(songs)} daily songs to user {user_id}: {names}")
+
             except Exception as e:
-                logger.error(f"Failed to send daily song to user {user_id}: {str(e)}")
+                logger.error(f"Failed to send daily song to user {user_id}: {e}")
 
     except Exception as e:
-        logger.error(f"Error in daily song distribution: {str(e)}", exc_info=True)
+        logger.error(f"Error in daily song distribution: {e}", exc_info=True)

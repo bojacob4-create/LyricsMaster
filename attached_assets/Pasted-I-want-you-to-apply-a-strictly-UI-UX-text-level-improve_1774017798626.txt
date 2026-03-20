@@ -1,0 +1,147 @@
+I want you to apply a strictly UI/UX text-level improvement only based on the following notes.
+
+⚠️ Very important constraints:
+	•	DO NOT change any core logic or flow behavior
+	•	DO NOT affect performance or speed
+	•	DO NOT modify how commands are processed internally
+	•	ONLY adjust displayed text, examples, and subscription output formatting where specified
+
+⸻
+
+1) Fix misleading examples in /song
+
+Current issue:
+The examples include:
+	•	/song Counting Stars
+
+This misleads users into thinking song-only input works reliably, which it does not.
+
+✅ Required fix:
+	•	Remove any example that uses song name only
+	•	Keep only examples that include artist + song
+
+Correct format:
+	•	/song OneRepublic - Counting Stars
+	•	/song Ed Sheeran - Shape of You
+
+⸻
+
+2) Fix /lyrics examples
+
+Current issue:
+Examples suggest:
+	•	/lyrics Water
+
+But this causes incorrect or inconsistent results.
+
+✅ Required fix:
+	•	Remove song-only examples
+	•	Keep only:
+	•	/lyrics Tyla - Water
+	•	/lyrics Water Tyla (if already supported and working reliably)
+
+⸻
+
+3) Fix /stats examples
+
+Same issue:
+	•	/stats Perfect is misleading
+
+✅ Required fix:
+	•	Only allow:
+	•	/stats Ed Sheeran - Perfect
+	•	/stats Perfect Ed Sheeran
+
+Remove song-only examples.
+
+⸻
+
+4) Fix /analyze examples
+
+Current issue:
+	•	/analyze Lose Yourself is shown but not reliable
+
+✅ Required fix:
+	•	Keep only:
+	•	/analyze Eminem - Lose Yourself
+	•	/analyze Lose Yourself Eminem
+
+Remove song-only example.
+
+⸻
+
+5) Fix /translate examples
+
+Current issue:
+	•	/translate Blinding Lights is misleading
+
+✅ Required fix:
+	•	Only keep examples with artist included:
+	•	/translate The Weeknd - Blinding Lights
+	•	/translate Blinding Lights The Weeknd to French
+
+⸻
+
+6) Improve /subscribe daily output (UX only)
+
+⚠️ Do NOT change subscription logic, only output formatting
+
+Problem A:
+User selects 2 or 3 songs → bot still sends only 1
+
+👉 You must verify and FIX this so:
+	•	If user selected 2 → send 2 songs
+	•	If user selected 3 → send 3 songs
+
+⸻
+
+Problem B: Poor output design for daily delivery
+Current output is raw and basic.
+
+✅ Required behavior:
+
+Case 1: User selects 1 song/day
+	•	Send FULL Song Dashboard format
+	•	Must match existing /song output:
+	•	Title
+	•	Lyrics preview
+	•	Stats
+	•	Similar songs
+	•	Buttons (Lyrics / Analyze / Translate / Video / MP3 / Similar)
+
+⸻
+
+Case 2: User selects 2–3 songs/day
+
+Instead of dumping full dashboards:
+
+✅ Send a clean list with buttons:
+
+Example:
+
+🎵 Daily Picks:
+
+• Song 1
+• Song 2
+• Song 3
+
+Each should be a button
+
+👉 When user clicks a song:
+	•	THEN trigger full Song Dashboard view
+	•	Exactly same as /song
+
+⸻
+
+Summary
+	•	First 5 fixes = TEXT ONLY (examples & guidance)
+	•	Sixth fix = OUTPUT FORMATTING ONLY for subscription delivery
+	•	Do NOT touch:
+	•	command parsing
+	•	NLP
+	•	services
+	•	performance
+
+This is purely a UX correction layer.
+
+Take your time and implement cleanly without breaking anything that currently works.
