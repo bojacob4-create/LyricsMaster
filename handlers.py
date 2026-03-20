@@ -1233,9 +1233,8 @@ def youtube_command(update: Update, context: CallbackContext):
             update.message.reply_text(
                 "⚠️ Please tell me what song to find on YouTube!\n\n"
                 "Examples:\n"
-                "• /youtube Ed Sheeran - Perfect\n"
-                "• /youtube Perfect Ed Sheeran\n"
-                "• /youtube Perfect\n\n"
+                "• /youtube The Weeknd - Starboy\n"
+                "• /youtube Drake - God's Plan\n\n"
                 "Let's try again! 🎵"
             )
             return
