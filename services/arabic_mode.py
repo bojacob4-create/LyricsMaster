@@ -150,7 +150,9 @@ _OFFICIAL_CHANNELS = frozenset([
     "rotana", "روتانا", "vevo", " - topic",
     "mazzika", "mazika", "anghami",
 ])
-_OFFICIAL_BONUS = 20   # strong enough that official + penalty > concert alone
+_TITLE_BONUS   = 15   # title keyword (حصري, official video, etc.) — moderate signal
+_CHANNEL_BONUS = 25   # Rotana/VEVO/Topic channel — authoritative official signal
+_OFFICIAL_BONUS = _CHANNEL_BONUS  # alias kept for any legacy references
 
 
 def _is_non_original(title: str) -> bool:
@@ -246,51 +248,57 @@ def _yt_parse_title(
     Extract (arabic_artist, arabic_song, english_artist, english_song).
     Handles:
       • "Artist - Song"
-      • "Arabic - Song | English - Song"  (bilingual — prefers Arabic part)
+      • "Artist ... Song"                 (Rotana/label style)
+      • "Arabic Artist - Song | English Artist - Song"  (bilingual)
+      • "English - Song | Qualifier | Arabic - Song"    (reversed bilingual)
       • "Artist | Song"
 
-    The English alias (english_artist, english_song) is captured from bilingual
-    titles so Genius can be searched with it even when Arabic Genius search fails.
+    IMPORTANT: bilingual segment split is done BEFORE _YT_SUFFIX_RE is applied
+    so that qualifier segments like "| Lyrics Video 2025 |" in the middle of a
+    bilingual title do not strip the Arabic portion.
     """
-    clean = _YT_SUFFIX_RE.sub("", title).strip()
-
     eng_artist: Optional[str] = None
     eng_song:   Optional[str] = None
 
-    # Bilingual format: collect English segment before discarding it
-    if " | " in clean:
-        segments = [s.strip() for s in clean.split(" | ")]
+    # ── Step 1: Bilingual segment split FIRST ────────────────────────────────
+    # Split on " | " before any suffix stripping so Arabic portions are not lost.
+    if " | " in title:
+        segments = [s.strip() for s in title.split(" | ")]
         arabic_segs  = [s for s in segments if _has_arabic(s)]
         english_segs = [s for s in segments if not _has_arabic(s) and s]
 
         # Extract English alias from the first all-ASCII segment
         if english_segs:
             eng_seg = _YT_SUFFIX_RE.sub("", english_segs[0]).strip()
-            # Also strip trailing parenthetical qualifiers e.g. "( Official Audio )"
             eng_seg = re.sub(r"\s*\([^)]*\)\s*$", "", eng_seg).strip()
             if " - " in eng_seg:
                 ep = eng_seg.split(" - ", 1)
                 eng_artist, eng_song = ep[0].strip(), ep[1].strip()
 
-        clean = arabic_segs[0] if arabic_segs else segments[0]
+        # Prefer the first Arabic segment; fall back to first segment overall
+        raw = arabic_segs[0] if arabic_segs else segments[0]
+        clean = _YT_SUFFIX_RE.sub("", raw).strip()
+    else:
+        # No bilingual separator — apply suffix stripping to the whole title
+        clean = _YT_SUFFIX_RE.sub("", title).strip()
 
-    # Primary separator: " - "
+    # ── Step 2: Separator logic on the isolated clean segment ─────────────────
+
+    # Primary: " - "
     if " - " in clean:
         parts = clean.split(" - ", 1)
-        artist = parts[0].strip()
-        song   = parts[1].strip()
+        artist, song = parts[0].strip(), parts[1].strip()
         if artist and song:
             return artist, song, eng_artist, eng_song
 
-    # Secondary separator: " ... " (used by Rotana and some label channels)
-    # e.g. "حسين الجسمي ... سته الصبح"
+    # Secondary: " ... " (Rotana / label style, e.g. "حسين الجسمي ... سته الصبح")
     if " ... " in clean:
         parts = clean.split(" ... ", 1)
         artist, song = parts[0].strip(), parts[1].strip()
         if artist and song:
             return artist, song, eng_artist, eng_song
 
-    # Tertiary separator: " | "
+    # Tertiary: " | " (shouldn't normally survive step 1, but kept for safety)
     if " | " in clean:
         parts = clean.split(" | ", 1)
         artist, song = parts[0].strip(), parts[1].strip()
@@ -323,6 +331,8 @@ def _yt_compute_score(
     Priority guarantee: if both an official and a concert version exist,
     official wins even if concert scores base 100.
     """
+    from difflib import SequenceMatcher as _SM
+
     def _tok_overlap(q: str, c: str) -> float:
         qt = set(normalize_arabic(q).split()) | set(q.lower().split())
         qt = {t for t in qt if len(t) > 1}
@@ -335,24 +345,45 @@ def _yt_compute_score(
     ar_artist = _tok_overlap(query_artist, cand_artist) * 50
     ar_song   = _tok_overlap(query_song,   cand_song)   * 40
 
-    # Romanized comparison (catches English/transliterated YouTube titles)
+    # Romanized comparison — compact char-level fuzzy matching handles vowel gaps
+    # between Arabic romanization (e.g. "rashd almajd") and real transliterations
+    # (e.g. "Rashed Al Majed").  SequenceMatcher on whitespace-stripped strings.
     rom_qa = _romanize(query_artist)
     rom_qs = _romanize(query_song)
 
-    def _rom_overlap(rq: str, rc: str) -> float:
-        tq = set(rq.split())
-        tc = set(rc.lower().split())
-        if not tq:
+    def _rom_overlap(rq: str, rc_raw: str) -> float:
+        if not rq:
             return 0.0
-        return len(tq & tc) / len(tq)
+        rc = rc_raw.lower()
+        # Compact: keep only lowercase alpha chars for character-level comparison
+        rq_c = re.sub(r"[^a-z]", "", rq.replace(" ", ""))
+        rc_c = re.sub(r"[^a-z]", "", rc.replace(" ", ""))
+        if not rq_c or not rc_c:
+            return 0.0
+        ratio = _SM(None, rq_c, rc_c).ratio()
+        # Require ≥ 0.60 similarity before counting as a match
+        return ratio if ratio >= 0.60 else 0.0
 
     rom_artist = _rom_overlap(rom_qa, cand_artist) * 50
-    rom_song   = _rom_overlap(rom_qs,  cand_song)  * 40
+    rom_song   = _rom_overlap(rom_qs, cand_song)   * 40
 
     artist_score = max(ar_artist, rom_artist)
     song_score   = max(ar_song,   rom_song)
 
-    # Strict artist + song threshold enforcement per spec (≥ 60% each)
+    # ── Reversed-order check ("Song - Artist" format used by some uploaders) ──
+    # If both thresholds fail, try swapping cand_artist ↔ cand_song.
+    if (artist_score < 30 or song_score < 24) and cand_artist and cand_song:
+        sw_ar_artist = _tok_overlap(query_artist, cand_song)   * 50
+        sw_ar_song   = _tok_overlap(query_song,   cand_artist) * 40
+        sw_rom_artist = _rom_overlap(rom_qa, cand_song)   * 50
+        sw_rom_song   = _rom_overlap(rom_qs, cand_artist) * 40
+        sw_artist = max(sw_ar_artist, sw_rom_artist)
+        sw_song   = max(sw_ar_song,   sw_rom_song)
+        if sw_artist >= 30 and sw_song >= 24:
+            artist_score = sw_artist
+            song_score   = sw_song
+
+    # Strict artist + song threshold enforcement (≥ 60% each)
     if artist_score < 30 or song_score < 24:   # 30 = 60% of 50; 24 = 60% of 40
         return 0.0
 
@@ -364,13 +395,20 @@ def _yt_compute_score(
     tl = full_title.lower()
     live_pen = -_LIVE_PENALTY if any(w in tl for w in _LIVE_PENALTY_WORDS) else 0
 
-    # Official upload bonus — title keywords OR known label/official channel.
+    # Official upload bonus — two-tier signal strength:
+    # • Known label channels (Rotana, VEVO, Topic) → stronger channel bonus
+    # • Title keywords (حصري, official video) → moderate title bonus
+    # Both bonuses can stack if a Rotana upload also has "official video" in title,
+    # but normally only the highest applicable tier is used.
     ch_lower = channel.lower()
-    is_official = (
-        any(w in tl for w in _OFFICIAL_BONUS_WORDS)
-        or any(w in ch_lower for w in _OFFICIAL_CHANNELS)
-    )
-    official_bon = _OFFICIAL_BONUS if is_official else 0
+    channel_is_official = any(w in ch_lower for w in _OFFICIAL_CHANNELS)
+    title_is_official   = any(w in tl for w in _OFFICIAL_BONUS_WORDS)
+    if channel_is_official:
+        official_bon = _CHANNEL_BONUS   # 25 — authoritative label upload
+    elif title_is_official:
+        official_bon = _TITLE_BONUS     # 15 — title keyword (less authoritative)
+    else:
+        official_bon = 0
 
     return artist_score + song_score + clean_bonus + live_pen + official_bon
 
@@ -497,10 +535,15 @@ def _ytmusic_lyrics(artist: str, song: str) -> Optional[str]:
         return None
 
     queries = [f"{artist} {song}"]
-    # Also try with normalized Arabic form as a second query
+    # Normalized Arabic form
     norm_q = f"{normalize_arabic(artist)} {normalize_arabic(song)}"
     if norm_q.strip() != queries[0].strip():
         queries.append(norm_q)
+    # Romanized (Latin-transliterated) form — helps when YTMusic only indexes
+    # the song under its English transliteration (e.g. "Min Araftek" not "من عرفتك")
+    rom_q = f"{_romanize(artist)} {_romanize(song)}"
+    if rom_q.strip() and rom_q.strip() not in [q.strip() for q in queries]:
+        queries.append(rom_q)
 
     for query in queries:
         try:

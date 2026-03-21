@@ -1,0 +1,100 @@
+The remaining issue is still NOT fixed.
+
+This is now the third time the same core problem is still appearing in real user tests.
+
+Current confirmed working parts:
+- Arabic mode isolation is correct
+- Arabic dashboard is correct
+- Arabic buttons are correct
+- Full Lyrics / Translate / Video wiring is correct for songs that are successfully resolved
+
+Do NOT touch any of those parts.
+Do NOT touch the main bot.
+Do NOT touch the main search logic.
+Do NOT touch anything outside Arabic mode.
+
+==================================================
+THE ONLY REMAINING ISSUE
+==================================================
+
+Arabic song discovery / identity resolution is still incomplete.
+
+Real user tests are still failing on songs such as:
+- عبدالمجيد عبدالله - لكل نهاية بداية
+- راشد الماجد - من عرفتك
+
+This proves that the Arabic-mode resolver still does NOT robustly handle all of these publishing styles:
+
+1. Arabic titles
+2. bilingual Arabic + English transliteration titles
+3. English-transliterated titles only
+4. alternate title formatting used by Arabic labels/channels
+5. artist/title variants commonly used on YouTube uploads
+
+So this issue is NOT solved yet.
+
+Please do NOT say a song is “already confirmed working” unless it is verified through the actual live Arabic-mode user flow, not just internal function testing.
+
+==================================================
+REQUIRED FIX
+==================================================
+
+You must now focus ONLY on improving Arabic-mode identity resolution / YouTube discovery coverage.
+
+This is Arabic-mode only.
+Do NOT modify the main bot.
+
+You need to make the Arabic-mode YouTube resolver stronger for cases where the official upload title is not a clean exact Arabic title.
+
+The resolver must handle and search across:
+- original Arabic input
+- normalized Arabic input
+- bilingual title parsing
+- transliterated / romanized English forms
+- alternate artist/title formatting
+- label/channel style uploads
+
+This specifically includes cases where the official YouTube title is published in transliterated English such as:
+- Abdul Majeed Abdullah / Lekel Nehayah Bedayah
+or similar patterns
+
+It is not enough to support only exact Arabic title matching.
+
+==================================================
+IMPORTANT WARNING
+==================================================
+
+Do NOT rework or touch:
+- Arabic mode isolation
+- Arabic dashboard layout
+- Arabic buttons
+- Full Lyrics logic
+- Translate logic
+- Video button wiring
+- main bot search logic
+- main handlers
+- main dashboard
+- anything outside /arabic ... /exit
+
+Only improve Arabic-mode song discovery / identity resolution coverage.
+
+==================================================
+REQUIRED REAL TESTS
+==================================================
+
+You must test these exact songs through the live Arabic-mode flow before saying done:
+
+1. /arabic
+2. عبدالمجيد عبدالله - لكل نهاية بداية
+3. راشد الماجد - من عرفتك
+4. رابح صقر - يحبونه
+5. /exit
+
+Expected:
+- the first 3 songs must be resolved correctly if they exist on YouTube under Arabic, bilingual, or transliterated publishing
+- do not return “song not found” if the song exists under a transliterated official upload
+- main bot must remain unchanged after /exit
+
+Do not assume.
+Do not infer from partial internal tests.
+Do not say this issue is fixed until these exact live Arabic-mode cases are verified successfully.
