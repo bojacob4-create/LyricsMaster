@@ -83,20 +83,38 @@ Never imports from main bot services.
 - Layer 2: YouTube search with normalized Arabic (diacritics stripped, alef/ya/ta-marbuta normalized)
 - Layer 5: YouTube search with romanized (Latin-transliterated) text
 
-### Phase 2 — Lyrics Fetch (Layers 2a → 3 → 4 → D)
-- **Layer 2a**: ytmusicapi — iterates top-5 results, validates each before accepting
+### Phase 2 — Scored Lyrics Retrieval (collect-all, score, pick best)
+All layers are tried, every candidate is scored, the highest score wins.
+- **Layer 2a**: ytmusicapi — collects ALL valid candidates from top-5 results (up to 2)
 - **Layer 3**: Genius API search + page scrape
+- **Layer 3b**: Anghami kalimat — DDG `site:kalimat.anghami.com` → direct scrape
 - **Layer 4**: lrclib direct lookup + search
-- **Layer D**: DuckDuckGo HTML search (`html.duckduckgo.com/html/`) + multi-site scrape
+- **Layer 5b**: aghanilyrics.com — DDG `site:aghanilyrics.com` → scrape with Referer header
+- **Layer D**: General DuckDuckGo search → multi-site scrape (last resort, only if best score < 50)
 
-### Quality Gate (_validate_arabic_lyrics)
-Applied to every candidate lyrics block before acceptance:
+### Quality Gate (`_validate_arabic_lyrics`)
+Applied to every candidate before scoring:
 1. Minimum 80 printable chars
-2. Arabic-script ratio ≥ 50 %
-3. Live/crowd contamination: < 2 distinct `_LIVE_SPEECH_MARKERS` found
-4. Wrong-song guard: ≥ 1 key song-title token present in normalized lyrics
+2. Arabic-script ratio ≥ **70%** (raised from 50%)
+3. Live/crowd contamination: **strict** — ≥ 2 markers OR 1 marker on 2+ lines → reject
+4. Wrong-song guard: 1 strong token (len ≥ 4) in lyrics OR ≥ 40% title-token overlap
+5. Content diversity: unique-line ratio ≥ 30% for blocks > 8 lines (anti-garbage)
 
-### YouTube Scoring
+### Candidate Scoring (`_score_lyrics_candidate`)
+- Arabic ratio: 0–20 pts
+- Title token match: 0–30 pts
+- Line structure (≥4/8/16 lines): 0–15 pts
+- Content diversity: 0–10 pts
+- Source bonus (see below): 0–40 pts
+- Penalties: −15 per live marker, −10/−20 for high duplication
+
+### Source Bonuses
+- anghami: +40 | aghanilyrics: +35 | genius: +30 | ytmusic: +25 | lrclib: +15 | web: +0
+
+### Early Stop
+If any candidate scores ≥ 75.0 (`_HIGH_CONFIDENCE_SCORE`), return immediately.
+
+### YouTube Scoring (Phase 1)
 - `_CHANNEL_BONUS = 25` for Rotana/VEVO/Topic channels
 - `_TITLE_BONUS = 15` for official title keywords (حصري, official video)
 - `_LIVE_PENALTY = 40` for live/concert keywords (مهرجان, جلسة, برنامج, Arab Idol, حفل)

@@ -1,0 +1,277 @@
+Do NOT change anything outside Arabic mode.
+Do NOT modify main bot logic.
+Do NOT modify global services.
+Do NOT touch main lyrics_service or main handlers.
+
+All changes must remain strictly داخل Arabic mode فقط.
+
+==================================================
+INITIAL WARNING
+==================================================
+
+What you implemented is a GOOD STEP — but it is NOT enough yet.
+
+You solved part of the problem (validation + Layer D),
+but you are still thinking in terms of “fixing cases”.
+
+This is wrong.
+
+We are not fixing:
+- نسيناكم
+- ربما
+- من عرفتك
+
+We are building a SYSTEM that must work for ANY Arabic song.
+
+==================================================
+CURRENT WEAK POINTS (CRITICAL)
+==================================================
+
+Even after your fixes, there are still structural risks:
+
+1) DuckDuckGo scraping is fragile
+- depends on external HTML
+- selectors can break anytime
+- results ordering is inconsistent
+
+2) Source reliability is not ranked properly
+- Anghami ≠ random blog
+- Rotana-level sources should be prioritized when possible
+
+3) Validation is GOOD but still not STRICT ENOUGH
+- "1 token match" is too weak → allows wrong songs to pass
+- Arabic ratio ≥ 50% is too loose → still allows garbage
+
+4) No SOURCE PRIORITY LAYERING
+You are treating all results almost equally after validation.
+
+This is incorrect.
+
+==================================================
+REQUIRED UPGRADE (MANDATORY)
+==================================================
+
+You must now evolve Arabic mode into a **multi-layer weighted retrieval system**
+
+==================================================
+STEP 1 — STRONGER VALIDATION (NON-NEGOTIABLE)
+==================================================
+
+Upgrade `_validate_arabic_lyrics`:
+
+REPLACE:
+- ≥ 1 token match
+
+WITH:
+- at least 2 meaningful tokens OR
+- 1 strong token (length ≥ 4 chars)
+
+Add:
+
+- Reject if lyrics contain excessive repetition blocks (copy-paste garbage)
+- Reject if line diversity is too low
+
+Upgrade Arabic ratio:
+
+- Raise from 50% → 70%
+
+Reason:
+We are dealing with Arabic songs — low ratio = wrong result.
+
+==================================================
+STEP 2 — SOURCE CONFIDENCE SCORING
+==================================================
+
+Each lyrics result must now carry a SCORE.
+
+Do NOT accept first valid result blindly.
+
+Each candidate = score based on:
+
+BASE MATCH SCORE:
+- title token match strength
+- artist match strength
+
+QUALITY SCORE:
+- Arabic ratio
+- line count
+- structure (multi-line vs blob)
+
+PENALTIES:
+- live markers
+- repeated phrases
+- low diversity
+
+SOURCE BONUS:
+
+HIGH TRUST:
++40 → kalimat.anghami.com  
++35 → aghanilyrics.com  
++30 → Genius  
+
+MEDIUM:
++15 → lrclib  
+
+LOW:
++0 → scraped unknown sites  
+
+FINAL:
+Pick the HIGHEST SCORE result, not first pass.
+
+==================================================
+STEP 3 — SMART LAYER ORDER (RESTRUCTURE)
+==================================================
+
+Replace current flow:
+
+OLD:
+YTMusic → Genius → lrclib → DDG scrape
+
+NEW:
+
+Layer 1:
+YTMusic (validated loop)
+
+Layer 2:
+Genius (validated)
+
+Layer 3:
+Anghami (direct scraping FIRST — not via DDG)
+
+Layer 4:
+aghanilyrics.com (direct pattern-based search)
+
+Layer 5:
+DuckDuckGo (fallback only)
+
+IMPORTANT:
+- DDG must be LAST, not main dependency
+
+==================================================
+STEP 4 — DIRECT SITE TARGETING (VERY IMPORTANT)
+==================================================
+
+You already discovered:
+
+aghanilyrics.com  
+kalimat.anghami.com  
+
+STOP relying on DDG to find them.
+
+You must:
+
+1) Build direct search logic:
+
+For Anghami:
+- try artist + song combinations
+- also try transliteration fallback
+
+For aghanilyrics:
+- search singer page
+- parse song list
+- match normalized titles
+
+This makes system STABLE, not fragile.
+
+==================================================
+STEP 5 — WRONG SONG PROTECTION (UPGRADE)
+==================================================
+
+Current:
+- 1 token match
+
+REPLACE WITH:
+
+Normalized token intersection score:
+
+- require at least:
+  - 40% overlap of title tokens
+  OR
+  - strong fuzzy similarity
+
+Also:
+
+- reject if artist name not present anywhere in page or metadata (when available)
+
+==================================================
+STEP 6 — LIVE / CONCERT FILTER (STRICT MODE)
+==================================================
+
+Upgrade current logic:
+
+Instead of:
+- < 2 markers
+
+Use:
+
+IF markers >= 1 AND repeated across lines:
+→ HARD REJECT
+
+Also detect:
+- parentheses crowd text
+- repeated "يا سلام / يلا / الجمهور"
+
+These MUST NOT pass.
+
+==================================================
+STEP 7 — LANGUAGE SAFETY LOCK
+==================================================
+
+If query is Arabic:
+
+- MUST be ≥ 80% Arabic characters in final output
+- otherwise → reject
+
+This prevents Hindi / Urdu leakage completely.
+
+==================================================
+STEP 8 — FINAL DECISION LOGIC
+==================================================
+
+Pipeline must behave like:
+
+- Collect candidates from ALL layers
+- Score all
+- Sort descending
+- Pick best
+
+If ALL fail:
+→ then return "لم يتم العثور..."
+
+NOT before.
+
+==================================================
+MANDATORY TESTS (REAL, NOT ASSUMED)
+==================================================
+
+You MUST re-test:
+
+- عبدالمجيد عبدالله - لكل نهاية بداية
+- راشد الماجد - من عرفتك
+- راشد الماجد - نسيناكم
+- راشد الماجد - ربما
+- نوال - ما هو وقتك
+- رابح صقر - يحبونه
+
+Verify:
+
+- no wrong lyrics
+- no Hindi
+- no concert speech
+- no false "not found"
+
+==================================================
+FINAL WARNING
+==================================================
+
+Do NOT:
+- rely on DDG as primary
+- accept first valid result
+- assume correctness from partial tests
+
+DO:
+- score results
+- compare results
+- choose best result
+
+This must become a **robust Arabic lyrics engine**, not a patched pipeline.
