@@ -765,6 +765,29 @@ def callback_query_handler(update: Update, context: CallbackContext):
             query.message.reply_text(f"🎵 ({idx + 1}/{len(chunks)})...\n\n" + chunk)
         return
 
+    # ── Arabic mode Video button — use per-dashboard stored video ID ─────────
+    # Intercepts 'youtube:' ONLY when the button belongs to an Arabic dashboard.
+    # Falls through to main-bot youtube_command for all other messages.
+    if action == 'youtube':
+        msg_id    = query.message.message_id
+        song_data = context.user_data.get('ar_songs', {}).get(msg_id)
+        if song_data is not None:
+            # This button is from an Arabic mode dashboard — use the stored direct link
+            ar_vid_id     = song_data.get('yt_video_id', '')
+            cached_title  = song_data.get('title', param)
+            if ar_vid_id:
+                query.message.reply_text(
+                    f"🎬 {cached_title}\n"
+                    f"https://youtube.com/watch?v={ar_vid_id}",
+                    disable_web_page_preview=True,
+                )
+            else:
+                query.message.reply_text(
+                    "🎬 YouTube link not available for this song."
+                )
+            return
+        # Not an Arabic dashboard — fall through to main-bot youtube_command below
+
     if action == 'subcount':
         try:
             count = int(param)
@@ -2347,11 +2370,12 @@ def handle_arabic_input(update: Update, context: CallbackContext):
         display_title = f"{artist} - {song}"
 
         # ── Per-dashboard state: keyed by THIS message's ID so each dashboard is independent ──
-        # Pressing Full Lyrics / Translate on an older dashboard always acts on that song,
-        # never on the user's most recent search.
+        # Pressing Full Lyrics / Translate / Video on an older dashboard always acts on
+        # that song, never on the user's most recent search.
         context.user_data.setdefault('ar_songs', {})[processing_msg.message_id] = {
-            'lyrics': lyrics,
-            'title':  display_title,
+            'lyrics':      lyrics,
+            'title':       display_title,
+            'yt_video_id': yt_video_id,   # direct video ID — used by Video button
         }
 
         # ── Lyrics preview (first 4 non-empty lines) ─────────────────────────

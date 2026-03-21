@@ -122,6 +122,23 @@ _REJECT_YT_WORDS = frozenset([
     "top 10", "ranking", "tier list", "slowed", "reverb",
 ])
 
+# Live/concert terms — applied as score PENALTY (not hard reject) so a
+# concert video can still win if no official version is available, but an
+# official release will always rank above it.
+_LIVE_PENALTY_WORDS = frozenset([
+    "live", "concert", "festival", "performance", "session",
+    "حفلة", "حفل", "مباشر", "سهرة", "حفل موسيقي",
+])
+_LIVE_PENALTY = 35
+
+# Bonus for unambiguously official uploads
+_OFFICIAL_BONUS_WORDS = frozenset([
+    "official music video", "official audio", "official video",
+    "official lyric", "official song",
+    "حصرياً", "حصرى", "حصري",
+])
+_OFFICIAL_BONUS = 15
+
 
 def _is_non_original(title: str) -> bool:
     t = title.lower()
@@ -269,6 +286,7 @@ def _yt_parse_title(
 def _yt_compute_score(
     query_artist: str, query_song: str,
     cand_artist:  str, cand_song:   str,
+    full_title:   str = "",
 ) -> float:
     """
     Combined score that handles both Arabic-to-Arabic and Arabic-to-English
@@ -276,6 +294,10 @@ def _yt_compute_score(
 
     Artist ≥ 60% threshold + Song ≥ 60% threshold → must both pass.
     Combined score: artist 50% + song 40% + clean title 10%.
+
+    Adjustments applied to full_title (not just parsed segment):
+    - Live/concert penalty: -35  (concert video loses to official if both match)
+    - Official video bonus: +15  (official release always beats non-official)
     """
     def _tok_overlap(q: str, c: str) -> float:
         qt = set(normalize_arabic(q).split()) | set(q.lower().split())
@@ -310,8 +332,18 @@ def _yt_compute_score(
     if artist_score < 30 or song_score < 24:   # 30 = 60% of 50; 24 = 60% of 40
         return 0.0
 
+    # Non-original penalty (remix, cover, karaoke, etc.)
     clean_bonus = 0 if _is_non_original(cand_song) else 10
-    return artist_score + song_score + clean_bonus
+
+    # Live / concert penalty — applied to the FULL raw YouTube title so that
+    # secondary segments (e.g. "| حفل مفاجآت صيف دبي 2023") are also checked.
+    tl = full_title.lower()
+    live_pen = -_LIVE_PENALTY if any(w in tl for w in _LIVE_PENALTY_WORDS) else 0
+
+    # Official upload bonus — rewards unambiguously official releases.
+    official_bon = _OFFICIAL_BONUS if any(w in tl for w in _OFFICIAL_BONUS_WORDS) else 0
+
+    return artist_score + song_score + clean_bonus + live_pen + official_bon
 
 
 def _yt_search(search_query: str) -> List[Dict]:
@@ -362,7 +394,7 @@ def _yt_resolve(
         if not parsed_artist or not parsed_song:
             continue
 
-        score = _yt_compute_score(query_artist, query_song, parsed_artist, parsed_song)
+        score = _yt_compute_score(query_artist, query_song, parsed_artist, parsed_song, title)
 
         logger.debug(
             f"[arabic][yt] q={search_query!r}  vid={vid}  title={title!r}  "
