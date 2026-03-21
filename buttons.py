@@ -43,22 +43,6 @@ def song_dashboard_buttons(query):
     ])
 
 
-def arabic_song_dashboard_buttons(query):
-    """
-    Dashboard buttons for Arabic mode — reduced set only.
-    - Full Lyrics  → ar_lyrics (Arabic-mode pipeline, never main bot)
-    - Translate    → ar_translate (translates cached Arabic lyrics to English)
-    - Video        → youtube (standard)
-    Analyze, Similar, MP3 are intentionally removed from Arabic mode.
-    """
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🎵 Full Lyrics", callback_data=_cb("ar_lyrics", query)),
-            InlineKeyboardButton("🌍 Translate", callback_data=_cb("ar_translate", query)),
-            InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", query)),
-        ],
-    ])
-
 
 def artist_buttons(artist_name, top_songs=None):
     rows = []

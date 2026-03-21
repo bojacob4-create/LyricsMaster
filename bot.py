@@ -28,7 +28,6 @@ from handlers import (
     wiki_command,
     artist_command, trending_command,
     song_command, top_command, random_command,
-    arabic_command, exit_command, arabic_mode_interceptor,
     natural_language_handler, callback_query_handler
 )
 from services.daily_song_service import send_daily_song
@@ -384,10 +383,6 @@ class TelegramBotWorker:
 
             dp = self.updater.dispatcher
 
-            # Arabic mode interceptor — group -1 runs before ALL other handlers.
-            # Raises DispatcherHandlerStop to block /song, /lyrics, NLP, etc.
-            dp.add_handler(MessageHandler(Filters.all, arabic_mode_interceptor), group=-1)
-
             dp.add_handler(CommandHandler("start",       start_command))
             dp.add_handler(CommandHandler("help",        help_command))
             dp.add_handler(CommandHandler("lyrics",      lyrics_command))
@@ -406,8 +401,6 @@ class TelegramBotWorker:
             dp.add_handler(CommandHandler("song",        song_command))
             dp.add_handler(CommandHandler("top",         top_command))
             dp.add_handler(CommandHandler("random",      random_command))
-            dp.add_handler(CommandHandler("arabic",      arabic_command))
-            dp.add_handler(CommandHandler("exit",        exit_command))
 
             dp.add_handler(CallbackQueryHandler(callback_query_handler))
             dp.add_handler(MessageHandler(
