@@ -28,6 +28,7 @@ from handlers import (
     wiki_command,
     artist_command, trending_command,
     song_command, top_command, random_command,
+    arabic_command, exit_command,
     natural_language_handler, callback_query_handler
 )
 from services.daily_song_service import send_daily_song
@@ -401,6 +402,8 @@ class TelegramBotWorker:
             dp.add_handler(CommandHandler("song",        song_command))
             dp.add_handler(CommandHandler("top",         top_command))
             dp.add_handler(CommandHandler("random",      random_command))
+            dp.add_handler(CommandHandler("arabic",      arabic_command))
+            dp.add_handler(CommandHandler("exit",        exit_command))
 
             dp.add_handler(CallbackQueryHandler(callback_query_handler))
             dp.add_handler(MessageHandler(

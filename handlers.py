@@ -216,6 +216,9 @@ _pending_recommend_artist = {}
 # Structure: {user_id: {'artist': str, 'song': str, 'intent_cmd': str}}
 _pending_confirmation: dict = {}
 
+# Arabic Songs Mode — per-user flag. "arabic" = mode active.
+_user_mode: dict = {}
+
 _YES_WORDS = frozenset({
     'yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'correct',
     "that's it", "that one", 'y', 'right', 'affirmative', 'definitely',
@@ -255,6 +258,11 @@ def natural_language_handler(update: Update, context: CallbackContext):
     text = update.message.text.strip()
 
     if not text:
+        return
+
+    # ── Arabic Songs Mode — highest priority, fully isolated ────────────────
+    if _user_mode.get(user_id) == "arabic":
+        handle_arabic_input(update, context)
         return
 
     # ── Step 1: Regex router — always runs first ────────────────────────────
@@ -2168,3 +2176,132 @@ def random_command(update: Update, context: CallbackContext):
             "Please try again! 🔄"
         )
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Arabic Songs Mode — fully isolated subsystem
+# ══════════════════════════════════════════════════════════════════════════════
+
+def arabic_command(update: Update, context: CallbackContext):
+    """Activate Arabic Songs Mode for this user."""
+    user_id = update.effective_user.id
+    _user_mode[user_id] = "arabic"
+    logger.info(f"User {user_id} activated Arabic mode")
+    update.message.reply_text(
+        "🎵 Arabic Mode Activated\n\n"
+        "Please use:\n"
+        "Artist - Song\n\n"
+        "Example:\n"
+        "ماجد المهندس - ضايع\n\n"
+        "Type /exit to return"
+    )
+
+
+def exit_command(update: Update, context: CallbackContext):
+    """Exit Arabic Songs Mode and restore normal bot behaviour."""
+    user_id = update.effective_user.id
+    _user_mode.pop(user_id, None)
+    logger.info(f"User {user_id} exited Arabic mode")
+    update.message.reply_text("Exited Arabic Mode")
+
+
+def handle_arabic_input(update: Update, context: CallbackContext):
+    """
+    Isolated Arabic pipeline.
+    Called ONLY when user is in Arabic mode.
+    Fails safely — never falls back into main bot logic.
+    """
+    from services.arabic_mode import parse_arabic_input, resolve_arabic_song
+
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+
+    # ── Parse ─────────────────────────────────────────────────────────────────
+    artist, song, error = parse_arabic_input(text)
+    if error:
+        update.message.reply_text(error)
+        return
+
+    update.message.chat.send_action(action="typing")
+    processing_msg = update.message.reply_text("🔍 Searching...")
+
+    try:
+        # ── Resolve ───────────────────────────────────────────────────────────
+        resolved_artist, resolved_song, lyrics = resolve_arabic_song(artist, song)
+
+        if not lyrics:
+            processing_msg.edit_text(
+                "Lyrics not found for this song.\n"
+                "Please try another track."
+            )
+            return
+
+        display_title = f"{resolved_artist} - {resolved_song}"
+
+        # ── Analysis (identical logic to song_command) ────────────────────────
+        mood = detect_song_mood(lyrics)
+        stats = get_song_statistics(lyrics)
+        mood_emoji = {
+            'happy': '😊', 'sad': '😢', 'romantic': '💖',
+            'energetic': '⚡', 'relaxed': '😌'
+        }.get(mood, '🎵')
+
+        lyrics_lines = [l.strip() for l in lyrics.strip().split('\n') if l.strip()]
+        lyrics_preview = '\n'.join(f"  {l}" for l in lyrics_lines[:4])
+        if len(lyrics_lines) > 4:
+            lyrics_preview += "\n  ..."
+
+        # ── Parallel: YouTube + recommendations ───────────────────────────────
+        with ThreadPoolExecutor(max_workers=2) as _pool:
+            _yt_fut  = _pool.submit(get_youtube_link, resolved_artist, resolved_song)
+            _rec_fut = _pool.submit(get_similar_songs, resolved_artist, resolved_song, mood)
+            yt_url = _yt_fut.result()
+            recs   = _rec_fut.result()
+
+        yt_section = f"🎬 {yt_url}" if yt_url else "🎬 YouTube: not found"
+
+        recs_lines = []
+        for i, r in enumerate(recs[:3]):
+            emoji = ['🔥', '✨', '💫'][i]
+            recs_lines.append(f"  {emoji} {r['artist']} — {r['name']}")
+        recs_text = '\n'.join(recs_lines) if recs_lines else "  No recommendations available"
+
+        vocab_pct = stats.get('vocabulary_richness', 0)
+        vocab_label = (
+            "Rich" if vocab_pct >= 70 else
+            "Moderate" if vocab_pct >= 50 else
+            "Repetitive"
+        )
+
+        themes = detect_themes(lyrics)
+        themes_text = ', '.join(t.title() for t in themes[:3]) if themes else 'General'
+
+        # ── Dashboard (identical format to song_command) ──────────────────────
+        response = (
+            f"🎵 {display_title}\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"{yt_section}\n\n"
+            f"📝 Lyrics Preview:\n{lyrics_preview}\n\n"
+            f"📊 Quick Stats:\n"
+            f"  {mood_emoji} Mood: {mood.title()}\n"
+            f"  📝 Words: {stats['total_words']} | Lines: {stats['total_lines']}\n"
+            f"  🧠 Vocabulary: {vocab_pct}% ({vocab_label})\n"
+            f"  🎭 Themes: {themes_text}\n\n"
+            f"🎵 Similar Songs:\n{recs_text}\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎤 /lyrics {display_title} — full lyrics\n"
+            f"🔍 /analyze {display_title} — deep analysis"
+        )
+
+        processing_msg.edit_text(
+            response,
+            disable_web_page_preview=True,
+            reply_markup=song_dashboard_buttons(display_title),
+        )
+        logger.info(f"[arabic] Sent dashboard to user {user_id}: {display_title!r}")
+
+    except Exception as e:
+        logger.error(f"[arabic] Pipeline error for user {user_id}: {e}")
+        try:
+            processing_msg.edit_text("Something went wrong. Please try again.")
+        except Exception:
+            pass
