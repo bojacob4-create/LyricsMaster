@@ -10,9 +10,15 @@ Two-phase architecture:
     Layer 2: YouTube search with normalized Arabic text
     Layer 5: YouTube search with romanized (transliterated) text  ← last resort
   Phase 2 — Lyrics Fetch (once identity confirmed)
-    Layer 2a: YouTube Music lyrics via ytmusicapi  ← PRIMARY
+    Layer 2a: YouTube Music lyrics via ytmusicapi  ← PRIMARY (with quality validation)
     Layer 3:  Genius API search → page scrape
     Layer 4:  lrclib direct + search
+    Layer D:  DuckDuckGo HTML search → web scrape (last resort)
+
+Quality gate (_validate_arabic_lyrics) applied to every fetched lyrics block:
+  • Arabic-script ratio ≥ 0.50
+  • Live/crowd-performance contamination: < 2 distinct markers
+  • Wrong-song guard: ≥ 1 key song-title token present in lyrics
 """
 
 import os
@@ -42,6 +48,24 @@ _GENIUS_SEARCH    = "https://api.genius.com/search"
 _LRCLIB_GET       = "https://lrclib.net/api/get"
 _LRCLIB_SEARCH    = "https://lrclib.net/api/search"
 _YT_SEARCH_URL    = "https://www.youtube.com/results?search_query={}"
+_DDG_SEARCH_URL   = "https://html.duckduckgo.com/html/"
+
+# Live-performance / crowd-participation phrases.
+# ≥ 2 matches in a single lyrics block → reject as live-contaminated.
+_LIVE_SPEECH_MARKERS: frozenset = frozenset([
+    "يلا معي", "هيا معي", "غنوا معي", "كلنا معي",
+    "يا سلام هالحين", "مو حافظين", "الله يسلم",
+    "شكراً لكم", "شكرا لكم", "مشكورين",
+    "واحد اثنين ثلاثة", "ايش رأيكم",
+])
+
+# Domains that are app/streaming/social — never actual lyrics pages
+_DDG_SKIP_DOMAINS: frozenset = frozenset([
+    "youtube.com", "youtu.be", "google.com", "facebook.com",
+    "twitter.com", "instagram.com", "tiktok.com", "wikipedia.org",
+    "soundcloud.com", "spotify.com", "apple.com", "amazon.com",
+    "deezer.com",
+])
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -69,6 +93,50 @@ def normalize_arabic(text: str) -> str:
     text = text.replace("ء", "")
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def _validate_arabic_lyrics(lyrics: str, artist: str, song: str) -> bool:
+    """
+    Quality gate applied to every candidate lyrics block before acceptance.
+
+    Checks (in order):
+      1. Minimum length — must have ≥ 80 printable characters.
+      2. Arabic-script ratio — non-whitespace chars must be ≥ 50 % Arabic.
+      3. Live/crowd contamination — fewer than 2 distinct live-speech markers.
+      4. Wrong-song guard — at least 1 key song-title token must appear in the
+         normalized lyrics.  Skipped for very short song titles (≤ 2 chars).
+
+    Returns True if acceptable, False if the block should be rejected.
+    """
+    if not lyrics or len(lyrics.strip()) < 80:
+        return False
+
+    # ── 1. Arabic ratio ──────────────────────────────────────────────────────
+    non_ws = [c for c in lyrics if not c.isspace()]
+    ar_chars = [c for c in non_ws if "\u0600" <= c <= "\u06ff"]
+    if non_ws and len(ar_chars) / len(non_ws) < 0.50:
+        logger.debug("[arabic][validate] rejected: low Arabic ratio (%.2f)",
+                     len(ar_chars) / len(non_ws))
+        return False
+
+    # ── 2. Live/crowd contamination ──────────────────────────────────────────
+    live_hits = sum(1 for m in _LIVE_SPEECH_MARKERS if m in lyrics)
+    if live_hits >= 2:
+        logger.debug("[arabic][validate] rejected: live contamination (%d markers)", live_hits)
+        return False
+
+    # ── 3. Wrong-song guard ──────────────────────────────────────────────────
+    song_norm   = normalize_arabic(song)
+    key_tokens  = [t for t in song_norm.split() if len(t) > 2]
+    if key_tokens:
+        lyr_norm = normalize_arabic(lyrics)
+        matches  = sum(1 for t in key_tokens if t in lyr_norm)
+        if matches == 0:
+            logger.debug("[arabic][validate] rejected: wrong song "
+                         "(0/%d title tokens in lyrics)", len(key_tokens))
+            return False
+
+    return True
 
 
 _FORMAT_ERROR = (
@@ -525,8 +593,9 @@ def _ytmusic_score(query_artist: str, query_song: str, cand_title: str, cand_art
 def _ytmusic_lyrics(artist: str, song: str) -> Optional[str]:
     """
     Fetch lyrics from YouTube Music (ytmusicapi) for a given artist + song.
-    Uses search with 'songs' filter, validates the top result, then retrieves
-    lyrics via get_watch_playlist + get_lyrics.
+    Searches with up to 3 query forms, iterates through the top-5 results for
+    each, and validates every candidate with _validate_arabic_lyrics() before
+    returning — rejecting wrong-song returns and live-contaminated transcripts.
 
     Isolated to Arabic mode — does NOT touch the main bot's session or logic.
     """
@@ -548,56 +617,61 @@ def _ytmusic_lyrics(artist: str, song: str) -> Optional[str]:
     for query in queries:
         try:
             results = yt.search(query, filter="songs", limit=5)
-            if not results:
-                continue
-
-            # Pick the first non-non-original result.
-            # We trust the ytmusicapi search ranking for specific Arabic queries:
-            # when querying "عمرو دياب تملي معاك", the top result IS the right song
-            # even when the returned title/artist are in transliterated English
-            # (e.g. "Tamally Maak" / "Amr Diab") — direct string scoring fails here.
-            best_vid = None
-            for r in results:
-                vid   = r.get("videoId", "")
-                title = r.get("title", "")
-                arts  = r.get("artists") or []
-                art   = arts[0].get("name", "") if arts else ""
-                if not vid or not title:
-                    continue
-                if _is_non_original(title):
-                    continue
-                logger.debug(
-                    f"[arabic][ytmusic] q={query!r}  title={title!r}  "
-                    f"artist={art!r}  vid={vid}"
-                )
-                best_vid = vid
-                break  # take the first valid (non-cover/remix) result
-
-            if not best_vid:
-                continue
-
-            # Get lyrics browseId from watch playlist
-            wp = yt.get_watch_playlist(videoId=best_vid, limit=1)
-            lyrics_id = wp.get("lyrics", "") if wp else ""
-            if not lyrics_id:
-                logger.debug(f"[arabic][ytmusic] no lyrics browseId for videoId={best_vid}")
-                continue
-
-            # Fetch the actual lyrics
-            lyr_data = yt.get_lyrics(lyrics_id)
-            if not lyr_data:
-                continue
-            text = lyr_data.get("lyrics", "") or ""
-            if len(text) > 50:
-                logger.info(
-                    f"[arabic][ytmusic] lyrics OK: {artist!r} - {song!r} "
-                    f"vid={best_vid} len={len(text)}"
-                )
-                return text.strip()
-
         except Exception as e:
-            logger.debug(f"[arabic][ytmusic] failed for q={query!r}: {e}")
+            logger.debug(f"[arabic][ytmusic] search failed for q={query!r}: {e}")
             continue
+        if not results:
+            continue
+
+        # Iterate ALL top results; validate each before accepting.
+        # (Previously we stopped at the first non-cover result, which could be
+        # the wrong song or a live-concert version with audience lines.)
+        for r in results:
+            vid   = r.get("videoId", "")
+            title = r.get("title", "")
+            arts  = r.get("artists") or []
+            art   = arts[0].get("name", "") if arts else ""
+            if not vid or not title:
+                continue
+            if _is_non_original(title):
+                continue
+
+            logger.debug(
+                f"[arabic][ytmusic] q={query!r}  title={title!r}  "
+                f"artist={art!r}  vid={vid}"
+            )
+
+            try:
+                # Get lyrics browseId from watch playlist
+                wp = yt.get_watch_playlist(videoId=vid, limit=1)
+                lyrics_id = wp.get("lyrics", "") if wp else ""
+                if not lyrics_id:
+                    logger.debug(f"[arabic][ytmusic] no lyrics browseId for vid={vid}")
+                    continue
+
+                # Fetch the actual lyrics
+                lyr_data = yt.get_lyrics(lyrics_id)
+                if not lyr_data:
+                    continue
+                text = (lyr_data.get("lyrics", "") or "").strip()
+                if len(text) <= 50:
+                    continue
+
+                # Quality gate — reject wrong songs and live transcripts
+                if _validate_arabic_lyrics(text, artist, song):
+                    logger.info(
+                        f"[arabic][ytmusic] lyrics OK: {artist!r} - {song!r} "
+                        f"vid={vid} len={len(text)}"
+                    )
+                    return text
+                else:
+                    logger.debug(
+                        f"[arabic][ytmusic] lyrics REJECTED for vid={vid} "
+                        f"(failed quality check)"
+                    )
+
+            except Exception as inner_e:
+                logger.debug(f"[arabic][ytmusic] error fetching lyrics for vid={vid}: {inner_e}")
 
     return None
 
@@ -767,6 +841,158 @@ def _lrclib_lyrics(artist: str, song: str) -> Optional[str]:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# PHASE 2 — LAYER D: DuckDuckGo search + web scrape (last resort)
+# ════════════════════════════════════════════════════════════════════════════
+
+# CSS selectors tried in order on every scraped page.
+# Tuple: (label, selector) — label is for debug only.
+_DDG_LYRICS_SELECTORS = [
+    ("anghami-body",   "div[class*=lyrics_body]"),
+    ("anghami-page",   "div[class*=lyrics_page_container]"),
+    ("entry-content",  "div.entry-content"),
+    ("post-content",   "div.post-content"),
+    ("lyrics-div",     "div.lyrics"),
+    ("lyric-div",      "div.lyric"),
+    ("song-lyrics",    "div.song-lyrics"),
+    ("article",        "article"),
+]
+
+
+def _scrape_url_for_lyrics(url: str, artist: str, song: str) -> Optional[str]:
+    """
+    Fetch a URL and extract Arabic lyrics from its HTML.
+    Tries known CSS selectors first, then falls back to the largest Arabic text
+    block on the page.  Applies _validate_arabic_lyrics() before returning.
+    """
+    try:
+        from bs4 import BeautifulSoup
+        r = _ar_session.get(url, timeout=9, allow_redirects=True)
+        if r.status_code != 200:
+            return None
+        soup = BeautifulSoup(r.text, "html.parser")
+        for tag in soup(["script", "style", "nav", "header", "footer",
+                          "aside", "form"]):
+            tag.decompose()
+
+        # ── Try known selectors ───────────────────────────────────────────────
+        for label, selector in _DDG_LYRICS_SELECTORS:
+            try:
+                el = soup.select_one(selector)
+            except Exception:
+                el = None
+            if not el:
+                continue
+            raw = el.get_text(separator="\n")
+            ar_count = sum(1 for c in raw if "\u0600" <= c <= "\u06ff")
+            if ar_count < 80:
+                continue
+            # Keep only lines that carry Arabic content
+            lines = [
+                ln.strip() for ln in raw.split("\n")
+                if ln.strip() and sum(1 for c in ln if "\u0600" <= c <= "\u06ff") >= 2
+            ]
+            candidate = "\n".join(lines)
+            if _validate_arabic_lyrics(candidate, artist, song):
+                logger.debug(
+                    f"[arabic][layerD] selector={label!r} matched at {url[:60]}"
+                )
+                return candidate
+
+        # ── Fallback: largest Arabic text block ───────────────────────────────
+        best_text  = ""
+        best_count = 0
+        for div in soup.find_all(["div", "p", "article", "section"]):
+            text = div.get_text(separator="\n")
+            ar_lines = [
+                ln.strip() for ln in text.split("\n")
+                if len(ln.strip()) > 10
+                and sum(1 for c in ln if "\u0600" <= c <= "\u06ff") > 5
+            ]
+            if len(ar_lines) > best_count:
+                best_count = len(ar_lines)
+                best_text  = "\n".join(ar_lines)
+
+        if best_count >= 12 and _validate_arabic_lyrics(best_text, artist, song):
+            logger.debug(
+                f"[arabic][layerD] fallback block ({best_count} lines) at {url[:60]}"
+            )
+            return best_text
+
+    except Exception as e:
+        logger.debug(f"[arabic][layerD] scrape failed ({url[:60]}): {e}")
+    return None
+
+
+def _ddg_lyrics_search(artist: str, song: str) -> Optional[str]:
+    """
+    Layer D: DuckDuckGo HTML search for Arabic lyrics, then scrape results.
+
+    Sends the query '{artist} {song} كلمات' to DuckDuckGo's HTML endpoint,
+    extracts the top result URLs (skipping social/streaming domains), and tries
+    _scrape_url_for_lyrics() on each until validated lyrics are found.
+    """
+    query = f"{artist} {song} كلمات"
+    try:
+        r = _ar_session.post(
+            _DDG_SEARCH_URL,
+            data={"q": query},
+            headers={"Accept-Language": "ar,en;q=0.9"},
+            timeout=9,
+        )
+        if r.status_code != 200:
+            logger.debug(f"[arabic][layerD] DDG returned {r.status_code}")
+            return None
+
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        # DuckDuckGo HTML returns result URLs directly in <a href="...">
+        urls: List[str] = []
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if not href.startswith("http"):
+                continue
+            if "duckduckgo.com" in href:
+                continue
+            # Derive the domain for skip-list check
+            try:
+                domain = href.split("/")[2].lower()
+                domain = re.sub(r"^www\.", "", domain)
+            except IndexError:
+                continue
+            if any(skip in domain for skip in _DDG_SKIP_DOMAINS):
+                continue
+            urls.append(href)
+
+        # Deduplicate while preserving order
+        seen: set = set()
+        unique_urls: List[str] = []
+        for u in urls:
+            if u not in seen:
+                seen.add(u)
+                unique_urls.append(u)
+
+        logger.debug(
+            f"[arabic][layerD] DDG gave {len(unique_urls)} candidate URLs "
+            f"for {artist!r} - {song!r}"
+        )
+
+        for url in unique_urls[:6]:
+            logger.debug(f"[arabic][layerD] trying {url[:80]}")
+            lyr = _scrape_url_for_lyrics(url, artist, song)
+            if lyr:
+                logger.info(
+                    f"[arabic][layerD] lyrics found for {artist!r} - {song!r} "
+                    f"via {url[:60]}"
+                )
+                return lyr
+
+    except Exception as e:
+        logger.debug(f"[arabic][layerD] DDG search failed: {e}")
+    return None
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # MAIN RESOLVER
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -822,10 +1048,11 @@ def resolve_arabic_song(
 
     def _fetch_lyrics(a: str, s: str) -> Optional[str]:
         """
-        Layer 2a → 3 → 4 for a given artist/song pair.
-        1. YouTube Music (ytmusicapi)  ← PRIMARY
+        Layer 2a → 3 → 4 → D for a given artist/song pair.
+        1. YouTube Music (ytmusicapi) — with quality validation  ← PRIMARY
         2. Genius API + scrape
         3. lrclib direct + search
+        D. DuckDuckGo search + web scrape                        ← last resort
         """
         # Layer 2a: YouTube Music (primary)
         lyr = _ytmusic_lyrics(a, s)
@@ -836,7 +1063,11 @@ def resolve_arabic_song(
         if lyr:
             return lyr
         # Layer 4: lrclib
-        return _lrclib_lyrics(a, s)
+        lyr = _lrclib_lyrics(a, s)
+        if lyr:
+            return lyr
+        # Layer D: DuckDuckGo web search + scrape
+        return _ddg_lyrics_search(a, s)
 
     # Primary attempt: YouTube-resolved Arabic identity
     lyrics = _fetch_lyrics(res_artist, res_song)

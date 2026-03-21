@@ -1,0 +1,257 @@
+Do NOT touch the main bot.
+Do NOT touch the main search logic.
+Do NOT touch the main dashboard.
+Do NOT touch any main handlers, commands, callbacks, or services outside Arabic mode.
+
+Everything below applies ONLY inside Arabic mode:
+- starts at /arabic
+- ends at /exit
+
+When the user exits with /exit, all Arabic-mode-specific behavior must stop completely and the main bot must remain exactly unchanged.
+
+==================================================
+CURRENT STATUS
+==================================================
+
+What is already correct and must NOT be changed:
+- Arabic mode isolation is working correctly
+- Arabic dashboard layout is simplified as requested
+- Arabic mode buttons are reduced as requested
+- Full Lyrics button wiring works
+- Video button wiring works
+- Arabic / non-Arabic input validation works
+
+Do NOT rework any of the above.
+
+==================================================
+THE REMAINING CORE ISSUE
+==================================================
+
+The remaining problem is now clearly the Arabic-mode LYRICS DISCOVERY / LYRICS QUALITY pipeline.
+
+This is NOT a small edge case.
+This is NOT limited to one or two artists.
+This is a general Arabic-mode lyrics-retrieval quality problem.
+
+Real user tests prove this:
+
+1. Songs whose lyrics clearly exist are still reported as "not found"
+Examples:
+- عبدالمجيد عبدالله - لكل نهاية بداية
+- راشد الماجد - من عرفتك
+
+The lyrics exist and were found manually on:
+- aghanilyrics.com
+
+So you must NOT claim "lyrics do not exist" unless you have fully exhausted the Arabic-mode sources properly.
+
+2. Some returned lyrics are wrong
+Example:
+- returned lyrics belong to the wrong song
+
+3. Some returned lyrics are from the wrong language entirely
+Example:
+- non-Arabic lyrics returned for an Arabic song
+
+4. Some returned lyrics are taken from live / stage / concert performance context instead of the clean song lyrics
+Example:
+- spoken audience lines such as:
+  - يلا معي
+  - مو حافظين
+  - يا سلام هالحين
+
+This is NOT acceptable.
+
+The goal is NOT to patch a few named artists.
+The goal is to make Arabic-mode lyrics retrieval robust and general for Arabic songs.
+
+==================================================
+REQUIRED DIRECTION
+==================================================
+
+You must now improve ONLY the Arabic-mode lyrics pipeline and Arabic-mode search layers.
+
+Do NOT modify the main bot.
+Do NOT modify main lyrics_service.
+Do NOT modify any main commands.
+
+This must be a general Arabic-mode-only solution, not a special-case fix for the artists shown in the screenshots.
+
+==================================================
+REQUIRED NEW / IMPROVED ARABIC-MODE LYRICS LAYERS
+==================================================
+
+Arabic mode must have a stronger lyrics search chain with strict quality checks.
+
+After Arabic-mode identity/video resolution is confirmed, lyrics retrieval must use a layered strategy.
+
+Required Arabic-mode lyrics retrieval order:
+
+LAYER A — YouTube Music lyrics
+- keep this
+- but validate quality before accepting
+
+LAYER B — Genius
+- keep this
+- but validate quality before accepting
+
+LAYER C — lrclib
+- keep this
+- but validate quality before accepting
+
+LAYER D — aghanilyrics.com
+- add this as an Arabic-mode-only lyrics source / fallback layer
+- use it only inside Arabic mode
+- do NOT integrate it into the main bot
+
+This source must be searched using Arabic song identity and also title variants when needed.
+
+==================================================
+MANDATORY QUALITY VALIDATION BEFORE ACCEPTING LYRICS
+==================================================
+
+It is NOT enough that a source returns text.
+The returned lyrics must be validated before being accepted.
+
+Arabic-mode lyrics acceptance must reject results when:
+1. the text is mostly non-Arabic
+2. the text appears to belong to the wrong song
+3. the text appears to be live/stage/crowd/performance speech
+4. the text is too weak / too short / too noisy compared to the expected song
+5. the song-title / artist match is weak
+
+You must add Arabic-mode-only validation checks such as:
+
+- Arabic script ratio check
+  Reject if the result is mostly non-Arabic for an Arabic song
+
+- Live/performance contamination detection
+  Penalize / reject lyrics that contain signs of stage talk / audience talk / performance chatter
+
+- Wrong-song guard
+  Do not accept lyrics just because a source returned something.
+  The candidate lyrics must still be tied strongly to the resolved artist + song identity.
+
+- Minimum quality threshold
+  If the lyrics source is weak/noisy/wrong, reject it and continue to the next Arabic-mode layer.
+
+==================================================
+IMPORTANT LIVE / CROWD / PERFORMANCE FILTER
+==================================================
+
+Arabic mode lyrics retrieval must strongly reject results contaminated by:
+- live speech
+- audience chatter
+- stage interaction
+- concert intros/outros
+- TV / show subtitles
+- non-song spoken lines
+
+This includes patterns like:
+- يلا معي
+- يا سلام
+- مو حافظين
+- clap / audience / crowd style content
+- show / host / stage style interruptions
+
+If lyrics look like performance text rather than clean song lyrics:
+→ reject and continue to the next Arabic-mode layer
+
+==================================================
+IMPORTANT LANGUAGE FILTER
+==================================================
+
+Arabic songs must not return lyrics in another language unless the user explicitly asked for translation.
+
+If an Arabic-mode lyrics candidate is:
+- Hindi
+- Urdu
+- English
+- mixed unrelated language
+- or mostly non-Arabic
+
+Reject it and continue to the next Arabic-mode layer.
+
+==================================================
+IMPORTANT "NOT FOUND" RULE
+==================================================
+
+Do NOT return "lyrics not found" too early.
+
+Before returning "not found", the Arabic-mode pipeline must have truly tried:
+- Arabic identity
+- normalized Arabic identity
+- transliterated / romanized form if useful
+- bilingual / alternate title handling
+- all Arabic-mode lyrics layers including aghanilyrics.com
+
+Only after exhausting the Arabic-mode lyrics layers and rejecting weak results should it return "not found".
+
+And do NOT use "the song is new" as an excuse unless you have verified the Arabic-mode sources properly first.
+
+==================================================
+STRICT BOUNDARY
+==================================================
+
+All of the above applies ONLY inside Arabic mode.
+
+Do NOT:
+- change the main bot lyrics logic
+- change the main search pipeline
+- change main dashboard logic
+- change main button logic outside Arabic mode
+- special-case only the artists in the screenshots
+
+This must be a GENERAL Arabic-mode-only improvement.
+
+==================================================
+REQUIRED REAL TESTS BEFORE REPORTING BACK
+==================================================
+
+You must test these exact cases end-to-end in the live Arabic-mode flow before saying done:
+
+1. /arabic
+
+2. عبدالمجيد عبدالله - لكل نهاية بداية
+Expected:
+- should not incorrectly return "lyrics not found" if Arabic-mode sources contain lyrics
+- should return correct Arabic lyrics, not wrong/noisy text
+
+3. راشد الماجد - من عرفتك
+Expected:
+- should not incorrectly return "lyrics not found" if Arabic-mode sources contain lyrics
+- should return correct Arabic lyrics
+
+4. راشد الماجد - نسيناكم
+Expected:
+- returned lyrics must belong to the correct song
+- Full Lyrics must match the same song, not wrong lyrics
+
+5. نوال - ما هو وقتك
+Expected:
+- must NOT return non-Arabic lyrics
+- must reject wrong-language results and continue searching until a valid Arabic result is found or all Arabic-mode layers fail
+
+6. راشد الماجد - ربما
+Expected:
+- must reject live/crowd/stage contaminated text
+- must not accept lyrics that include performance speech such as audience interaction or stage chatter
+
+7. رابح صقر - يحبونه
+Expected:
+- should still work correctly
+
+8. /exit
+
+9. verify the main bot remains unchanged outside Arabic mode
+
+==================================================
+FINAL RULE
+==================================================
+
+Do NOT assume.
+Do NOT infer from partial internal function tests.
+Do NOT say “done” from startup only.
+Do NOT say “lyrics do not exist” unless the Arabic-mode layers have been fully and correctly exhausted.
+
+Fix the Arabic-mode lyrics discovery problem generally and verify it with real direct tests.

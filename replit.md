@@ -74,6 +74,34 @@
 - **/random** — Random song pick with lyrics preview, YouTube link, and similar songs
 - **/artist** — Enhanced artist profile card with Wikipedia + YouTube links
 
+## Arabic Songs Mode (services/arabic_mode.py)
+Fully isolated pipeline activated by `/arabic`, exited with `/exit`.
+Never imports from main bot services.
+
+### Phase 1 — Identity Resolution (YouTube)
+- Layer 1: YouTube search with original Arabic text
+- Layer 2: YouTube search with normalized Arabic (diacritics stripped, alef/ya/ta-marbuta normalized)
+- Layer 5: YouTube search with romanized (Latin-transliterated) text
+
+### Phase 2 — Lyrics Fetch (Layers 2a → 3 → 4 → D)
+- **Layer 2a**: ytmusicapi — iterates top-5 results, validates each before accepting
+- **Layer 3**: Genius API search + page scrape
+- **Layer 4**: lrclib direct lookup + search
+- **Layer D**: DuckDuckGo HTML search (`html.duckduckgo.com/html/`) + multi-site scrape
+
+### Quality Gate (_validate_arabic_lyrics)
+Applied to every candidate lyrics block before acceptance:
+1. Minimum 80 printable chars
+2. Arabic-script ratio ≥ 50 %
+3. Live/crowd contamination: < 2 distinct `_LIVE_SPEECH_MARKERS` found
+4. Wrong-song guard: ≥ 1 key song-title token present in normalized lyrics
+
+### YouTube Scoring
+- `_CHANNEL_BONUS = 25` for Rotana/VEVO/Topic channels
+- `_TITLE_BONUS = 15` for official title keywords (حصري, official video)
+- `_LIVE_PENALTY = 40` for live/concert keywords (مهرجان, جلسة, برنامج, Arab Idol, حفل)
+- `_yt_parse_title`: bilingual split (`|`) before suffix-stripping; fuzzy romanized comparison (SequenceMatcher ≥ 0.60); reversed "Song - Artist" swap check
+
 ## Workflows
 - **Flask Server**: `gunicorn --bind 0.0.0.0:5000 --workers 1 --threads 2 --timeout 0 wsgi:app` — health checks only
 - **Telegram Bot**: `python bot.py` — the bot polling worker
