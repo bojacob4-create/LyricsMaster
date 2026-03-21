@@ -28,4 +28,5 @@ dependencies = [
     "uwsgi>=2.0.28",
     "apscheduler>=3.6.3",
     "openai>=2.29.0",
+    "ytmusicapi>=1.11.5",
 ]

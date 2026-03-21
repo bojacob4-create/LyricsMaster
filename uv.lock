@@ -1340,6 +1340,7 @@ dependencies = [
     { name = "twilio" },
     { name = "uwsgi" },
     { name = "yt-dlp" },
+    { name = "ytmusicapi" },
 ]
 
 [package.metadata]
@@ -1368,6 +1369,7 @@ requires-dist = [
     { name = "twilio", specifier = ">=9.4.6" },
     { name = "uwsgi", specifier = ">=2.0.28" },
     { name = "yt-dlp", specifier = ">=2025.2.19" },
+    { name = "ytmusicapi", specifier = ">=1.11.5" },
 ]
 
 [[package]]
@@ -1709,4 +1711,16 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/53/36/ef300ba4a228b74612d4013b43ed303a0d6d2de17a71fc37e0b821577e0a/yt_dlp-2025.2.19.tar.gz", hash = "sha256:f33ca76df2e4db31880f2fe408d44f5058d9f135015b13e50610dfbe78245bea", size = 2929199, upload-time = "2025-02-19T02:49:14.589Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9e/45/6d1b759e68f5363b919828fb0e0c167a1cd5003b5b7c74cc0f0c2096be4f/yt_dlp-2025.2.19-py3-none-any.whl", hash = "sha256:3ed218eaeece55e9d715afd41abc450dc406ee63bf79355169dfde312d38fdb8", size = 3186543, upload-time = "2025-02-19T02:49:12.523Z" },
+]
+
+[[package]]
+name = "ytmusicapi"
+version = "1.11.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ac/4b/a44292f732903dc26a90236ad1cf284da974ed5491df388cf15713b38429/ytmusicapi-1.11.5.tar.gz", hash = "sha256:48f35901291c8af9934ec0aa9cd6b9fd1a19c543f843c39c9e8b396356b47801", size = 413046, upload-time = "2026-01-31T09:51:27.86Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/aa/a8/8feb17eaa8b2bf36b0617ba37f949a7036b6ece652672bd4517a54326f0e/ytmusicapi-1.11.5-py3-none-any.whl", hash = "sha256:f6b1e031408cce45bef207bfda449e3ecf548f7c4ff0c091c575d4a27eb21da6", size = 102313, upload-time = "2026-01-31T09:51:26.255Z" },
 ]

@@ -1,0 +1,107 @@
+The Arabic mode isolation is now working correctly. Do NOT touch that part anymore.
+
+What is confirmed from real testing:
+- /arabic works
+- /song and other main commands are blocked correctly inside Arabic mode
+- /exit restores the main bot correctly
+
+So the isolation boundary is now correct.
+Do NOT modify it further.
+
+The remaining issue is ONLY the Arabic-mode lyrics source and lyrics retrieval path.
+
+Observed real behavior from testing:
+1. The bot is now resolving the correct song identity from YouTube for Arabic songs much better
+2. But the Lyrics Preview is still wrong or weak in some cases
+3. And when pressing Full Lyrics, it fails with:
+   "Oops! Something went wrong while fetching the lyrics."
+
+This strongly suggests that the Arabic-mode pipeline is identifying the song correctly, but the lyrics source/path is still not using the correct YouTube Music lyrics layer.
+
+Important correction:
+I do NOT want Arabic-mode lyrics to rely on normal YouTube pages for lyrics retrieval.
+
+Use YouTube Music lyrics support through:
+- ytmusicapi
+
+This is the library I want you to wire into Arabic mode as the PRIMARY lyrics source for Arabic mode after identity is confirmed.
+
+Required direction now:
+
+==================================================
+ARABIC MODE — FINAL SOURCE RULES
+==================================================
+
+Do NOT touch the main bot.
+Do NOT touch the existing main search logic.
+Do NOT touch the existing main lyrics pipeline.
+Do NOT modify the main resolver in any way.
+
+Arabic mode must remain a fully isolated subsystem.
+
+Inside Arabic mode only:
+
+Phase 1 — Identity Resolution
+- Keep the current YouTube-based identity resolution if it is now correctly resolving the song
+- Keep strict artist/song validation
+- Keep Arabic normalization
+- Keep transliteration fallback only as hidden fallback
+
+Phase 2 — Lyrics Retrieval
+- PRIMARY lyrics source for Arabic mode must now be:
+  ytmusicapi (YouTube Music lyrics)
+- Use the resolved song identity to retrieve lyrics from YouTube Music properly
+- Do NOT scrape ordinary YouTube pages as a lyrics source
+- Do NOT treat a normal YouTube video page as equivalent to YouTube Music lyrics
+
+Phase 3 — Fallbacks
+- If ytmusicapi lyrics are unavailable:
+  1. Genius
+  2. lrclib
+- But the first lyrics attempt after identity resolution should now be YouTube Music lyrics via ytmusicapi
+
+==================================================
+CRITICAL BOUNDARY
+==================================================
+
+This change is ONLY for Arabic mode.
+
+Do NOT:
+- modify /song
+- modify /lyrics
+- modify /analyze
+- modify main lyrics_service
+- modify the main dashboard
+- modify the main resolver
+- modify any existing source outside Arabic mode
+
+Arabic mode must use its own dedicated lyrics retrieval path.
+
+==================================================
+REQUIRED REAL TESTS
+==================================================
+
+You must not assume.
+You must verify with real tests before saying done.
+
+Run these real Arabic-mode tests and confirm the outcome clearly:
+
+1. /arabic
+2. عمرو دياب - تملي معاك
+   - identity correct
+   - lyrics preview correct
+   - Full Lyrics works
+3. ماجد المهندس - ضايع
+   - identity correct
+   - lyrics preview correct
+   - Full Lyrics works
+4. /exit
+5. /song Adele - Hello
+   - main bot still works normally
+
+If any of these fail:
+- fix it before reporting back
+
+Do not report “done” based on startup only.
+Do not report “done” based on assumptions.
+Only report done after real successful end-to-end tests.

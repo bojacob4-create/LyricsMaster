@@ -10,8 +10,9 @@ Two-phase architecture:
     Layer 2: YouTube search with normalized Arabic text
     Layer 5: YouTube search with romanized (transliterated) text  ← last resort
   Phase 2 — Lyrics Fetch (once identity confirmed)
-    Layer 3: Genius API search → page scrape
-    Layer 4: lrclib direct + search
+    Layer 2a: YouTube Music lyrics via ytmusicapi  ← PRIMARY
+    Layer 3:  Genius API search → page scrape
+    Layer 4:  lrclib direct + search
 """
 
 import os
@@ -368,6 +369,120 @@ def _yt_resolve(
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# PHASE 2 — LAYER 2a: YouTube Music lyrics (PRIMARY source — Arabic mode only)
+# ════════════════════════════════════════════════════════════════════════════
+
+_yt_music_client: Optional[object] = None
+
+
+def _get_ytmusic():
+    """Return a cached unauthenticated YTMusic client."""
+    global _yt_music_client
+    if _yt_music_client is None:
+        try:
+            from ytmusicapi import YTMusic
+            _yt_music_client = YTMusic()
+            logger.debug("[arabic][ytmusic] client initialized")
+        except Exception as e:
+            logger.warning(f"[arabic][ytmusic] init failed: {e}")
+    return _yt_music_client
+
+
+def _ytmusic_score(query_artist: str, query_song: str, cand_title: str, cand_artist: str) -> float:
+    """
+    Score a YouTube Music search result against the query.
+    Returns 0-100. Accepts both Arabic and romanized candidate names.
+    """
+    def _overlap(q: str, c: str) -> float:
+        qt = set(normalize_arabic(q).lower().split()) | set(q.lower().split())
+        qt = {t for t in qt if len(t) > 1}
+        ct = set(normalize_arabic(c).lower().split()) | set(c.lower().split())
+        ct = {t for t in ct if len(t) > 1}
+        if not qt:
+            return 0.0
+        return len(qt & ct) / len(qt)
+
+    art_score  = _overlap(query_artist, cand_artist) * 50
+    song_score = _overlap(query_song, cand_title) * 50
+    return art_score + song_score
+
+
+def _ytmusic_lyrics(artist: str, song: str) -> Optional[str]:
+    """
+    Fetch lyrics from YouTube Music (ytmusicapi) for a given artist + song.
+    Uses search with 'songs' filter, validates the top result, then retrieves
+    lyrics via get_watch_playlist + get_lyrics.
+
+    Isolated to Arabic mode — does NOT touch the main bot's session or logic.
+    """
+    yt = _get_ytmusic()
+    if not yt:
+        return None
+
+    queries = [f"{artist} {song}"]
+    # Also try with normalized Arabic form as a second query
+    norm_q = f"{normalize_arabic(artist)} {normalize_arabic(song)}"
+    if norm_q.strip() != queries[0].strip():
+        queries.append(norm_q)
+
+    for query in queries:
+        try:
+            results = yt.search(query, filter="songs", limit=5)
+            if not results:
+                continue
+
+            # Pick the first non-non-original result.
+            # We trust the ytmusicapi search ranking for specific Arabic queries:
+            # when querying "عمرو دياب تملي معاك", the top result IS the right song
+            # even when the returned title/artist are in transliterated English
+            # (e.g. "Tamally Maak" / "Amr Diab") — direct string scoring fails here.
+            best_vid = None
+            for r in results:
+                vid   = r.get("videoId", "")
+                title = r.get("title", "")
+                arts  = r.get("artists") or []
+                art   = arts[0].get("name", "") if arts else ""
+                if not vid or not title:
+                    continue
+                if _is_non_original(title):
+                    continue
+                logger.debug(
+                    f"[arabic][ytmusic] q={query!r}  title={title!r}  "
+                    f"artist={art!r}  vid={vid}"
+                )
+                best_vid = vid
+                break  # take the first valid (non-cover/remix) result
+
+            if not best_vid:
+                continue
+
+            # Get lyrics browseId from watch playlist
+            wp = yt.get_watch_playlist(videoId=best_vid, limit=1)
+            lyrics_id = wp.get("lyrics", "") if wp else ""
+            if not lyrics_id:
+                logger.debug(f"[arabic][ytmusic] no lyrics browseId for videoId={best_vid}")
+                continue
+
+            # Fetch the actual lyrics
+            lyr_data = yt.get_lyrics(lyrics_id)
+            if not lyr_data:
+                continue
+            text = lyr_data.get("lyrics", "") or ""
+            if len(text) > 50:
+                logger.info(
+                    f"[arabic][ytmusic] lyrics OK: {artist!r} - {song!r} "
+                    f"vid={best_vid} len={len(text)}"
+                )
+                return text.strip()
+
+        except Exception as e:
+            logger.debug(f"[arabic][ytmusic] failed for q={query!r}: {e}")
+            continue
+
+    return None
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # PHASE 2 — LAYER 3: Genius lyrics fetch (NOT used for identity)
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -459,6 +574,22 @@ def _genius_lyrics(artist: str, song: str) -> Optional[str]:
 # PHASE 2 — LAYER 4: lrclib fallback lyrics (Arabic-mode dedicated calls)
 # ════════════════════════════════════════════════════════════════════════════
 
+_LRC_TIMESTAMP_RE = re.compile(r"\[\d{1,2}:\d{2}(?:\.\d+)?\]")
+
+
+def _strip_lrc_timestamps(text: str) -> str:
+    """Strip LRC-format timestamps like [00:32.75] from lyrics."""
+    if not text:
+        return text
+    lines = []
+    for line in text.splitlines():
+        line = _LRC_TIMESTAMP_RE.sub("", line).strip()
+        lines.append(line)
+    result = "\n".join(lines)
+    result = re.sub(r"\n{3,}", "\n\n", result)
+    return result.strip()
+
+
 def _lrclib_direct(artist: str, song: str) -> Optional[str]:
     try:
         r = _ar_session.get(
@@ -468,7 +599,11 @@ def _lrclib_direct(artist: str, song: str) -> Optional[str]:
         )
         if r.status_code == 200:
             data = r.json()
-            lyrics = data.get("plainLyrics", "")
+            lyrics = data.get("plainLyrics", "") or ""
+            # Fallback to synced lyrics if no plain lyrics available
+            if not lyrics:
+                lyrics = data.get("syncedLyrics", "") or ""
+            lyrics = _strip_lrc_timestamps(lyrics)
             if lyrics and len(lyrics) > 30:
                 logger.info(f"[arabic][lrclib] direct hit: {artist!r} - {song!r}")
                 return lyrics
@@ -489,7 +624,10 @@ def _lrclib_search_lyrics(artist: str, song: str) -> Optional[str]:
             if not isinstance(data, list):
                 return None
             for item in data:
-                lyrics = item.get("plainLyrics", "")
+                lyrics = item.get("plainLyrics", "") or ""
+                if not lyrics:
+                    lyrics = item.get("syncedLyrics", "") or ""
+                lyrics = _strip_lrc_timestamps(lyrics)
                 if not lyrics or len(lyrics) <= 30:
                     continue
                 if _is_non_original(item.get("trackName", "")):
@@ -559,19 +697,30 @@ def resolve_arabic_song(
     # ── Phase 2: Lyrics fetch ─────────────────────────────────────────────────
 
     def _fetch_lyrics(a: str, s: str) -> Optional[str]:
-        """Layer 3 → 4 for a given artist/song pair."""
+        """
+        Layer 2a → 3 → 4 for a given artist/song pair.
+        1. YouTube Music (ytmusicapi)  ← PRIMARY
+        2. Genius API + scrape
+        3. lrclib direct + search
+        """
+        # Layer 2a: YouTube Music (primary)
+        lyr = _ytmusic_lyrics(a, s)
+        if lyr:
+            return lyr
+        # Layer 3: Genius
         lyr = _genius_lyrics(a, s)
         if lyr:
             return lyr
+        # Layer 4: lrclib
         return _lrclib_lyrics(a, s)
 
     # Primary attempt: YouTube-resolved Arabic identity
     lyrics = _fetch_lyrics(res_artist, res_song)
 
     # English alias from bilingual YouTube title (e.g. "Majid Al Mohandis", "Dayea")
-    # Genius often indexes by English name even for Arabic-language songs
+    # YouTube Music often indexes Arabic-language songs under the English artist name
     if not lyrics and eng_artist and eng_song:
-        logger.debug(f"[arabic] trying English alias on Genius: {eng_artist!r} - {eng_song!r}")
+        logger.debug(f"[arabic] trying English alias: {eng_artist!r} - {eng_song!r}")
         lyrics = _fetch_lyrics(eng_artist, eng_song)
 
     # If identity differed from input, also try original Arabic names
