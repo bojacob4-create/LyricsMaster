@@ -704,9 +704,12 @@ def callback_query_handler(update: Update, context: CallbackContext):
         return
 
     # ── Arabic mode Translate — translates cached Arabic lyrics to English ──────
+    # Each dashboard stores its own data in context.user_data['ar_songs'][msg_id]
     if action == 'ar_translate':
-        cached_lyrics = context.user_data.get('arabic_lyrics', '')
-        cached_title  = context.user_data.get('arabic_display_title', param)
+        msg_id    = query.message.message_id
+        song_data = context.user_data.get('ar_songs', {}).get(msg_id)
+        cached_lyrics = song_data.get('lyrics', '') if song_data else ''
+        cached_title  = song_data.get('title', param) if song_data else param
         if not cached_lyrics:
             query.message.reply_text(
                 "😓 Lyrics not available. Please re-send the song name in Arabic mode."
@@ -729,20 +732,23 @@ def callback_query_handler(update: Update, context: CallbackContext):
             query.message.reply_text("😓 Translation failed. Please try again.")
         return
 
-    # ── Arabic mode Full Lyrics — uses cached pipeline result, never main lyrics ──
+    # ── Arabic mode Full Lyrics — uses per-dashboard cached result, never main lyrics ──
+    # Each dashboard stores its own data in context.user_data['ar_songs'][msg_id]
     if action == 'ar_lyrics':
-        cached_lyrics = context.user_data.get('arabic_lyrics', '')
-        cached_title  = context.user_data.get('arabic_display_title', param)
+        msg_id    = query.message.message_id
+        song_data = context.user_data.get('ar_songs', {}).get(msg_id)
+        cached_lyrics = song_data.get('lyrics', '') if song_data else ''
+        cached_title  = song_data.get('title', param) if song_data else param
         if not cached_lyrics:
             # Cache miss: re-run the Arabic pipeline (e.g. after bot restart)
             if ' - ' in param:
                 try:
                     from services.arabic_mode import resolve_arabic_song
                     ar_parts = param.split(' - ', 1)
-                    _a, _s, cached_lyrics = resolve_arabic_song(
+                    _a, _s, cached_lyrics, _ = resolve_arabic_song(
                         ar_parts[0].strip(), ar_parts[1].strip()
                     )
-                    cached_title = f"{_a} - {_s}" if _a else param
+                    cached_title = param  # keep user-entered title on cache miss
                 except Exception as e:
                     logger.error(f"[arabic][ar_lyrics] re-resolve failed: {e}")
         if not cached_lyrics:
@@ -753,17 +759,10 @@ def callback_query_handler(update: Update, context: CallbackContext):
         header = f"🎵 {cached_title}\n━━━━━━━━━━━━━━━━━━━━━\n\n"
         max_chunk = 3000
         chunks = [cached_lyrics[i:i + max_chunk] for i in range(0, len(cached_lyrics), max_chunk)]
-        first_msg = header + chunks[0]
-        if len(chunks) == 1:
-            query.message.reply_text(first_msg, reply_markup=lyrics_buttons(param))
-        else:
-            query.message.reply_text(first_msg)
-            for idx, chunk in enumerate(chunks[1:], 1):
-                cont = f"🎵 ({idx + 1}/{len(chunks)})...\n\n"
-                if idx == len(chunks) - 1:
-                    query.message.reply_text(cont + chunk, reply_markup=lyrics_buttons(param))
-                else:
-                    query.message.reply_text(cont + chunk)
+        # Arabic mode Full Lyrics: NO extra buttons — clean output only
+        query.message.reply_text(header + chunks[0])
+        for idx, chunk in enumerate(chunks[1:], 1):
+            query.message.reply_text(f"🎵 ({idx + 1}/{len(chunks)})...\n\n" + chunk)
         return
 
     if action == 'subcount':
@@ -2334,8 +2333,8 @@ def handle_arabic_input(update: Update, context: CallbackContext):
     processing_msg = update.message.reply_text("🔍 Searching...")
 
     try:
-        # ── Resolve: identity + lyrics via Arabic-mode pipeline ───────────────
-        resolved_artist, resolved_song, lyrics = resolve_arabic_song(artist, song)
+        # ── Resolve: identity + lyrics + direct video ID via Arabic-mode pipeline ──
+        resolved_artist, resolved_song, lyrics, yt_video_id = resolve_arabic_song(artist, song)
 
         if not lyrics:
             processing_msg.edit_text(
@@ -2347,9 +2346,13 @@ def handle_arabic_input(update: Update, context: CallbackContext):
         # Display title uses the EXACT text the user entered, not internal resolved names
         display_title = f"{artist} - {song}"
 
-        # Cache for Full Lyrics and Translate buttons (stay in Arabic pipeline)
-        context.user_data['arabic_lyrics']        = lyrics
-        context.user_data['arabic_display_title'] = display_title
+        # ── Per-dashboard state: keyed by THIS message's ID so each dashboard is independent ──
+        # Pressing Full Lyrics / Translate on an older dashboard always acts on that song,
+        # never on the user's most recent search.
+        context.user_data.setdefault('ar_songs', {})[processing_msg.message_id] = {
+            'lyrics': lyrics,
+            'title':  display_title,
+        }
 
         # ── Lyrics preview (first 4 non-empty lines) ─────────────────────────
         lyrics_lines = [l.strip() for l in lyrics.strip().split('\n') if l.strip()]
@@ -2357,9 +2360,11 @@ def handle_arabic_input(update: Update, context: CallbackContext):
         if len(lyrics_lines) > 4:
             lyrics_preview += "\n  ..."
 
-        # ── YouTube link only (no analysis, no similar songs) ─────────────────
-        yt_url = get_youtube_link(resolved_artist, resolved_song)
-        yt_section = f"🎬 {yt_url}" if yt_url else "🎬 YouTube: not found"
+        # ── Direct YouTube URL from identity resolution (never a search-results URL) ──
+        if yt_video_id:
+            yt_section = f"🎬 https://youtube.com/watch?v={yt_video_id}"
+        else:
+            yt_section = "🎬 YouTube: not found"
 
         # ── Arabic-mode simplified dashboard ─────────────────────────────────
         response = (
@@ -2374,7 +2379,7 @@ def handle_arabic_input(update: Update, context: CallbackContext):
             disable_web_page_preview=True,
             reply_markup=arabic_song_dashboard_buttons(display_title),
         )
-        logger.info(f"[arabic] Sent dashboard to user {user_id}: {display_title!r}")
+        logger.info(f"[arabic] Sent dashboard to user {user_id}: {display_title!r}  vid={yt_video_id}")
 
     except Exception as e:
         logger.error(f"[arabic] Pipeline error for user {user_id}: {e}", exc_info=True)

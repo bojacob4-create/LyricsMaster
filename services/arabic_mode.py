@@ -63,6 +63,7 @@ def normalize_arabic(text: str) -> str:
     for ch in "أإآٱ":
         text = text.replace(ch, "ا")
     text = text.replace("ى", "ي")
+    text = text.replace("ة", "ه")   # ta-marbuta: حمزه ↔ حمزة both become حمزه
     text = text.replace("ؤ", "و")
     text = text.replace("ئ", "ي")
     text = text.replace("ء", "")
@@ -329,10 +330,12 @@ def _yt_resolve(
     query_artist: str,
     query_song:   str,
     search_query: str,
-) -> Optional[Tuple[str, str, Optional[str], Optional[str]]]:
+) -> Optional[Tuple[str, str, Optional[str], Optional[str], str]]:
     """
     Search YouTube with `search_query`, parse titles, score candidates.
-    Returns (arabic_artist, arabic_song, eng_artist, eng_song) or None.
+    Returns (arabic_artist, arabic_song, eng_artist, eng_song, video_id) or None.
+    video_id is the YouTube video ID of the best-matching result — use it to build
+    a direct watch URL (https://youtube.com/watch?v=<video_id>) in Arabic mode.
     The English alias (eng_artist, eng_song) is captured from bilingual titles
     and passed to Phase 2 so Genius can be searched with it.
     """
@@ -341,13 +344,14 @@ def _yt_resolve(
         return None
 
     best_score  = 0.0
-    best_result: Optional[Tuple[str, str, Optional[str], Optional[str]]] = None
+    best_result: Optional[Tuple[str, str, Optional[str], Optional[str], str]] = None
 
     for cand in candidates:
+        vid     = cand.get("id", "")
         title   = cand.get("title", "")
         channel = cand.get("channel", "")
 
-        if not title:
+        if not title or not vid:
             continue
 
         # Hard reject non-original types
@@ -361,19 +365,19 @@ def _yt_resolve(
         score = _yt_compute_score(query_artist, query_song, parsed_artist, parsed_song)
 
         logger.debug(
-            f"[arabic][yt] q={search_query!r}  title={title!r}  "
+            f"[arabic][yt] q={search_query!r}  vid={vid}  title={title!r}  "
             f"pa={parsed_artist!r}  ps={parsed_song!r}  "
             f"eng=({eng_artist!r}, {eng_song!r})  score={score:.1f}"
         )
 
         if score > best_score:
             best_score = score
-            best_result = (parsed_artist, parsed_song, eng_artist, eng_song)
+            best_result = (parsed_artist, parsed_song, eng_artist, eng_song, vid)
 
     if best_result and best_score >= 40:
         logger.info(
             f"[arabic][yt] resolved: {best_result[0]!r} - {best_result[1]!r} "
-            f"eng=({best_result[2]!r}, {best_result[3]!r}) score={best_score:.1f}"
+            f"eng=({best_result[2]!r}, {best_result[3]!r}) vid={best_result[4]} score={best_score:.1f}"
         )
         return best_result
 
@@ -665,14 +669,17 @@ def _lrclib_lyrics(artist: str, song: str) -> Optional[str]:
 def resolve_arabic_song(
     artist: str,
     song:   str,
-) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """
     Two-phase Arabic resolver:
 
     Phase 1 — Identity via YouTube (Layers 1 → 2 → 5)
-    Phase 2 — Lyrics via Genius then lrclib (Layers 3 → 4)
+    Phase 2 — Lyrics via YouTube Music, Genius, then lrclib (Layers 2a → 3 → 4)
 
-    Returns (resolved_artist, resolved_song, lyrics) or (None, None, None).
+    Returns (resolved_artist, resolved_song, lyrics, yt_video_id).
+    yt_video_id is the YouTube video ID of the confirmed song result — use it
+    to build https://youtube.com/watch?v=<yt_video_id> for a direct watch link.
+    All values are None on complete failure.
     NEVER falls back into any main bot service.
     """
     norm_artist = normalize_arabic(artist)
@@ -698,13 +705,14 @@ def resolve_arabic_song(
         logger.info(f"[arabic] YouTube identity resolution failed, trying lyrics directly")
         res_artist, res_song = artist, song
         eng_artist = eng_song = None
+        yt_video_id: Optional[str] = None
         direct_only = True
     else:
-        res_artist, res_song, eng_artist, eng_song = yt_result
+        res_artist, res_song, eng_artist, eng_song, yt_video_id = yt_result
         direct_only = False
 
     logger.debug(f"[arabic] identity: {res_artist!r} - {res_song!r}  "
-                 f"eng_alias: {eng_artist!r} - {eng_song!r}")
+                 f"eng_alias: {eng_artist!r} - {eng_song!r}  vid={yt_video_id}")
 
     # ── Phase 2: Lyrics fetch ─────────────────────────────────────────────────
 
@@ -749,7 +757,7 @@ def resolve_arabic_song(
 
     if not lyrics:
         logger.info(f"[arabic] no lyrics found for {artist!r} - {song!r}")
-        return None, None, None
+        return None, None, None, None
 
-    logger.info(f"[arabic] resolved: {res_artist!r} - {res_song!r}")
-    return res_artist, res_song, lyrics
+    logger.info(f"[arabic] resolved: {res_artist!r} - {res_song!r}  vid={yt_video_id}")
+    return res_artist, res_song, lyrics, yt_video_id

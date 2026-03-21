@@ -1,0 +1,126 @@
+The Arabic mode work must remain strictly isolated. Do NOT touch the main bot, main search logic, main dashboard, main callbacks, or any behavior outside /arabic … /exit.
+
+Everything below applies ONLY inside Arabic mode.
+
+What is already correct and must NOT be changed:
+	•	Arabic mode isolation is working well
+	•	Arabic dashboard text is simplified as requested
+	•	Arabic dashboard buttons are reduced as requested
+	•	Full Lyrics is returning the correct lyrics content
+	•	Translation / preview can return correct Arabic lyrics content
+
+So do NOT rework the isolation architecture and do NOT touch the main system.
+
+The remaining issues are these exact ones:
+	1.	Wrong YouTube direct link for some Arabic songs
+Example:
+
+	•	حمزه المحمداوي - قراري
+The dashboard shows the correct title and correct lyrics preview, but the YouTube link opens the wrong song/video.
+This means identity resolution for lyrics is sometimes correct, but the selected YouTube video URL is wrong.
+You must fix the Arabic-mode YouTube resolver so that the direct dashboard link points to the correct song/video, not a wrong match.
+
+	2.	Full Lyrics output inside Arabic mode must NOT show extra buttons
+When pressing Full Lyrics from the Arabic dashboard, the lyrics content is correct, but the output still shows extra buttons / actions that do not belong to the Arabic-mode Full Lyrics view.
+For Arabic mode only:
+
+	•	remove those extra buttons from the Full Lyrics output
+	•	do not show unrelated actions there
+	•	keep this change scoped only to Arabic mode
+Do NOT change the main bot Full Lyrics behavior outside Arabic mode.
+
+	3.	Arabic dashboard buttons are leaking to the most recent song instead of the specific dashboard they came from
+This is a serious state bug.
+Example:
+
+	•	user searches حمزه المحمداوي - قراري
+	•	then searches ماجد المهندس - ضايع
+	•	then scrolls back to the earlier dashboard for قراري
+	•	pressing Full Lyrics or Translate on the older dashboard incorrectly returns data for the newer dashboard/song
+This is NOT acceptable.
+
+You must make Arabic dashboard buttons song-specific and dashboard-specific.
+Each Arabic dashboard instance must preserve its own:
+	•	title
+	•	lyrics
+	•	translation source
+	•	video link
+	•	song identity
+
+Buttons on an older Arabic dashboard must always act on that exact song, not the latest Arabic search.
+
+Do NOT store Arabic dashboard state as a single mutable “current song” for the whole user.
+Use per-dashboard / per-callback encoded identity or a robust per-message mapping.
+This fix must remain inside Arabic mode only.
+	4.	Some songs still produce YouTube search-result URLs instead of direct song/video URLs
+Examples from testing:
+
+	•	حسين الجسمي - ستة الصبح
+	•	حمزه المحمداوي - من البداية
+The dashboard can show correct lyrics preview / translation / full lyrics, but the YouTube link is only a search URL, not a direct resolved song URL.
+This is not good enough.
+
+Arabic mode must try harder to resolve a direct YouTube video/song URL.
+Do NOT stop at a search-results link if a direct match can be found.
+
+Improve the Arabic-mode YouTube resolution for:
+	•	Arabic titles
+	•	bilingual titles
+	•	romanized/transliterated titles
+	•	artist/song matching in both Arabic and English transliteration
+
+	5.	Need better handling for Arabic songs published with transliterated English titles
+Example:
+
+	•	عبدالمجيد عبدالله - لكل نهاية بداية
+The bot returned “song not found”, but the actual YouTube title exists in transliterated form like:
+	•	Abdul Majeed Abdullah - Lekel Nehayah Bedayah
+This means the Arabic-mode search still needs stronger matching for titles that appear on YouTube in transliterated English rather than Arabic script.
+
+Required fix:
+Within Arabic mode only, strengthen the YouTube resolver so it can find songs whether the published title is:
+	•	Arabic
+	•	bilingual Arabic + English transliteration
+	•	English transliteration only
+
+Do NOT use this to change the main bot.
+This is Arabic-mode-only search logic.
+
+Required Arabic-mode search behavior:
+	•	keep Arabic input strict
+	•	keep Arabic-only validation
+	•	keep Arabic normalization
+	•	keep transliteration / romanized fallback internally
+	•	improve title parsing and direct video selection
+	•	improve matching for transliterated artist and song names
+	•	prefer direct resolved song/video links over search-result URLs
+
+Critical restriction:
+Do NOT alter anything outside Arabic mode.
+Arabic mode starts with /arabic and ends with /exit.
+All of these fixes must live only inside the Arabic-mode pipeline.
+
+Required real tests before reporting back:
+	1.	/arabic
+	2.	حمزه المحمداوي - قراري
+	•	correct dashboard
+	•	correct direct YouTube link
+	•	correct Full Lyrics
+	3.	Search another Arabic song after that, for example:
+	•	ماجد المهندس - ضايع
+	4.	Scroll back to the earlier قراري dashboard and press:
+	•	Full Lyrics
+	•	Translate
+Expected: both still operate on قراري, not on the later song
+	5.	حسين الجسمي - ستة الصبح
+	•	direct YouTube link, not search-results URL
+	6.	حمزه المحمداوي - من البداية
+	•	direct YouTube link, not search-results URL
+	7.	عبدالمجيد عبدالله - لكل نهاية بداية
+	•	should resolve via transliterated YouTube title if needed
+	8.	/exit
+	9.	verify main bot still works normally outside Arabic mode
+
+Do not assume.
+Do not report “done” from startup only.
+Do not say it is fixed unless you have tested these exact cases end-to-end.
