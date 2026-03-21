@@ -33,6 +33,13 @@ from handlers import (
 )
 from services.daily_song_service import send_daily_song
 
+# Start Anghami song index build immediately at startup (background daemon thread)
+try:
+    from services.arabic_mode import _start_anghami_indexer as _anghami_start
+    _anghami_start()
+except Exception:
+    pass
+
 # Configure logging with both console and file handlers
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',

@@ -29,12 +29,16 @@ are collected before the best-scoring one is returned.
 
 import os
 import re
+import gzip
 import json
 import logging
+import threading
 import requests
+import concurrent.futures as _cf
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple, List, Dict
 from urllib.parse import quote
+from xml.etree import ElementTree as _ET
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +52,13 @@ _ar_session.headers.update({
         "Chrome/120.0.0.0 Safari/537.36"
     )
 })
+# Increase the connection pool so the background indexer's 20 concurrent
+# workers don't exhaust the default pool-size-10 limit.
+_pool_adapter = requests.adapters.HTTPAdapter(
+    pool_connections=30, pool_maxsize=30
+)
+_ar_session.mount("https://", _pool_adapter)
+_ar_session.mount("http://",  _pool_adapter)
 
 _GENIUS_KEY       = os.environ.get("GENIUS_API_KEY", "")
 _GENIUS_SEARCH    = "https://api.genius.com/search"
@@ -55,6 +66,21 @@ _LRCLIB_GET       = "https://lrclib.net/api/get"
 _LRCLIB_SEARCH    = "https://lrclib.net/api/search"
 _YT_SEARCH_URL    = "https://www.youtube.com/results?search_query={}"
 _DDG_SEARCH_URL   = "https://html.duckduckgo.com/html/"
+
+# ── Anghami kalimat direct-search configuration ────────────────────────────
+_ANGHAMI_SITEMAP_INDEX   = "https://kalimat.anghami.com/sitemap.xml"
+_ANGHAMI_LYRICS_BASE     = "https://kalimat.anghami.com/lyrics/{}"
+_ANGHAMI_SITEMAP_NS      = "http://www.sitemaps.org/schemas/sitemap/0.9"
+_ANGHAMI_KNOWN_SITEMAPS  = [
+    "https://cloudimg.anghami.com/sitemaps/lyrics/arabic-lyrics-1.xml.gz",
+    "https://cloudimg.anghami.com/sitemaps/lyrics/arabic-lyrics-2.xml.gz",
+    "https://cloudimg.anghami.com/sitemaps/lyrics/arabic-lyrics-3.xml.gz",
+    "https://cloudimg.anghami.com/sitemaps/lyrics/arabic-lyrics.xml.gz",
+]
+
+_anghami_indexer_thread: Optional[threading.Thread] = None
+_anghami_indexer_lock   = threading.Lock()
+_anghami_indexer_stop   = threading.Event()
 
 # Live-performance / crowd-participation phrases.
 # ≥ 2 matches in a single lyrics block → reject as live-contaminated.
@@ -860,28 +886,44 @@ def _genius_scrape_lyrics(song_url: str) -> Optional[str]:
 
 def _genius_lyrics(artist: str, song: str) -> Optional[str]:
     """
-    Fetch lyrics from Genius for a confirmed artist + song identity.
-    Uses light scoring to avoid picking a completely wrong song.
+    Fetch lyrics from Genius using multiple query strategies (Arabic → romanized →
+    title-only) to maximise discovery.  Deduplicates URLs across queries.
     """
-    hits = _genius_search_hits(f"{artist} {song}")
-    if not hits:
-        return None
+    rom_artist = _romanize(artist)
+    rom_song   = _romanize(song)
+    norm_song  = normalize_arabic(song)
 
-    for hit in hits:
-        if hit.get("type") != "song":
-            continue
-        res        = hit.get("result", {})
-        cand_song  = res.get("title", "")
-        song_url   = res.get("url", "")
-        if not song_url:
-            continue
-        if _is_non_original(cand_song):
-            continue
-        lyrics = _genius_scrape_lyrics(song_url)
-        if lyrics:
-            logger.info(f"[arabic][genius] lyrics found for {artist!r} - {song!r}")
-            return lyrics
+    queries: List[str] = [f"{artist} {song}"]
+    if rom_artist and rom_song:
+        queries.append(f"{rom_artist} {rom_song}")
+    if norm_song != song:
+        queries.append(f"{artist} {norm_song}")
+    if rom_song:
+        queries.append(rom_song)
 
+    seen_urls: set = set()
+    for query in queries:
+        hits = _genius_search_hits(query)
+        if not hits:
+            continue
+        for hit in hits:
+            if hit.get("type") != "song":
+                continue
+            res       = hit.get("result", {})
+            cand_song = res.get("title", "")
+            song_url  = res.get("url", "")
+            if not song_url or song_url in seen_urls:
+                continue
+            seen_urls.add(song_url)
+            if _is_non_original(cand_song):
+                continue
+            lyrics = _genius_scrape_lyrics(song_url)
+            if lyrics:
+                logger.info(
+                    f"[arabic][genius] lyrics found for {artist!r} - {song!r} "
+                    f"via query {query!r}"
+                )
+                return lyrics
     return None
 
 
@@ -962,6 +1004,293 @@ def _lrclib_lyrics(artist: str, song: str) -> Optional[str]:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# ANGHAMI DIRECT INDEX — PostgreSQL-backed song lookup (no DDG dependency)
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def _anghami_db_conn():
+    """Return a fresh psycopg2 connection or None if unavailable."""
+    import psycopg2
+    db_url = os.environ.get("DATABASE_URL", "")
+    if not db_url:
+        return None
+    try:
+        return psycopg2.connect(db_url)
+    except Exception as e:
+        logger.debug(f"[arabic][db] connect failed: {e}")
+        return None
+
+
+def _anghami_db_init():
+    """Create anghami_song_index table + indexes (idempotent)."""
+    conn = _anghami_db_conn()
+    if not conn:
+        return
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS anghami_song_index (
+                        song_id   BIGINT PRIMARY KEY,
+                        title_ar  TEXT,
+                        artist_ar TEXT,
+                        indexed_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_asi_artist
+                    ON anghami_song_index (artist_ar)
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_asi_title
+                    ON anghami_song_index (title_ar)
+                """)
+    except Exception as e:
+        logger.debug(f"[arabic][db] init failed: {e}")
+    finally:
+        conn.close()
+
+
+def _anghami_db_lookup(artist: str, song: str) -> Optional[int]:
+    """
+    Search anghami_song_index for the best matching song_id.
+    Tries exact normalized LIKE match, then title-only match.
+    """
+    conn = _anghami_db_conn()
+    if not conn:
+        return None
+    try:
+        n_artist = normalize_arabic(artist)
+        n_song   = normalize_arabic(song)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT song_id FROM anghami_song_index
+                WHERE artist_ar ILIKE %s AND title_ar ILIKE %s
+                LIMIT 1
+                """,
+                (f"%{n_artist}%", f"%{n_song}%"),
+            )
+            row = cur.fetchone()
+            if row:
+                return int(row[0])
+            if len(n_song) >= 3:
+                cur.execute(
+                    """
+                    SELECT song_id FROM anghami_song_index
+                    WHERE title_ar ILIKE %s
+                    LIMIT 1
+                    """,
+                    (f"%{n_song}%",),
+                )
+                row = cur.fetchone()
+                if row:
+                    return int(row[0])
+    except Exception as e:
+        logger.debug(f"[arabic][db] lookup failed: {e}")
+    finally:
+        conn.close()
+    return None
+
+
+def _anghami_db_store(song_id: int, title_ar: str, artist_ar: str) -> None:
+    """Insert a song into the index (ON CONFLICT DO NOTHING)."""
+    conn = _anghami_db_conn()
+    if not conn:
+        return
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO anghami_song_index (song_id, title_ar, artist_ar)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (song_id) DO NOTHING
+                    """,
+                    (song_id,
+                     normalize_arabic(title_ar),
+                     normalize_arabic(artist_ar)),
+                )
+    except Exception as e:
+        logger.debug(f"[arabic][db] store failed: {e}")
+    finally:
+        conn.close()
+
+
+_ANGHAMI_CF_BLOCK_SIZE = 2000   # CloudFront error pages are always ≤ 2 KB
+_anghami_cf_block_count = 0    # consecutive CloudFront error count (thread-shared)
+_anghami_cf_block_lock  = threading.Lock()
+
+
+def _is_anghami_cf_blocked(response_text: str) -> bool:
+    """
+    Return True if Anghami returned a CloudFront / Access Denied error page.
+    Real lyrics pages are 30-80 KB; error pages are ≤ 2 KB and say 'Access Denied'.
+    """
+    if len(response_text) > _ANGHAMI_CF_BLOCK_SIZE:
+        return False
+    lower = response_text.lower()
+    return "access denied" in lower or "cloudfront" in lower or len(response_text) < 1600
+
+
+def _anghami_fetch_og(song_id: str):
+    """
+    Fetch the kalimat.anghami.com page for song_id and extract OG
+    title/artist from server-side rendered HTML.
+    Returns (int(song_id), title_ar, artist_ar) or None.
+    Returns "BLOCKED" string if CloudFront is rate-limiting us.
+    """
+    global _anghami_cf_block_count
+    url = _ANGHAMI_LYRICS_BASE.format(song_id)
+    try:
+        r = _ar_session.get(url, timeout=5)
+        if r.status_code != 200:
+            return None
+        if _is_anghami_cf_blocked(r.text):
+            with _anghami_cf_block_lock:
+                _anghami_cf_block_count += 1
+            return "BLOCKED"
+        # Reset block count on success
+        with _anghami_cf_block_lock:
+            _anghami_cf_block_count = 0
+        og_title_m = re.search(r'property="og:title" content="([^"]+)"', r.text)
+        og_desc_m  = re.search(r'property="og:description" content="([^"]+)"', r.text)
+        if not og_title_m or not og_desc_m:
+            return None
+        title_ar = og_title_m.group(1).strip().lstrip("\u200f").strip()
+        desc     = og_desc_m.group(1).strip().lstrip("\u200f").strip()
+        idx = desc.find(title_ar)
+        if idx > 0:
+            artist_ar = desc[:idx].strip()
+        else:
+            parts     = desc.split()
+            artist_ar = " ".join(parts[:3])
+        if not any("\u0600" <= c <= "\u06ff" for c in title_ar):
+            return None
+        return (int(song_id), title_ar, artist_ar)
+    except Exception:
+        return None
+
+
+def _anghami_get_all_sitemap_ids() -> List[str]:
+    """Download all Anghami kalimat sitemap gz files; return list of song ID strings."""
+    ns_tag = f"{{{_ANGHAMI_SITEMAP_NS}}}"
+    sitemap_locs: List[str] = []
+    try:
+        r = _ar_session.get(_ANGHAMI_SITEMAP_INDEX, timeout=10)
+        if r.status_code == 200:
+            root = _ET.fromstring(r.text)
+            for el in root.findall(f"{ns_tag}sitemap"):
+                loc = el.find(f"{ns_tag}loc")
+                if loc is not None and loc.text:
+                    sitemap_locs.append(loc.text)
+    except Exception:
+        pass
+    if not sitemap_locs:
+        sitemap_locs = list(_ANGHAMI_KNOWN_SITEMAPS)
+
+    all_ids: List[str] = []
+    for loc in sitemap_locs:
+        if _anghami_indexer_stop.is_set():
+            break
+        try:
+            r2 = _ar_session.get(loc, timeout=30, stream=True)
+            if r2.status_code != 200:
+                continue
+            raw = gzip.decompress(b"".join(r2.iter_content(chunk_size=16384)))
+            root2 = _ET.fromstring(raw)
+            for url_el in root2.findall(f"{ns_tag}url"):
+                loc_el = url_el.find(f"{ns_tag}loc")
+                if loc_el is not None and loc_el.text:
+                    m = re.search(r"/lyrics/(\d+)", loc_el.text)
+                    if m:
+                        all_ids.append(m.group(1))
+        except Exception as e:
+            logger.debug(f"[arabic][indexer] sitemap {loc} error: {e}")
+    return all_ids
+
+
+def _anghami_index_worker() -> None:
+    """
+    Background daemon: download all sitemap IDs, fetch OG metadata for each
+    page, and store artist/title in the PostgreSQL index.
+    Uses 10 concurrent workers; sleeps 0.3s between batches (polite rate).
+    """
+    import time as _time_mod
+    logger.info("[arabic][indexer] Anghami sitemap index build starting")
+    try:
+        _anghami_db_init()
+        all_ids = _anghami_get_all_sitemap_ids()
+        if not all_ids:
+            logger.warning("[arabic][indexer] no song IDs retrieved from sitemaps")
+            return
+        logger.info(f"[arabic][indexer] {len(all_ids)} songs to index")
+        # Conservative settings to avoid CloudFront rate-limiting on Anghami.
+        # 3 workers, 2s sleep → ~1.5 pages/sec, full index in ~18 hours.
+        BATCH        = 3
+        CF_PAUSE_SEC = 1800  # 30 min pause if Anghami blocks us
+        stored       = 0
+        checked      = 0
+        for i in range(0, len(all_ids), BATCH):
+            if _anghami_indexer_stop.is_set():
+                break
+            batch = all_ids[i : i + BATCH]
+            with _cf.ThreadPoolExecutor(max_workers=BATCH) as ex:
+                results = list(ex.map(_anghami_fetch_og, batch))
+
+            block_count = sum(1 for r in results if r == "BLOCKED")
+            if block_count == len(batch):
+                # All results blocked — CloudFront is rate-limiting; pause
+                logger.warning(
+                    f"[arabic][indexer] CloudFront block detected at "
+                    f"{i}/{len(all_ids)}; pausing {CF_PAUSE_SEC//60} min"
+                )
+                _time_mod.sleep(CF_PAUSE_SEC)
+                continue  # retry the same batch
+
+            for res in results:
+                if res and res != "BLOCKED":
+                    _anghami_db_store(res[0], res[1], res[2])
+                    stored += 1
+            checked += len(batch)
+            if checked % 500 == 0:
+                logger.debug(
+                    f"[arabic][indexer] progress {checked}/{len(all_ids)} "
+                    f"stored={stored}"
+                )
+            _time_mod.sleep(2.0)
+        logger.info(
+            f"[arabic][indexer] complete: {stored}/{len(all_ids)} songs stored"
+        )
+    except Exception as e:
+        logger.error(f"[arabic][indexer] crashed: {e}")
+
+
+def _start_anghami_indexer() -> None:
+    """Start the background indexer thread (no-op if already running)."""
+    global _anghami_indexer_thread
+    with _anghami_indexer_lock:
+        if _anghami_indexer_thread and _anghami_indexer_thread.is_alive():
+            return
+        _anghami_indexer_stop.clear()
+        t = threading.Thread(
+            target=_anghami_index_worker,
+            name="anghami-indexer",
+            daemon=True,
+        )
+        t.start()
+        _anghami_indexer_thread = t
+        logger.info("[arabic][indexer] thread started")
+
+
+def _anghami_lyrics_by_id(song_id: int, artist: str, song: str) -> Optional[str]:
+    """Fetch and extract lyrics directly from a known kalimat.anghami.com song ID."""
+    url = _ANGHAMI_LYRICS_BASE.format(song_id)
+    logger.debug(f"[arabic][anghami_direct] fetching id={song_id}")
+    return _scrape_url_for_lyrics(url, artist, song)
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # PHASE 2 — TARGETED SCRAPERS (Layers 3b and 5b)
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -1009,20 +1338,44 @@ def _anghami_lyrics(artist: str, song: str) -> Optional[str]:
     """
     Layer 3b — Anghami kalimat (kalimat.anghami.com).
 
-    Uses a DDG site: search to discover the correct numeric song URL, then
-    fetches it directly and extracts Arabic lyrics via _scrape_url_for_lyrics().
-    DDG is used only for URL discovery; the actual content comes from Anghami.
+    Two-stage lookup:
+    1. PostgreSQL index (instant, DDG-free) — built by the background indexer.
+    2. DDG site: search (fallback, may be rate-limited from Replit).
+       When DDG succeeds, the discovered song_id is cached in the DB for future
+       requests.
     """
+    # ── 1. Database-backed direct lookup ──────────────────────────────────────
+    song_id = _anghami_db_lookup(artist, song)
+    if song_id:
+        lyr = _anghami_lyrics_by_id(song_id, artist, song)
+        if lyr:
+            logger.info(
+                f"[arabic][anghami] DB hit: id={song_id} "
+                f"{artist!r} - {song!r}"
+            )
+            return lyr
+
+    # ── 2. DDG site: search (fallback) ────────────────────────────────────────
     for q in [
         f"site:kalimat.anghami.com {artist} {song}",
         f"site:kalimat.anghami.com {_romanize(artist)} {_romanize(song)}",
     ]:
         url = _ddg_find_first_url(q, domain_filter="kalimat.anghami.com")
-        if url:
-            logger.debug(f"[arabic][anghami] found URL: {url[:80]}")
-            lyr = _scrape_url_for_lyrics(url, artist, song)
-            if lyr:
-                return lyr
+        if not url:
+            continue
+        logger.debug(f"[arabic][anghami] DDG found URL: {url[:80]}")
+        lyr = _scrape_url_for_lyrics(url, artist, song)
+        if lyr:
+            m = re.search(r"/lyrics/(\d+)", url)
+            if m:
+                og = _anghami_fetch_og(m.group(1))
+                if og:
+                    _anghami_db_store(og[0], og[1], og[2])
+                    logger.debug(
+                        f"[arabic][anghami] cached DDG result: "
+                        f"id={og[0]} title={og[1]!r}"
+                    )
+            return lyr
     return None
 
 
@@ -1111,6 +1464,10 @@ def _scrape_url_for_lyrics(url: str, artist: str, song: str) -> Optional[str]:
         from bs4 import BeautifulSoup
         r = _ar_session.get(url, timeout=9, allow_redirects=True)
         if r.status_code != 200:
+            return None
+        # Bail out fast when Anghami's CloudFront is returning error pages
+        if "anghami.com" in url and _is_anghami_cf_blocked(r.text):
+            logger.debug(f"[arabic][scrape] CloudFront block for {url[:60]}")
             return None
         soup = BeautifulSoup(r.text, "html.parser")
         for tag in soup(["script", "style", "nav", "header", "footer",
@@ -1402,3 +1759,10 @@ def resolve_arabic_song(
 
     logger.info(f"[arabic] resolved: {res_artist!r} - {res_song!r}  vid={yt_video_id}")
     return res_artist, res_song, lyrics, yt_video_id
+
+
+# ── Start background Anghami indexer when the module is first imported ────────
+try:
+    _start_anghami_indexer()
+except Exception as _e:
+    logger.warning(f"[arabic][indexer] could not start: {_e}")
