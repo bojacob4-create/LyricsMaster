@@ -6,7 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import CallbackContext, MessageHandler, Filters, CommandHandler
+from telegram.ext import CallbackContext, MessageHandler, Filters, CommandHandler, DispatcherHandlerStop
 from telegram.error import TelegramError
 from buttons import (
     lyrics_buttons, song_dashboard_buttons, artist_buttons, artist_summary_buttons,
@@ -2180,6 +2180,51 @@ def random_command(update: Update, context: CallbackContext):
 # ══════════════════════════════════════════════════════════════════════════════
 # Arabic Songs Mode — fully isolated subsystem
 # ══════════════════════════════════════════════════════════════════════════════
+
+_ARABIC_FORMAT_MSG = (
+    "Please use the correct format:\n"
+    "Artist - Song\n\n"
+    "Example:\n"
+    "ماجد المهندس - ضايع\n\n"
+    "Type /exit to return"
+)
+
+
+def arabic_mode_interceptor(update: Update, context: CallbackContext):
+    """
+    Group -1 interceptor — runs before ALL other handlers (commands + text).
+
+    If the user IS in Arabic mode:
+      • /exit  → exit Arabic mode, stop all further processing.
+      • Any other command (/song, /lyrics, …) → reject, stop.
+      • Any plain text → route to Arabic pipeline, stop.
+
+    If the user is NOT in Arabic mode → return immediately so normal
+    handlers run unaffected.
+    """
+    if not update.message:
+        return
+
+    user_id = update.effective_user.id
+    if _user_mode.get(user_id) != "arabic":
+        return  # not in Arabic mode — let all other handlers run normally
+
+    text = (update.message.text or "").strip()
+
+    # /exit — allow and honour it
+    if text.lower().startswith("/exit"):
+        exit_command(update, context)
+        raise DispatcherHandlerStop
+
+    # Any other slash command — reject
+    if text.startswith("/"):
+        update.message.reply_text(_ARABIC_FORMAT_MSG)
+        raise DispatcherHandlerStop
+
+    # Plain text — route to Arabic pipeline
+    handle_arabic_input(update, context)
+    raise DispatcherHandlerStop
+
 
 def arabic_command(update: Update, context: CallbackContext):
     """Activate Arabic Songs Mode for this user."""

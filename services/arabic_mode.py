@@ -195,21 +195,39 @@ def _yt_extract_candidates(html: str) -> List[Dict]:
     return candidates[:10]
 
 
-def _yt_parse_title(title: str, channel: str) -> Tuple[Optional[str], Optional[str]]:
+def _yt_parse_title(
+    title: str, channel: str
+) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """
-    Extract (artist, song) from a YouTube video title.
+    Extract (arabic_artist, arabic_song, english_artist, english_song).
     Handles:
       • "Artist - Song"
       • "Arabic - Song | English - Song"  (bilingual — prefers Arabic part)
       • "Artist | Song"
+
+    The English alias (english_artist, english_song) is captured from bilingual
+    titles so Genius can be searched with it even when Arabic Genius search fails.
     """
-    # Remove official video/audio/lyric qualifiers
     clean = _YT_SUFFIX_RE.sub("", title).strip()
 
-    # Bilingual format: take the Arabic segment if present, else first segment
+    eng_artist: Optional[str] = None
+    eng_song:   Optional[str] = None
+
+    # Bilingual format: collect English segment before discarding it
     if " | " in clean:
         segments = [s.strip() for s in clean.split(" | ")]
-        arabic_segs = [s for s in segments if _has_arabic(s)]
+        arabic_segs  = [s for s in segments if _has_arabic(s)]
+        english_segs = [s for s in segments if not _has_arabic(s) and s]
+
+        # Extract English alias from the first all-ASCII segment
+        if english_segs:
+            eng_seg = _YT_SUFFIX_RE.sub("", english_segs[0]).strip()
+            # Also strip trailing parenthetical qualifiers e.g. "( Official Audio )"
+            eng_seg = re.sub(r"\s*\([^)]*\)\s*$", "", eng_seg).strip()
+            if " - " in eng_seg:
+                ep = eng_seg.split(" - ", 1)
+                eng_artist, eng_song = ep[0].strip(), ep[1].strip()
+
         clean = arabic_segs[0] if arabic_segs else segments[0]
 
     # Primary separator: " - "
@@ -218,20 +236,20 @@ def _yt_parse_title(title: str, channel: str) -> Tuple[Optional[str], Optional[s
         artist = parts[0].strip()
         song   = parts[1].strip()
         if artist and song:
-            return artist, song
+            return artist, song, eng_artist, eng_song
 
     # Secondary separator: " | "
     if " | " in clean:
         parts = clean.split(" | ", 1)
         artist, song = parts[0].strip(), parts[1].strip()
         if artist and song:
-            return artist, song
+            return artist, song, eng_artist, eng_song
 
     # Fallback: treat channel as artist, cleaned title as song
     if channel and clean:
-        return channel.strip(), clean
+        return channel.strip(), clean, eng_artist, eng_song
 
-    return None, None
+    return None, None, None, None
 
 
 def _yt_compute_score(
@@ -298,17 +316,19 @@ def _yt_resolve(
     query_artist: str,
     query_song:   str,
     search_query: str,
-) -> Optional[Tuple[str, str]]:
+) -> Optional[Tuple[str, str, Optional[str], Optional[str]]]:
     """
     Search YouTube with `search_query`, parse titles, score candidates.
-    Returns (resolved_artist, resolved_song) or None if no strong match.
+    Returns (arabic_artist, arabic_song, eng_artist, eng_song) or None.
+    The English alias (eng_artist, eng_song) is captured from bilingual titles
+    and passed to Phase 2 so Genius can be searched with it.
     """
     candidates = _yt_search(search_query)
     if not candidates:
         return None
 
     best_score  = 0.0
-    best_result: Optional[Tuple[str, str]] = None
+    best_result: Optional[Tuple[str, str, Optional[str], Optional[str]]] = None
 
     for cand in candidates:
         title   = cand.get("title", "")
@@ -321,25 +341,26 @@ def _yt_resolve(
         if any(w in title.lower() for w in _REJECT_YT_WORDS):
             continue
 
-        parsed_artist, parsed_song = _yt_parse_title(title, channel)
+        parsed_artist, parsed_song, eng_artist, eng_song = _yt_parse_title(title, channel)
         if not parsed_artist or not parsed_song:
             continue
 
         score = _yt_compute_score(query_artist, query_song, parsed_artist, parsed_song)
 
         logger.debug(
-            f"[arabic][yt] q={search_query!r}  "
-            f"title={title!r}  pa={parsed_artist!r}  ps={parsed_song!r}  score={score:.1f}"
+            f"[arabic][yt] q={search_query!r}  title={title!r}  "
+            f"pa={parsed_artist!r}  ps={parsed_song!r}  "
+            f"eng=({eng_artist!r}, {eng_song!r})  score={score:.1f}"
         )
 
         if score > best_score:
             best_score = score
-            best_result = (parsed_artist, parsed_song)
+            best_result = (parsed_artist, parsed_song, eng_artist, eng_song)
 
     if best_result and best_score >= 40:
         logger.info(
             f"[arabic][yt] resolved: {best_result[0]!r} - {best_result[1]!r} "
-            f"score={best_score:.1f} q={search_query!r}"
+            f"eng=({best_result[2]!r}, {best_result[3]!r}) score={best_score:.1f}"
         )
         return best_result
 
@@ -512,40 +533,46 @@ def resolve_arabic_song(
     # ── Phase 1: Identity resolution ─────────────────────────────────────────
 
     # Layer 1: YouTube with original Arabic text
-    identity = _yt_resolve(artist, song, f"{artist} {song}")
+    yt_result = _yt_resolve(artist, song, f"{artist} {song}")
 
     # Layer 2: YouTube with normalized Arabic text (if Layer 1 failed)
-    if not identity and (norm_artist != artist or norm_song != song):
-        identity = _yt_resolve(artist, song, f"{norm_artist} {norm_song}")
+    if not yt_result and (norm_artist != artist or norm_song != song):
+        yt_result = _yt_resolve(artist, song, f"{norm_artist} {norm_song}")
 
     # Layer 5: YouTube with romanized text (last resort, hidden from user)
-    if not identity and rom_artist and rom_song and _has_arabic(artist):
-        identity = _yt_resolve(artist, song, f"{rom_artist} {rom_song}")
+    if not yt_result and rom_artist and rom_song and _has_arabic(artist):
+        yt_result = _yt_resolve(artist, song, f"{rom_artist} {rom_song}")
 
     # If YouTube gave us nothing, synthesize identity from original input
-    # (still attempt lyrics fetch — sometimes Genius / lrclib have them)
-    if not identity:
+    if not yt_result:
         logger.info(f"[arabic] YouTube identity resolution failed, trying lyrics directly")
-        identity = (artist, song)
+        res_artist, res_song = artist, song
+        eng_artist = eng_song = None
         direct_only = True
     else:
+        res_artist, res_song, eng_artist, eng_song = yt_result
         direct_only = False
 
-    res_artist, res_song = identity
+    logger.debug(f"[arabic] identity: {res_artist!r} - {res_song!r}  "
+                 f"eng_alias: {eng_artist!r} - {eng_song!r}")
 
     # ── Phase 2: Lyrics fetch ─────────────────────────────────────────────────
 
     def _fetch_lyrics(a: str, s: str) -> Optional[str]:
         """Layer 3 → 4 for a given artist/song pair."""
-        # Layer 3: Genius
         lyr = _genius_lyrics(a, s)
         if lyr:
             return lyr
-        # Layer 4: lrclib
         return _lrclib_lyrics(a, s)
 
-    # Primary attempt: use YouTube-resolved identity
+    # Primary attempt: YouTube-resolved Arabic identity
     lyrics = _fetch_lyrics(res_artist, res_song)
+
+    # English alias from bilingual YouTube title (e.g. "Majid Al Mohandis", "Dayea")
+    # Genius often indexes by English name even for Arabic-language songs
+    if not lyrics and eng_artist and eng_song:
+        logger.debug(f"[arabic] trying English alias on Genius: {eng_artist!r} - {eng_song!r}")
+        lyrics = _fetch_lyrics(eng_artist, eng_song)
 
     # If identity differed from input, also try original Arabic names
     if not lyrics and (res_artist != artist or res_song != song):
@@ -555,7 +582,7 @@ def resolve_arabic_song(
     if not lyrics and direct_only:
         lyrics = _fetch_lyrics(norm_artist, norm_song)
 
-    # Final romanized attempt for lyrics
+    # Final romanized attempt (poor quality but worth a shot)
     if not lyrics and rom_artist and rom_song and _has_arabic(artist):
         lyrics = _fetch_lyrics(rom_artist, rom_song)
 
