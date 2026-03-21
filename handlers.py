@@ -13,7 +13,8 @@ from buttons import (
     recommend_buttons, song_list_buttons, ambiguous_buttons,
     analyze_buttons, stats_buttons, artist_analyze_buttons, recommend_pick_buttons,
     daily_song_buttons, subscribe_count_buttons,
-    recommend_results_buttons, daily_picker_buttons
+    recommend_results_buttons, daily_picker_buttons,
+    arabic_song_dashboard_buttons,
 )
 from services.lyrics_service import get_song_lyrics
 from services.translator_service import (
@@ -700,6 +701,43 @@ def callback_query_handler(update: Update, context: CallbackContext):
     logger.info(f"Callback from user {user_id}: action='{action}', param='{param}'")
 
     if action == 'noop':
+        return
+
+    # ── Arabic mode Full Lyrics — uses cached pipeline result, never main lyrics ──
+    if action == 'ar_lyrics':
+        cached_lyrics = context.user_data.get('arabic_lyrics', '')
+        cached_title  = context.user_data.get('arabic_display_title', param)
+        if not cached_lyrics:
+            # Cache miss: re-run the Arabic pipeline (e.g. after bot restart)
+            if ' - ' in param:
+                try:
+                    from services.arabic_mode import resolve_arabic_song
+                    ar_parts = param.split(' - ', 1)
+                    _a, _s, cached_lyrics = resolve_arabic_song(
+                        ar_parts[0].strip(), ar_parts[1].strip()
+                    )
+                    cached_title = f"{_a} - {_s}" if _a else param
+                except Exception as e:
+                    logger.error(f"[arabic][ar_lyrics] re-resolve failed: {e}")
+        if not cached_lyrics:
+            query.message.reply_text(
+                "😓 Lyrics not available. Please re-send the song name in Arabic mode."
+            )
+            return
+        header = f"🎵 {cached_title}\n━━━━━━━━━━━━━━━━━━━━━\n\n"
+        max_chunk = 3000
+        chunks = [cached_lyrics[i:i + max_chunk] for i in range(0, len(cached_lyrics), max_chunk)]
+        first_msg = header + chunks[0]
+        if len(chunks) == 1:
+            query.message.reply_text(first_msg, reply_markup=lyrics_buttons(param))
+        else:
+            query.message.reply_text(first_msg)
+            for idx, chunk in enumerate(chunks[1:], 1):
+                cont = f"🎵 ({idx + 1}/{len(chunks)})...\n\n"
+                if idx == len(chunks) - 1:
+                    query.message.reply_text(cont + chunk, reply_markup=lyrics_buttons(param))
+                else:
+                    query.message.reply_text(cont + chunk)
         return
 
     if action == 'subcount':
@@ -2282,6 +2320,11 @@ def handle_arabic_input(update: Update, context: CallbackContext):
 
         display_title = f"{resolved_artist} - {resolved_song}"
 
+        # Cache Arabic lyrics so the Full Lyrics button can serve them directly
+        # without falling back into the main bot lyrics pipeline
+        context.user_data['arabic_lyrics']        = lyrics
+        context.user_data['arabic_display_title'] = display_title
+
         # ── Analysis (identical logic to song_command) ────────────────────────
         mood = detect_song_mood(lyrics)
         stats = get_song_statistics(lyrics)
@@ -2340,7 +2383,7 @@ def handle_arabic_input(update: Update, context: CallbackContext):
         processing_msg.edit_text(
             response,
             disable_web_page_preview=True,
-            reply_markup=song_dashboard_buttons(display_title),
+            reply_markup=arabic_song_dashboard_buttons(display_title),
         )
         logger.info(f"[arabic] Sent dashboard to user {user_id}: {display_title!r}")
 

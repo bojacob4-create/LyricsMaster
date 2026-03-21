@@ -1,0 +1,171 @@
+You must fix ONLY the remaining Arabic-mode issues below.
+
+Do NOT touch the main bot.
+Do NOT touch the existing main search logic.
+Do NOT touch any existing handlers outside Arabic mode.
+Do NOT modify the main /song, /lyrics, /analyze, /translate, or their search/retrieval behavior.
+
+Arabic mode must remain a fully isolated subsystem that starts with /arabic and ends with /exit.
+
+⸻
+
+What is already confirmed and must NOT be changed
+	1.	Arabic mode isolation is working very well
+	2.	/song and other main commands are blocked correctly inside Arabic mode
+	3.	/exit restores the main bot correctly
+	4.	Arabic identity resolution is much better now
+	5.	Lyrics Preview is now returning correct Arabic lyrics in the tested songs
+
+So:
+	•	DO NOT rework the isolation architecture
+	•	DO NOT rework the Arabic resolver from scratch
+	•	DO NOT change the current search boundaries
+
+Only fix the remaining issues below.
+
+⸻
+
+Remaining Issue 1 — Full Lyrics button fails, while Lyrics Preview is correct
+
+Real tested behavior:
+	•	For عمرو دياب - تملي معاك
+	•	Lyrics Preview is correct
+	•	But pressing Full Lyrics returns:
+😓 Oops! Something went wrong while fetching the lyrics. Please try again in a moment! 🔄
+	•	The same issue also happens for:
+	•	ماجد المهندس - ضايع
+	•	and ماجد المهندس - ضايع
+
+This means:
+	•	Arabic mode is already resolving the correct song
+	•	Arabic mode is already retrieving correct preview lyrics
+	•	But the Full Lyrics button path is NOT using the same Arabic-mode lyrics retrieval result/path correctly
+
+Required fix:
+
+Make the Full Lyrics button inside Arabic mode use the same validated Arabic-mode lyrics source/path that produced the successful preview.
+
+Do NOT let the Full Lyrics button fall back to the main bot lyrics logic.
+Do NOT let it use the normal /lyrics retrieval chain.
+Do NOT let it leave Arabic mode search boundaries.
+
+Arabic mode preview and Arabic mode full lyrics must come from the SAME Arabic-mode pipeline.
+
+If preview works, Full Lyrics must work too.
+
+⸻
+
+Remaining Issue 2 — Non-Arabic artist-song input should be rejected inside Arabic mode
+
+Real tested behavior:
+	•	Inside /arabic, input like:
+	•	Adele - Hello
+is still accepted because it matches Artist - Song
+
+This is NOT allowed.
+
+Required fix:
+
+Inside Arabic mode, the accepted input must be:
+	•	strict Artist - Song
+	•	AND the input must be Arabic-script based
+
+If the user enters non-Arabic artist/song text inside Arabic mode:
+	•	reject it
+	•	return a controlled Arabic-mode-only message
+	•	do NOT pass it to any Arabic resolver layer
+	•	do NOT pass it to the main bot
+	•	do NOT treat it as a valid Arabic-mode request
+
+Required rule:
+
+Arabic mode must require Arabic-script input only.
+
+A practical validation rule is acceptable, for example:
+	•	artist part contains Arabic characters
+	•	song part contains Arabic characters
+	•	otherwise reject
+
+Controlled rejection message:
+
+Use a message that clearly says Arabic mode only accepts Arabic artist-song input.
+
+⸻
+
+Critical boundaries (must remain true)
+
+Arabic mode search/retrieval is active ONLY between:
+	•	/arabic
+and
+	•	/exit
+
+Outside that window:
+	•	the main bot works normally
+
+Inside that window:
+	•	only Arabic-mode logic is allowed
+	•	no main search logic
+	•	no main lyrics logic
+	•	no normal command execution
+	•	no fallback into existing system behavior
+
+⸻
+
+Do NOT do any of the following
+	•	Do NOT refactor the main bot
+	•	Do NOT optimize unrelated code
+	•	Do NOT change the main dashboard
+	•	Do NOT rewrite Arabic mode from scratch again unless absolutely necessary
+	•	Do NOT alter working isolation behavior
+	•	Do NOT alter the existing Arabic search source ordering unless required for these two exact fixes
+
+⸻
+
+Required real tests before you report back
+
+You must test these for real before saying done:
+
+Test 1
+
+/arabic
+
+Test 2
+
+عمرو دياب - تملي معاك
+Expected:
+	•	correct preview
+	•	Full Lyrics button works
+	•	no error message
+
+Test 3
+
+ماجد المهندس - ضايع
+Expected:
+	•	correct preview
+	•	Full Lyrics button works
+	•	no error message
+
+Test 4
+
+Adele - Hello inside Arabic mode
+Expected:
+	•	rejected
+	•	Arabic-only input message shown
+	•	no search performed
+	•	no main bot fallback
+
+Test 5
+
+/exit
+then
+/song Adele - Hello
+Expected:
+	•	main bot still works normally
+
+⸻
+
+Do not assume.
+Do not infer.
+Do not say “done” from startup only.
+
+Fix these two exact issues, test them end-to-end, then report the real results.

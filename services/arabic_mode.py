@@ -77,11 +77,20 @@ _FORMAT_ERROR = (
     "ماجد المهندس - ضايع"
 )
 
+_ARABIC_ONLY_ERROR = (
+    "🎵 Arabic Mode only accepts Arabic artist and song names.\n\n"
+    "Please enter Arabic text. Example:\n"
+    "ماجد المهندس - ضايع\n\n"
+    "To exit Arabic mode, send /exit"
+)
+
 
 def parse_arabic_input(text: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """
     Strict 'artist - song' parser.
     Returns (artist, song, None) or (None, None, error_msg).
+
+    Rejects input where either artist or song contains no Arabic characters.
     """
     text = re.sub(r"\s*[–—\u2012\u2013\u2014\u2015\-]+\s*", " - ", text.strip())
     if " - " not in text:
@@ -90,6 +99,9 @@ def parse_arabic_input(text: str) -> Tuple[Optional[str], Optional[str], Optiona
     artist, song = parts[0].strip(), parts[1].strip()
     if not artist or not song:
         return None, None, _FORMAT_ERROR
+    # Both artist AND song must contain at least one Arabic character
+    if not _has_arabic(artist) or not _has_arabic(song):
+        return None, None, _ARABIC_ONLY_ERROR
     return artist, song, None
 
 

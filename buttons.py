@@ -43,6 +43,29 @@ def song_dashboard_buttons(query):
     ])
 
 
+def arabic_song_dashboard_buttons(query):
+    """
+    Dashboard buttons for Arabic mode.
+    Full Lyrics uses 'ar_lyrics' action so it stays inside the Arabic pipeline
+    and never falls back to the main bot lyrics handler.
+    All other buttons keep their standard actions.
+    """
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🎵 Full Lyrics", callback_data=_cb("ar_lyrics", query)),
+            InlineKeyboardButton("📊 Analyze", callback_data=_cb("analyze", query)),
+        ],
+        [
+            InlineKeyboardButton("🌍 Translate", callback_data=_cb("translate", query)),
+            InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", query)),
+        ],
+        [
+            InlineKeyboardButton("🎧 Similar", callback_data=_cb("recommend", query)),
+            InlineKeyboardButton("🎧 MP3", callback_data=_cb("mp3", query)),
+        ],
+    ])
+
+
 def artist_buttons(artist_name, top_songs=None):
     rows = []
     if top_songs:
