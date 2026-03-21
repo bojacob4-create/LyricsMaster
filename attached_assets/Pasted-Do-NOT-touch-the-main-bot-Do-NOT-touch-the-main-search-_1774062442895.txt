@@ -1,0 +1,195 @@
+Do NOT touch the main bot.
+Do NOT touch the main search logic.
+Do NOT touch the main dashboard.
+Do NOT touch /song, /lyrics, /analyze, /translate, /random, or any existing handlers outside Arabic mode.
+
+All requested changes below apply ONLY inside Arabic mode, and ONLY between:
+- /arabic
+and
+- /exit
+
+When the user exits with /exit, all Arabic-mode behavior must end completely, and the main bot must remain exactly as it is.
+
+==================================================
+CURRENT STATUS
+==================================================
+
+Confirmed from real testing:
+
+1. Arabic mode isolation is now working correctly
+2. Non-Arabic input like "Adele - Hello" is correctly rejected inside Arabic mode
+3. For "عمرو دياب - تملي معاك":
+   - correct song
+   - correct YouTube link
+   - correct lyrics preview
+   - Full Lyrics works
+
+So:
+- DO NOT change the isolation logic anymore
+- DO NOT change the main system
+- DO NOT rework working Arabic-mode isolation
+
+==================================================
+ISSUE 1 — REGRESSION / RANDOM FAILURE
+==================================================
+
+A previous Arabic song that was working is now returning:
+"Something went wrong. Please try again."
+
+This happened with:
+- ماجد المهندس - ضايع
+- حمزة المحمداوي - قراري
+- حسين الجسمي - ستة الصبح
+
+This is NOT acceptable.
+
+You must investigate the Arabic-mode-only pipeline and find the real cause.
+Do NOT guess.
+Do NOT assume.
+Do NOT say "done" from startup only.
+
+You must run real end-to-end tests for these exact songs and fix the failure.
+
+Required Arabic-mode real tests:
+1. /arabic
+2. ماجد المهندس - ضايع
+3. حمزة المحمداوي - قراري
+4. حسين الجسمي - ستة الصبح
+5. عمرو دياب - تملي معاك
+6. /exit
+7. /song Adele - Hello
+
+Expected:
+- Arabic songs must resolve correctly inside Arabic mode
+- no generic "Something went wrong" failures
+- /exit restores the normal bot correctly
+- main bot remains unchanged
+
+==================================================
+ISSUE 2 — ARABIC DASHBOARD MUST HAVE ITS OWN TEXT LAYOUT
+==================================================
+
+The Arabic dashboard must now have its own Arabic-mode-specific text output.
+
+This applies ONLY to Arabic mode.
+Do NOT modify the main dashboard used by the main bot.
+
+Inside Arabic mode, the dashboard text must be simplified.
+
+Keep ONLY:
+1. the exact user-entered title
+   Example:
+   عمرو دياب - تملي معاك
+
+2. the YouTube link
+
+3. the Lyrics Preview block
+
+Remove ALL of the following from the Arabic dashboard text:
+- Quick Stats
+- Mood
+- Words / Lines / Vocabulary
+- Themes
+- Similar Songs
+- everything under Similar Songs
+- the footer command lines such as:
+  /lyrics ...
+  /analyze ...
+  or anything similar
+
+In other words:
+Arabic dashboard text must contain ONLY:
+- title
+- YouTube link
+- lyrics preview
+
+Nothing else.
+
+Very important:
+Use the title exactly as entered by the user in Arabic mode, not a modified/internal/resolved label like:
+- عمرو دياب - البوم تملي معاك
+
+The visible title must remain:
+- عمرو دياب - تملي معاك
+
+==================================================
+ISSUE 3 — ARABIC DASHBOARD BUTTONS MUST BE DIFFERENT
+==================================================
+
+This also applies ONLY inside Arabic mode.
+
+Arabic mode buttons must be reduced to:
+- Full Lyrics
+- Translate
+- Video
+
+Remove these buttons from Arabic mode only:
+- Analyze
+- Similar
+- MP3
+
+Do NOT remove them from the main bot.
+Do NOT change buttons outside Arabic mode.
+
+==================================================
+ISSUE 4 — TRANSLATE BUTTON INSIDE ARABIC MODE
+==================================================
+
+Inside Arabic mode only:
+The Translate button must translate Arabic lyrics into English.
+
+This is Arabic-mode-specific behavior.
+Do NOT modify the main translate system outside Arabic mode.
+
+So:
+- Translate button in Arabic mode = Arabic lyrics → English
+- Main bot translate behavior outside Arabic mode must remain unchanged
+
+==================================================
+CRITICAL BOUNDARY
+==================================================
+
+Everything requested above is ONLY for Arabic mode.
+
+Arabic mode starts at:
+- /arabic
+
+Arabic mode ends at:
+- /exit
+
+Outside that scope:
+- the main bot must remain exactly unchanged
+
+Do NOT:
+- refactor unrelated code
+- optimize unrelated logic
+- alter existing handlers
+- alter existing dashboards outside Arabic mode
+- alter existing search/retrieval outside Arabic mode
+
+==================================================
+REQUIRED VERIFICATION BEFORE YOU REPORT BACK
+==================================================
+
+You must verify with real tests, not assumptions.
+
+You must confirm all of the following from real execution:
+
+1. Arabic mode still blocks non-Arabic artist-song input
+2. عمرو دياب - تملي معاك works
+3. ماجد المهندس - ضايع works
+4. حمزة المحمداوي - قراري works
+5. حسين الجسمي - ستة الصبح works
+6. Arabic dashboard text now shows ONLY:
+   - exact user-entered title
+   - YouTube link
+   - lyrics preview
+7. Arabic dashboard buttons now show ONLY:
+   - Full Lyrics
+   - Translate
+   - Video
+8. Translate button in Arabic mode translates Arabic lyrics to English
+9. /exit restores the main bot
+10. Main bot remains unchanged
+
+Do not report "done" until all of the above are actually verified.

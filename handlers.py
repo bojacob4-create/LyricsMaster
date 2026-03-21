@@ -703,6 +703,32 @@ def callback_query_handler(update: Update, context: CallbackContext):
     if action == 'noop':
         return
 
+    # ── Arabic mode Translate — translates cached Arabic lyrics to English ──────
+    if action == 'ar_translate':
+        cached_lyrics = context.user_data.get('arabic_lyrics', '')
+        cached_title  = context.user_data.get('arabic_display_title', param)
+        if not cached_lyrics:
+            query.message.reply_text(
+                "😓 Lyrics not available. Please re-send the song name in Arabic mode."
+            )
+            return
+        try:
+            query.message.chat.send_action(action="typing")
+            translated = translate_text(cached_lyrics, dest_lang="en")
+            if not translated:
+                query.message.reply_text("😓 Translation failed. Please try again.")
+                return
+            header = f"🌍 {cached_title} — English Translation\n━━━━━━━━━━━━━━━━━━━━━\n\n"
+            max_chunk = 3000
+            chunks = [translated[i:i + max_chunk] for i in range(0, len(translated), max_chunk)]
+            query.message.reply_text(header + chunks[0])
+            for chunk in chunks[1:]:
+                query.message.reply_text(chunk)
+        except Exception as e:
+            logger.error(f"[arabic][ar_translate] error for user {user_id}: {e}")
+            query.message.reply_text("😓 Translation failed. Please try again.")
+        return
+
     # ── Arabic mode Full Lyrics — uses cached pipeline result, never main lyrics ──
     if action == 'ar_lyrics':
         cached_lyrics = context.user_data.get('arabic_lyrics', '')
@@ -2289,9 +2315,9 @@ def exit_command(update: Update, context: CallbackContext):
 
 def handle_arabic_input(update: Update, context: CallbackContext):
     """
-    Isolated Arabic pipeline.
+    Isolated Arabic pipeline — simplified dashboard.
     Called ONLY when user is in Arabic mode.
-    Fails safely — never falls back into main bot logic.
+    Never touches main bot logic, services, or analysis functions.
     """
     from services.arabic_mode import parse_arabic_input, resolve_arabic_song
 
@@ -2308,76 +2334,39 @@ def handle_arabic_input(update: Update, context: CallbackContext):
     processing_msg = update.message.reply_text("🔍 Searching...")
 
     try:
-        # ── Resolve ───────────────────────────────────────────────────────────
+        # ── Resolve: identity + lyrics via Arabic-mode pipeline ───────────────
         resolved_artist, resolved_song, lyrics = resolve_arabic_song(artist, song)
 
         if not lyrics:
             processing_msg.edit_text(
-                "Lyrics not found for this song.\n"
-                "Please try another track."
+                "لم يتم العثور على كلمات لهذه الأغنية.\n"
+                "يرجى المحاولة بأغنية أخرى."
             )
             return
 
-        display_title = f"{resolved_artist} - {resolved_song}"
+        # Display title uses the EXACT text the user entered, not internal resolved names
+        display_title = f"{artist} - {song}"
 
-        # Cache Arabic lyrics so the Full Lyrics button can serve them directly
-        # without falling back into the main bot lyrics pipeline
+        # Cache for Full Lyrics and Translate buttons (stay in Arabic pipeline)
         context.user_data['arabic_lyrics']        = lyrics
         context.user_data['arabic_display_title'] = display_title
 
-        # ── Analysis (identical logic to song_command) ────────────────────────
-        mood = detect_song_mood(lyrics)
-        stats = get_song_statistics(lyrics)
-        mood_emoji = {
-            'happy': '😊', 'sad': '😢', 'romantic': '💖',
-            'energetic': '⚡', 'relaxed': '😌'
-        }.get(mood, '🎵')
-
+        # ── Lyrics preview (first 4 non-empty lines) ─────────────────────────
         lyrics_lines = [l.strip() for l in lyrics.strip().split('\n') if l.strip()]
         lyrics_preview = '\n'.join(f"  {l}" for l in lyrics_lines[:4])
         if len(lyrics_lines) > 4:
             lyrics_preview += "\n  ..."
 
-        # ── Parallel: YouTube + recommendations ───────────────────────────────
-        with ThreadPoolExecutor(max_workers=2) as _pool:
-            _yt_fut  = _pool.submit(get_youtube_link, resolved_artist, resolved_song)
-            _rec_fut = _pool.submit(get_similar_songs, resolved_artist, resolved_song, mood)
-            yt_url = _yt_fut.result()
-            recs   = _rec_fut.result()
-
+        # ── YouTube link only (no analysis, no similar songs) ─────────────────
+        yt_url = get_youtube_link(resolved_artist, resolved_song)
         yt_section = f"🎬 {yt_url}" if yt_url else "🎬 YouTube: not found"
 
-        recs_lines = []
-        for i, r in enumerate(recs[:3]):
-            emoji = ['🔥', '✨', '💫'][i]
-            recs_lines.append(f"  {emoji} {r['artist']} — {r['name']}")
-        recs_text = '\n'.join(recs_lines) if recs_lines else "  No recommendations available"
-
-        vocab_pct = stats.get('vocabulary_richness', 0)
-        vocab_label = (
-            "Rich" if vocab_pct >= 70 else
-            "Moderate" if vocab_pct >= 50 else
-            "Repetitive"
-        )
-
-        themes = detect_themes(lyrics)
-        themes_text = ', '.join(t.title() for t in themes[:3]) if themes else 'General'
-
-        # ── Dashboard (identical format to song_command) ──────────────────────
+        # ── Arabic-mode simplified dashboard ─────────────────────────────────
         response = (
             f"🎵 {display_title}\n"
             "━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"{yt_section}\n\n"
-            f"📝 Lyrics Preview:\n{lyrics_preview}\n\n"
-            f"📊 Quick Stats:\n"
-            f"  {mood_emoji} Mood: {mood.title()}\n"
-            f"  📝 Words: {stats['total_words']} | Lines: {stats['total_lines']}\n"
-            f"  🧠 Vocabulary: {vocab_pct}% ({vocab_label})\n"
-            f"  🎭 Themes: {themes_text}\n\n"
-            f"🎵 Similar Songs:\n{recs_text}\n\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🎤 /lyrics {display_title} — full lyrics\n"
-            f"🔍 /analyze {display_title} — deep analysis"
+            f"📝 Lyrics Preview:\n{lyrics_preview}"
         )
 
         processing_msg.edit_text(
@@ -2388,8 +2377,10 @@ def handle_arabic_input(update: Update, context: CallbackContext):
         logger.info(f"[arabic] Sent dashboard to user {user_id}: {display_title!r}")
 
     except Exception as e:
-        logger.error(f"[arabic] Pipeline error for user {user_id}: {e}")
+        logger.error(f"[arabic] Pipeline error for user {user_id}: {e}", exc_info=True)
         try:
-            processing_msg.edit_text("Something went wrong. Please try again.")
+            processing_msg.edit_text(
+                "لم يتم العثور على الأغنية. يرجى المحاولة مرة أخرى."
+            )
         except Exception:
             pass
