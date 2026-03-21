@@ -9,17 +9,10 @@ Two-phase architecture:
     Layer 1: YouTube search with original Arabic text
     Layer 2: YouTube search with normalized Arabic text
     Layer 5: YouTube search with romanized (transliterated) text  ← last resort
-
   Phase 2 — Lyrics Fetch (once identity confirmed)
     Layer 2a: YouTube Music lyrics via ytmusicapi  ← PRIMARY
     Layer 3:  Genius API search → page scrape
     Layer 4:  lrclib direct + search
-
-  Quality gates applied at every layer before accepting lyrics:
-    • Arabic script ratio ≥ 0.35  — rejects Hindi/Urdu/English results
-    • Candidate score ≥ 25/100   — rejects off-topic search results
-    • Live-speech contamination   — rejects stage/audience/crowd text
-    • Minimum length ≥ 50 chars  — rejects stub/noise responses
 """
 
 import os
@@ -510,63 +503,11 @@ def _get_ytmusic():
     return _yt_music_client
 
 
-# ──── Lyrics quality validation ──────────────────────────────────────────────
-
-def _arabic_ratio(text: str) -> float:
-    """Return fraction of non-whitespace chars that are Arabic Unicode (U+0600-U+06FF)."""
-    non_ws = [c for c in text if not c.isspace()]
-    if not non_ws:
-        return 0.0
-    ar = sum(1 for c in non_ws if '\u0600' <= c <= '\u06ff')
-    return ar / len(non_ws)
-
-
-_LIVE_SPEECH_RE = re.compile(
-    r"يلا\s+معي|يا\s+سلام\b|مو\s+حافظين|هلا\s+هلا|"
-    r"\[(?:تصفيق|جمهور|applause|music|crowd)\]|"
-    r"\((?:تصفيق|جمهور|applause|music)\)",
-    re.IGNORECASE | re.UNICODE,
-)
-_LIVE_LINES_THRESHOLD = 2  # reject if >= 2 lines contain live-speech markers
-
-
-def _has_live_contamination(text: str) -> bool:
-    """Return True if the text appears to be a live/stage/crowd-contaminated version."""
-    hits = sum(1 for line in text.splitlines() if _LIVE_SPEECH_RE.search(line))
-    return hits >= _LIVE_LINES_THRESHOLD
-
-
-def _lyrics_quality_ok(text: str, min_ar_ratio: float = 0.35) -> bool:
-    """
-    Arabic-mode quality gate applied to every candidate lyrics block before accepting it.
-    Rejects results that are:
-      • too short (< 50 chars)
-      • mostly non-Arabic (ratio < min_ar_ratio) — catches Hindi/English/Urdu results
-      • contaminated with live/stage/crowd speech
-    """
-    if not text or len(text.strip()) < 50:
-        return False
-    ratio = _arabic_ratio(text)
-    if ratio < min_ar_ratio:
-        logger.debug(f"[arabic][quality] rejected: Arabic ratio {ratio:.2f} < {min_ar_ratio}")
-        return False
-    if _has_live_contamination(text):
-        logger.debug("[arabic][quality] rejected: live/stage speech contamination detected")
-        return False
-    return True
-
-
-# ──── YouTube Music candidate scoring ────────────────────────────────────────
-
 def _ytmusic_score(query_artist: str, query_song: str, cand_title: str, cand_artist: str) -> float:
     """
     Score a YouTube Music search result against the query.
-    Returns 0-100. Handles:
-      • Arabic token overlap (both raw and diacritic-normalised)
-      • Romanized / transliterated fuzzy matching via SequenceMatcher (ratio ≥ 0.60)
+    Returns 0-100. Accepts both Arabic and romanized candidate names.
     """
-    from difflib import SequenceMatcher as _SM
-
     def _overlap(q: str, c: str) -> float:
         qt = set(normalize_arabic(q).lower().split()) | set(q.lower().split())
         qt = {t for t in qt if len(t) > 1}
@@ -576,16 +517,8 @@ def _ytmusic_score(query_artist: str, query_song: str, cand_title: str, cand_art
             return 0.0
         return len(qt & ct) / len(qt)
 
-    def _rom_fuzzy(q: str, c_raw: str) -> float:
-        rq = re.sub(r'[^a-z]', '', _romanize(q).replace(' ', ''))
-        rc = re.sub(r'[^a-z]', '', c_raw.lower().replace(' ', ''))
-        if not rq or not rc:
-            return 0.0
-        ratio = _SM(None, rq, rc).ratio()
-        return ratio if ratio >= 0.60 else 0.0
-
-    art_score  = max(_overlap(query_artist, cand_artist), _rom_fuzzy(query_artist, cand_artist)) * 50
-    song_score = max(_overlap(query_song, cand_title),   _rom_fuzzy(query_song, cand_title))   * 50
+    art_score  = _overlap(query_artist, cand_artist) * 50
+    song_score = _overlap(query_song, cand_title) * 50
     return art_score + song_score
 
 
@@ -614,11 +547,17 @@ def _ytmusic_lyrics(artist: str, song: str) -> Optional[str]:
 
     for query in queries:
         try:
-            results = yt.search(query, filter="songs", limit=8)
+            results = yt.search(query, filter="songs", limit=5)
             if not results:
                 continue
 
-            for r in results[:6]:
+            # Pick the first non-non-original result.
+            # We trust the ytmusicapi search ranking for specific Arabic queries:
+            # when querying "عمرو دياب تملي معاك", the top result IS the right song
+            # even when the returned title/artist are in transliterated English
+            # (e.g. "Tamally Maak" / "Amr Diab") — direct string scoring fails here.
+            best_vid = None
+            for r in results:
                 vid   = r.get("videoId", "")
                 title = r.get("title", "")
                 arts  = r.get("artists") or []
@@ -627,46 +566,34 @@ def _ytmusic_lyrics(artist: str, song: str) -> Optional[str]:
                     continue
                 if _is_non_original(title):
                     continue
-
-                # Score the candidate against the original Arabic query —
-                # reject completely unrelated results (e.g. Hindi songs showing
-                # up for Arabic queries) before even fetching their lyrics.
-                score = _ytmusic_score(artist, song, title, art)
                 logger.debug(
                     f"[arabic][ytmusic] q={query!r}  title={title!r}  "
-                    f"artist={art!r}  vid={vid}  score={score:.0f}"
+                    f"artist={art!r}  vid={vid}"
                 )
-                if score < 25:
-                    # Too low — skip this candidate and try the next result
-                    continue
+                best_vid = vid
+                break  # take the first valid (non-cover/remix) result
 
-                # Get lyrics browseId from watch playlist
-                wp = yt.get_watch_playlist(videoId=vid, limit=1)
-                lyrics_id = wp.get("lyrics", "") if wp else ""
-                if not lyrics_id:
-                    logger.debug(f"[arabic][ytmusic] no lyrics browseId for vid={vid}")
-                    continue
+            if not best_vid:
+                continue
 
-                # Fetch the actual lyrics
-                lyr_data = yt.get_lyrics(lyrics_id)
-                if not lyr_data:
-                    continue
-                text = (lyr_data.get("lyrics", "") or "").strip()
+            # Get lyrics browseId from watch playlist
+            wp = yt.get_watch_playlist(videoId=best_vid, limit=1)
+            lyrics_id = wp.get("lyrics", "") if wp else ""
+            if not lyrics_id:
+                logger.debug(f"[arabic][ytmusic] no lyrics browseId for videoId={best_vid}")
+                continue
 
-                # Quality gate: reject non-Arabic (Hindi, Urdu, English…)
-                # and live/stage-contaminated results before returning
-                if not _lyrics_quality_ok(text):
-                    logger.debug(
-                        f"[arabic][ytmusic] quality rejected vid={vid} "
-                        f"ar_ratio={_arabic_ratio(text):.2f}"
-                    )
-                    continue
-
+            # Fetch the actual lyrics
+            lyr_data = yt.get_lyrics(lyrics_id)
+            if not lyr_data:
+                continue
+            text = lyr_data.get("lyrics", "") or ""
+            if len(text) > 50:
                 logger.info(
                     f"[arabic][ytmusic] lyrics OK: {artist!r} - {song!r} "
-                    f"vid={vid} len={len(text)}"
+                    f"vid={best_vid} len={len(text)}"
                 )
-                return text
+                return text.strip()
 
         except Exception as e:
             logger.debug(f"[arabic][ytmusic] failed for q={query!r}: {e}")
@@ -739,51 +666,24 @@ def _genius_scrape_lyrics(song_url: str) -> Optional[str]:
 def _genius_lyrics(artist: str, song: str) -> Optional[str]:
     """
     Fetch lyrics from Genius for a confirmed artist + song identity.
-    Validates candidate score AND lyrics quality before returning.
+    Uses light scoring to avoid picking a completely wrong song.
     """
-    queries = [f"{artist} {song}"]
-    # Also try normalized Arabic form
-    norm_q = f"{normalize_arabic(artist)} {normalize_arabic(song)}"
-    if norm_q.strip() != queries[0].strip():
-        queries.append(norm_q)
+    hits = _genius_search_hits(f"{artist} {song}")
+    if not hits:
+        return None
 
-    for query in queries:
-        hits = _genius_search_hits(query)
-        if not hits:
+    for hit in hits:
+        if hit.get("type") != "song":
             continue
-
-        for hit in hits:
-            if hit.get("type") != "song":
-                continue
-            res       = hit.get("result", {})
-            cand_song = res.get("title", "")
-            cand_art  = (res.get("primary_artist") or {}).get("name", "")
-            song_url  = res.get("url", "")
-            if not song_url:
-                continue
-            if _is_non_original(cand_song):
-                continue
-
-            # Score the Genius hit against our query to avoid wrong-song results
-            score = _ytmusic_score(artist, song, cand_song, cand_art)
-            if score < 20:
-                logger.debug(
-                    f"[arabic][genius] skip low-score ({score:.0f}): "
-                    f"{cand_art!r} - {cand_song!r}"
-                )
-                continue
-
-            lyrics = _genius_scrape_lyrics(song_url)
-            if not lyrics:
-                continue
-
-            # Quality gate: reject non-Arabic and contaminated results
-            if not _lyrics_quality_ok(lyrics):
-                logger.debug(
-                    f"[arabic][genius] quality rejected: ar_ratio={_arabic_ratio(lyrics):.2f}"
-                )
-                continue
-
+        res        = hit.get("result", {})
+        cand_song  = res.get("title", "")
+        song_url   = res.get("url", "")
+        if not song_url:
+            continue
+        if _is_non_original(cand_song):
+            continue
+        lyrics = _genius_scrape_lyrics(song_url)
+        if lyrics:
             logger.info(f"[arabic][genius] lyrics found for {artist!r} - {song!r}")
             return lyrics
 
@@ -851,22 +751,6 @@ def _lrclib_search_lyrics(artist: str, song: str) -> Optional[str]:
                 if not lyrics or len(lyrics) <= 30:
                     continue
                 if _is_non_original(item.get("trackName", "")):
-                    continue
-                # Score candidate to avoid wrong-song matches
-                cand_art  = item.get("artistName", "")
-                cand_song = item.get("trackName", "")
-                score = _ytmusic_score(artist, song, cand_song, cand_art)
-                if score < 20:
-                    logger.debug(
-                        f"[arabic][lrclib] skip low-score ({score:.0f}): "
-                        f"{cand_art!r} - {cand_song!r}"
-                    )
-                    continue
-                # Quality gate
-                if not _lyrics_quality_ok(lyrics):
-                    logger.debug(
-                        f"[arabic][lrclib] quality rejected: ar_ratio={_arabic_ratio(lyrics):.2f}"
-                    )
                     continue
                 logger.info(f"[arabic][lrclib] search hit: {artist!r} - {song!r}")
                 return lyrics
