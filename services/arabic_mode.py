@@ -122,22 +122,35 @@ _REJECT_YT_WORDS = frozenset([
     "top 10", "ranking", "tier list", "slowed", "reverb",
 ])
 
-# Live/concert terms — applied as score PENALTY (not hard reject) so a
-# concert video can still win if no official version is available, but an
-# official release will always rank above it.
+# Live/concert/TV terms — STRONG penalty so official always wins when both exist.
+# Not a hard reject: if only concert versions exist, the penalized one can still win.
 _LIVE_PENALTY_WORDS = frozenset([
+    # English show / live / TV terms
     "live", "concert", "festival", "performance", "session",
-    "حفلة", "حفل", "مباشر", "سهرة", "حفل موسيقي",
+    "show", "episode", "program", "broadcast", "audition", "stage",
+    "arab idol", "the voice", "mbc",
+    # Arabic concert / TV / festival terms
+    "حفلة", "حفل", "حفلات", "مباشر", "سهرة", "جلسة",
+    "مهرجان", "برنامج", "حلقة", "عرض",
 ])
-_LIVE_PENALTY = 35
+_LIVE_PENALTY = 40   # strong enough to always lose to an official upload
 
-# Bonus for unambiguously official uploads
+# Official upload signals — applied to both the raw title and the channel name.
 _OFFICIAL_BONUS_WORDS = frozenset([
+    # English official title markers
     "official music video", "official audio", "official video",
-    "official lyric", "official song",
-    "حصرياً", "حصرى", "حصري",
+    "official lyric", "official song", "music video",
+    # Arabic official title markers
+    "حصرياً", "حصرى", "حصري", "فيديو كليب", "كليب رسمي",
+    "رسمي", "النسخة الأصلية",
 ])
-_OFFICIAL_BONUS = 15
+# Major Arabic label / aggregator channels that host official releases.
+# Checked against channel name (lowercase).
+_OFFICIAL_CHANNELS = frozenset([
+    "rotana", "روتانا", "vevo", " - topic",
+    "mazzika", "mazika", "anghami",
+])
+_OFFICIAL_BONUS = 20   # strong enough that official + penalty > concert alone
 
 
 def _is_non_original(title: str) -> bool:
@@ -269,7 +282,15 @@ def _yt_parse_title(
         if artist and song:
             return artist, song, eng_artist, eng_song
 
-    # Secondary separator: " | "
+    # Secondary separator: " ... " (used by Rotana and some label channels)
+    # e.g. "حسين الجسمي ... سته الصبح"
+    if " ... " in clean:
+        parts = clean.split(" ... ", 1)
+        artist, song = parts[0].strip(), parts[1].strip()
+        if artist and song:
+            return artist, song, eng_artist, eng_song
+
+    # Tertiary separator: " | "
     if " | " in clean:
         parts = clean.split(" | ", 1)
         artist, song = parts[0].strip(), parts[1].strip()
@@ -287,6 +308,7 @@ def _yt_compute_score(
     query_artist: str, query_song: str,
     cand_artist:  str, cand_song:   str,
     full_title:   str = "",
+    channel:      str = "",
 ) -> float:
     """
     Combined score that handles both Arabic-to-Arabic and Arabic-to-English
@@ -295,9 +317,11 @@ def _yt_compute_score(
     Artist ≥ 60% threshold + Song ≥ 60% threshold → must both pass.
     Combined score: artist 50% + song 40% + clean title 10%.
 
-    Adjustments applied to full_title (not just parsed segment):
-    - Live/concert penalty: -35  (concert video loses to official if both match)
-    - Official video bonus: +15  (official release always beats non-official)
+    Adjustments applied to full_title and channel:
+    - Live/concert/TV penalty: -40  (broadcast/concert always loses to official)
+    - Official video bonus:    +20  (title keywords OR recognised label channel)
+    Priority guarantee: if both an official and a concert version exist,
+    official wins even if concert scores base 100.
     """
     def _tok_overlap(q: str, c: str) -> float:
         qt = set(normalize_arabic(q).split()) | set(q.lower().split())
@@ -335,13 +359,18 @@ def _yt_compute_score(
     # Non-original penalty (remix, cover, karaoke, etc.)
     clean_bonus = 0 if _is_non_original(cand_song) else 10
 
-    # Live / concert penalty — applied to the FULL raw YouTube title so that
-    # secondary segments (e.g. "| حفل مفاجآت صيف دبي 2023") are also checked.
+    # Live / concert / TV penalty — checked against the FULL raw YouTube title
+    # so secondary segments like "| حفل مفاجآت صيف دبي 2023" are also caught.
     tl = full_title.lower()
     live_pen = -_LIVE_PENALTY if any(w in tl for w in _LIVE_PENALTY_WORDS) else 0
 
-    # Official upload bonus — rewards unambiguously official releases.
-    official_bon = _OFFICIAL_BONUS if any(w in tl for w in _OFFICIAL_BONUS_WORDS) else 0
+    # Official upload bonus — title keywords OR known label/official channel.
+    ch_lower = channel.lower()
+    is_official = (
+        any(w in tl for w in _OFFICIAL_BONUS_WORDS)
+        or any(w in ch_lower for w in _OFFICIAL_CHANNELS)
+    )
+    official_bon = _OFFICIAL_BONUS if is_official else 0
 
     return artist_score + song_score + clean_bonus + live_pen + official_bon
 
@@ -394,7 +423,7 @@ def _yt_resolve(
         if not parsed_artist or not parsed_song:
             continue
 
-        score = _yt_compute_score(query_artist, query_song, parsed_artist, parsed_song, title)
+        score = _yt_compute_score(query_artist, query_song, parsed_artist, parsed_song, title, channel)
 
         logger.debug(
             f"[arabic][yt] q={search_query!r}  vid={vid}  title={title!r}  "

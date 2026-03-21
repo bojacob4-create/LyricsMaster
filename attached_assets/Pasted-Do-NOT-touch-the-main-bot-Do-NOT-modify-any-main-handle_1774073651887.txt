@@ -1,0 +1,188 @@
+Do NOT touch the main bot.
+Do NOT modify any main handlers, commands, or services.
+Do NOT change main YouTube logic.
+Do NOT affect /song, /lyrics, /analyze, or any non-Arabic mode behavior.
+
+Everything below applies ONLY inside Arabic mode:
+- starts at /arabic
+- ends at /exit
+
+When the user exits with /exit, ALL of this must stop completely.
+
+==================================================
+CURRENT STATUS
+==================================================
+
+What is already correct and must NOT be changed:
+- Arabic mode isolation is working correctly
+- Arabic dashboard UI and buttons are correct
+- Full Lyrics works correctly
+- Translate works correctly
+- Video button now correctly uses stored yt_video_id (good)
+- Per-dashboard state isolation (message_id mapping) is correct
+
+DO NOT rework or touch any of the above.
+
+==================================================
+REMAINING CRITICAL ISSUE — VIDEO SELECTION QUALITY
+==================================================
+
+The system is still NOT selecting the correct official video reliably.
+
+Observed behavior:
+- For: حسين الجسمي - ستة الصبح
+- The system avoided concert videos (good)
+- BUT selected:
+  → Arab Idol / broadcast / TV performance
+
+This is NOT correct.
+
+The requirement is NOT:
+"avoid concerts"
+
+The requirement IS:
+→ select the actual OFFICIAL SONG / OFFICIAL VIDEO / OFFICIAL AUDIO
+
+==================================================
+REQUIRED FIX — STRICT VIDEO RANKING (ARABIC MODE ONLY)
+==================================================
+
+Inside Arabic mode ONLY, update the YouTube ranking logic so that:
+
+PRIORITY ORDER MUST BE:
+
+1) Official Music Video (highest priority)
+2) Official Audio / Topic channel / label upload
+3) Clean direct song upload (no show/performance context)
+4) Only as last resort: other sources
+
+==================================================
+MANDATORY PENALTIES (STRONG)
+==================================================
+
+Apply STRONG penalties (or rejection if needed) to titles containing:
+
+Arabic:
+- حفل
+- حفلة
+- مباشر
+- حفلات
+- جلسة
+- سهرة
+- برنامج
+- حلقة
+- عرض
+
+English:
+- live
+- concert
+- performance
+- session
+- festival
+- show
+- episode
+- program
+- broadcast
+
+TV / show-specific:
+- Arab Idol
+- MBC
+- The Voice
+- Idol
+- Stage
+- Audition
+
+These MUST NOT win if an official version exists.
+
+==================================================
+MANDATORY BOOST (STRONG)
+==================================================
+
+Apply strong boost for:
+
+Arabic:
+- فيديو كليب
+- رسمي
+- النسخة الأصلية
+- حصري
+
+English:
+- official video
+- official audio
+- music video
+- audio
+- topic
+
+Channels:
+- artist official channel
+- VEVO
+- Topic channels
+
+==================================================
+CRITICAL RULE
+==================================================
+
+If BOTH exist:
+- Official video/audio
+- AND broadcast/performance
+
+→ Official MUST win ALWAYS
+
+No exceptions.
+
+==================================================
+IMPORTANT WARNING
+==================================================
+
+Do NOT break the current working fixes:
+- Do NOT touch yt_video_id storage
+- Do NOT change Video button logic
+- Do NOT touch state mapping per message_id
+- Do NOT touch Full Lyrics / Translate logic
+- Do NOT modify main bot
+
+Only adjust the SCORING and SELECTION inside Arabic-mode YouTube resolver.
+
+==================================================
+REQUIRED TESTS (MANDATORY)
+==================================================
+
+You MUST test these before reporting:
+
+1) /arabic
+
+2) حسين الجسمي - ستة الصبح
+Expected:
+- NOT concert
+- NOT Arab Idol
+- MUST be official video/audio (or closest official release)
+
+3) حمزه المحمداوي - قراري
+Expected:
+- correct official video
+- Video button matches dashboard link exactly
+
+4) عبدالمجيد عبدالله - لكل نهاية بداية
+Expected:
+- must resolve correctly (even via transliteration if needed)
+- must not say "not found"
+
+5) Try multiple songs, then:
+- go back to older dashboard
+- press Video
+Expected:
+- opens correct video for THAT dashboard only
+
+6) /exit
+- confirm main bot unchanged
+
+==================================================
+FINAL RULE
+==================================================
+
+Do NOT assume.
+Do NOT say “fixed” without verifying these exact cases.
+Do NOT downgrade official selection just to avoid concerts.
+
+The goal is:
+→ correct official song/video selection, not just “non-concert”.
