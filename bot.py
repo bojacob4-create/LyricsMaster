@@ -3,8 +3,6 @@ import os
 import sys
 import time
 import signal
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from telegram import Update, BotCommand
@@ -33,32 +31,6 @@ from handlers import (
     natural_language_handler, callback_query_handler
 )
 from services.daily_song_service import send_daily_song
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Minimal health-check HTTP server
-# Required by Replit Reserved VM deployments that expect a listener on port 5000.
-# Runs in a daemon thread — completely independent of the Telegram bot.
-# ──────────────────────────────────────────────────────────────────────────────
-class _HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"OK")
-
-    def log_message(self, format, *args):
-        pass   # suppress access log noise
-
-
-def _start_health_server(port: int = 5000):
-    try:
-        server = HTTPServer(("0.0.0.0", port), _HealthHandler)
-        t = threading.Thread(target=server.serve_forever, daemon=True)
-        t.start()
-    except Exception as exc:
-        # Non-fatal — the Telegram bot can still run without the health endpoint.
-        logging.getLogger(__name__).warning(f"Health server could not start on port {port}: {exc}")
-
 
 # Configure logging with both console and file handlers
 logging.basicConfig(
@@ -585,11 +557,6 @@ class TelegramBotWorker:
 def main():
     """Entry point for the bot worker."""
     try:
-        # Start health-check server first so the deployment port check passes
-        # immediately — before any Telegram polling begins.
-        _start_health_server(port=5000)
-        logger.info("Health-check server started on port 5000")
-
         token = os.environ.get("TELEGRAM_TOKEN")
         if not token:
             raise ValueError("TELEGRAM_TOKEN not found in environment variables")

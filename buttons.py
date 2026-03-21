@@ -43,7 +43,6 @@ def song_dashboard_buttons(query):
     ])
 
 
-
 def artist_buttons(artist_name, top_songs=None):
     rows = []
     if top_songs:

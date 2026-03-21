@@ -6,14 +6,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import CallbackContext, MessageHandler, Filters, CommandHandler, DispatcherHandlerStop
+from telegram.ext import CallbackContext, MessageHandler, Filters, CommandHandler
 from telegram.error import TelegramError
 from buttons import (
     lyrics_buttons, song_dashboard_buttons, artist_buttons, artist_summary_buttons,
     recommend_buttons, song_list_buttons, ambiguous_buttons,
     analyze_buttons, stats_buttons, artist_analyze_buttons, recommend_pick_buttons,
     daily_song_buttons, subscribe_count_buttons,
-    recommend_results_buttons, daily_picker_buttons,
+    recommend_results_buttons, daily_picker_buttons
 )
 from services.lyrics_service import get_song_lyrics
 from services.translator_service import (
@@ -693,7 +693,6 @@ def callback_query_handler(update: Update, context: CallbackContext):
 
     if action == 'noop':
         return
-
 
     if action == 'subcount':
         try:
@@ -2168,5 +2167,4 @@ def random_command(update: Update, context: CallbackContext):
             "😓 Something went wrong with random pick.\n"
             "Please try again! 🔄"
         )
-
 
