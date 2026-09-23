@@ -129,7 +129,11 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
 
                 if "private video" in error_msg or "private" in error_msg:
                     reason = "This video is private."
-                elif "age restricted" in error_msg or "age-restricted" in error_msg or "sign in to confirm" in error_msg:
+                elif "not a bot" in error_msg:
+                    reason = ("YouTube is temporarily blocking automated downloads "
+                              "(bot check). Try again in a few minutes.")
+                elif ("age restricted" in error_msg or "age-restricted" in error_msg
+                        or "confirm your age" in error_msg):
                     reason = "This video is age-restricted."
                 elif "copyright" in error_msg:
                     reason = "Blocked due to copyright."
@@ -375,19 +379,32 @@ def _fileid_get(key: str) -> Optional[str]:
 def note_mp3_file_id(artist: str, song: str, file_id: str) -> None:
     """Persist a Telegram file_id so the next request for this song is instant."""
     try:
+        from utils import locked_json_update
         os.makedirs(MP3_CACHE_DIR, exist_ok=True)
-        data = {}
-        try:
-            with open(_MP3_FILEID_JSON, 'r', encoding='utf-8') as f:
-                data = _json.load(f)
-        except Exception:
-            pass
-        data[_mp3_cache_key(artist, song)] = file_id
-        with open(_MP3_FILEID_JSON, 'w', encoding='utf-8') as f:
-            _json.dump(data, f)
+
+        def _update(data):
+            data[_mp3_cache_key(artist, song)] = file_id
+            return data
+
+        locked_json_update(_MP3_FILEID_JSON, _update)
         logger.info(f"[MP3][CACHE] file_id stored for '{artist} - {song}'")
     except Exception as e:
         logger.debug(f"[MP3][CACHE] file_id store failed: {type(e).__name__}")
+
+
+def forget_mp3_file_id(artist: str, song: str) -> None:
+    """Drop a stale Telegram file_id so the next request re-downloads fresh."""
+    try:
+        from utils import locked_json_update
+
+        def _update(data):
+            data.pop(_mp3_cache_key(artist, song), None)
+            return data
+
+        locked_json_update(_MP3_FILEID_JSON, _update)
+        logger.info(f"[MP3][CACHE] stale file_id dropped for '{artist} - {song}'")
+    except Exception as e:
+        logger.debug(f"[MP3][CACHE] file_id drop failed: {type(e).__name__}")
 
 
 def _disk_cache_path(key: str) -> str:
@@ -454,10 +471,13 @@ def is_cached_mp3_path(path: str) -> bool:
 # produced it. Permanent failures (DRM, private, age-gated, copyright,
 # deleted) abort the rotation immediately.
 _YT_CLIENT_ATTEMPTS = ('android', 'web', 'ios')
+# Permanent failures abort the client rotation immediately. NOTE: YouTube's
+# bot-check ("sign in to confirm you're not a bot") is TRANSIENT — it flaps
+# per client — so only the age-gate phrasing ("confirm your age") is listed.
 _PERMANENT_DL_ERRORS = ('drm', 'private video', 'age-restricted',
                         'age restricted', 'copyright', 'unavailable',
                         'not available', 'requires authentication',
-                        'sign in to confirm')
+                        'sign in to confirm your age')
 
 
 def _download_url_to_mp3(download_url: str, file_prefix: str, label: str) -> str:
@@ -509,6 +529,7 @@ def _download_url_to_mp3(download_url: str, file_prefix: str, label: str) -> str
             logger.warning(f"[MP3][DOWNLOAD] DownloadError | provider={label} "
                            f"| client={client}: {de}")
             if any(k in str(de).lower() for k in _PERMANENT_DL_ERRORS):
+                _clean_partials()
                 raise
         except Exception as e:
             last_err = e
@@ -517,6 +538,9 @@ def _download_url_to_mp3(download_url: str, file_prefix: str, label: str) -> str
         time.sleep(2)
 
     if last_err is not None:
+        # Final attempt failed: clean its partials too (the loop only cleans
+        # at the START of each attempt, leaking the last attempt's .part).
+        _clean_partials()
         raise last_err
 
     mp3_path = os.path.join(os.getcwd(), f'{file_prefix}.mp3')
@@ -669,6 +693,7 @@ def download_audio_for_song(artist: str, song: str,
     # Try the top 3 scored candidates across ALL providers. YouTube 403s
     # and SoundCloud DRM blocks are often per-URL, so one more fallback
     # is usually the difference between success and "not available".
+    _bot_blocked = False
     for rank, (s, provider, e) in enumerate(scored[:3]):
         url = e.get('webpage_url') or e.get('url')
         title_c = e.get('title') or query
@@ -679,6 +704,8 @@ def download_audio_for_song(artist: str, song: str,
             path = _download_url_to_mp3(url, file_prefix, label=f'{provider}-rank{rank+1}')
         except Exception as ex:
             logger.info(f"[MP3] rank {rank+1} failed: {type(ex).__name__}")
+            if 'not a bot' in str(ex).lower():
+                _bot_blocked = True
             continue
         res = _accept_downloaded(path, title_c, uploader_c, dur)
         if res == 'too_large':
@@ -687,6 +714,14 @@ def download_audio_for_song(artist: str, song: str,
             return res
 
     logger.error(f"[MP3][FAIL] All providers exhausted for '{query}'")
+    if _bot_blocked:
+        return False, (
+            "❌ MP3 Not Available\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "YouTube is temporarily blocking downloads from this server "
+            "(bot check), and SoundCloud had no playable copy.\n\n"
+            "💡 This usually clears on its own — try again in a few minutes."
+        )
     return False, (
         "❌ MP3 Not Available\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"

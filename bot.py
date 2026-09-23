@@ -29,6 +29,7 @@ from handlers import (
     artist_command, trending_command,
     song_command, top_command, random_command,
     natural_language_handler, callback_query_handler,
+    unknown_command_handler, cancel_command,
     # Round 4: discovery + fun
     mood_command, extend_command, about_command, throwback_command,
     newmusic_command, duel_command, daily_command, emoji_command,
@@ -175,8 +176,13 @@ class TelegramBotWorker:
                 return
             elif isinstance(context.error, RetryAfter):
                 retry_after = context.error.retry_after
-                logger.warning(f"Rate limit hit. Waiting {retry_after} seconds")
-                time.sleep(retry_after)
+                # Never sleep on a dispatcher worker thread — a burst of
+                # rate limits would park every worker and silence the bot
+                # for everyone. PTB's request layer already backs off; we
+                # just log and let the next poll proceed normally.
+                logger.warning(
+                    f"Rate limit hit (retry_after={retry_after}s); "
+                    "not sleeping on dispatcher thread")
                 return
             else:
                 logger.error(f"Update {update} caused error: {context.error}")
@@ -296,10 +302,16 @@ class TelegramBotWorker:
             dp.add_handler(CommandHandler("emoji",       emoji_command))
             dp.add_handler(CommandHandler("mystats",     mystats_command))
             dp.add_handler(CommandHandler("badges",      badges_command))
+            dp.add_handler(CommandHandler("cancel",      cancel_command))
 
             dp.add_handler(CallbackQueryHandler(callback_query_handler))
             dp.add_handler(MessageHandler(
                 Filters.text & ~Filters.command, natural_language_handler
+            ))
+            # Catch-all for mistyped commands (must be last): without this,
+            # "/strt" gets total silence and the bot looks dead.
+            dp.add_handler(MessageHandler(
+                Filters.command, unknown_command_handler
             ))
 
             dp.add_error_handler(self.error_handler)

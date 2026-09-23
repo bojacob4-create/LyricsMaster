@@ -73,7 +73,33 @@ ARTIST_DATABASE = {
              'top_songs': ['Free Mind', 'Essence', 'Higher', 'Me & U', 'Love Me JeJe']},
     'fireboy dml': {'name': 'Fireboy DML', 'genre': 'Afrobeats / Afro-pop', 'debut': 2018, 'country': 'Nigeria',
                     'top_songs': ['Peru', 'Jealous', 'Vibration', 'Playboy', 'Bandana']},
+    # Arabic artists (round 6 QA) — the user base is in Kuwait; Arabic names
+    # must resolve to artist cards, not dead-end song lookups.
+    'sherine': {'name': 'Sherine', 'genre': 'Arabic Pop', 'debut': 2000, 'country': 'Egypt',
+                'top_songs': ['Ah Ya Leil', 'Mashaer', 'Kalam Eineh', 'Sabry Aalil', 'Ana Fel Gharam']},
+    'amr diab': {'name': 'Amr Diab', 'genre': 'Arabic Pop', 'debut': 1983, 'country': 'Egypt',
+                 'top_songs': ['Tamally Maak', 'Nour El Ain', 'Wayah', 'El Leila', 'Khalik Fekrni']},
+    'elissa': {'name': 'Elissa', 'genre': 'Arabic Pop', 'debut': 1998, 'country': 'Lebanon',
+               'top_songs': ['Aaks Elly Shayfak', 'Krahni', 'Betmoun', 'Ajmal Ehsas', 'Ya Merayti']},
+    'nancy ajram': {'name': 'Nancy Ajram', 'genre': 'Arabic Pop', 'debut': 1998, 'country': 'Lebanon',
+                    'top_songs': ['Inta Eyh', 'Ah W Noss', 'Ya Tabtab', 'Fi Hagat', 'Badna Nwalee El Jaw']},
+    'fairuz': {'name': 'Fairuz', 'genre': 'Arabic Classic', 'debut': 1957, 'country': 'Lebanon',
+               'top_songs': ['Nassam Alayna El Hawa', 'Aatini El Nay', 'Shady', 'Bhebbak Ya Loubnan', 'Kifak Inta']},
 }
+
+# Arabic-script aliases → the Latin DB keys above.
+_ARABIC_ARTIST_ALIASES = {
+    'شيرين': 'sherine',
+    'شيرين عبد الوهاب': 'sherine',
+    'عمرو دياب': 'amr diab',
+    'اليسا': 'elissa',
+    'إليسا': 'elissa',
+    'نانسي عجرم': 'nancy ajram',
+    'فيروز': 'fairuz',
+}
+ARTIST_DATABASE.update({alias: ARTIST_DATABASE[key]
+                        for alias, key in _ARABIC_ARTIST_ALIASES.items()
+                        if key in ARTIST_DATABASE})
 
 TRENDING_SONGS = [
     {'artist': 'Kendrick Lamar', 'song': 'Not Like Us', 'note': 'Viral hip-hop anthem'},
@@ -421,6 +447,14 @@ def get_random_song(user_id=None, genre=None) -> Dict:
             if chart:
                 c = rng.choice(chart)
                 pick = {'artist': c['artist'], 'song': c['name']}
+                # Chart picks must respect the no-repeat window too —
+                # otherwise /random can serve the same song twice in a row.
+                if recent:
+                    for _ in range(15):
+                        if f"{pick['artist']} - {pick['song']}".lower() not in recent:
+                            break
+                        c = rng.choice(chart)
+                        pick = {'artist': c['artist'], 'song': c['name']}
                 _note_random_pick(user_id, pick)
                 return pick
         except Exception:

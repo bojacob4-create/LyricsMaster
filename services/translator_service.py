@@ -24,14 +24,32 @@ def get_translator():
                 time.sleep(1)  # Wait before retrying
     return None
 
-# Initialize translator
-translator = get_translator()
+# Lazily-initialized translator (round 6 QA): the old code ran
+# get_translator() once at import; if it failed (proxy hiccup, googletrans
+# outage) translations were dead until the next restart. Now the first use
+# (and any later failure) re-probes, at most once every 60s.
+translator = None
+_translator_last_probe = 0.0
+
+
+def _get_translator():
+    global translator, _translator_last_probe
+    if translator is not None:
+        return translator
+    now = time.time()
+    if now - _translator_last_probe < 60:
+        return None
+    _translator_last_probe = now
+    translator = get_translator()
+    return translator
+
 
 @lru_cache(maxsize=100)
 def translate_chunk(text: str, dest_lang: str = 'ar') -> Optional[str]:
     """Translate a single chunk of text with caching."""
     try:
-        if not translator:
+        t = _get_translator()
+        if not t:
             logger.error("Translator not initialized")
             return None
 

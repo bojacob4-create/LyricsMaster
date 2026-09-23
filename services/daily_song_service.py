@@ -23,9 +23,13 @@ def _load_subscribers() -> Dict:
     return {}
 
 def _save_subscribers(data: Dict) -> None:
+    # Atomic write (tmp + rename) under a per-file lock — a crash mid-write
+    # used to corrupt subscribers.json and wipe the whole subscriber list.
     try:
-        with open(SUBSCRIBERS_FILE, 'w') as f:
-            json.dump({str(k): v for k, v in data.items()}, f, indent=2, default=str)
+        from utils import atomic_json_write
+        atomic_json_write(SUBSCRIBERS_FILE,
+                          {str(k): v for k, v in data.items()},
+                          indent=2, default=str)
     except Exception as e:
         logger.error(f"Error saving subscribers: {e}")
 

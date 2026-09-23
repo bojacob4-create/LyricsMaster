@@ -65,12 +65,16 @@ check("quiz pool expanded", len(qs.get_quiz_songs()) >= 100,
 
 seen_types = set()
 ok_all = True
-for i in range(10):
+# Validate structure on the first 10, but draw up to 30 for type coverage:
+# requiring all 3 types in exactly 10 random draws flakes ~5% of the time.
+for i in range(30):
     q = qs.get_quiz_question(exclude_songs=[], hard=(i % 2 == 0))
     if not q:
         ok_all = False
         break
     seen_types.add(q["qtype"])
+    if i >= 10:
+        continue
     opts = q["options"]
     ai = q["answer_index"]
     if not (0 <= ai < len(opts) == 4):

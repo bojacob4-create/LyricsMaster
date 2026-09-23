@@ -1,6 +1,93 @@
 from typing import List, Dict, Tuple
 import re
+import json as _json
+import os as _os
+import threading as _threading
 from collections import Counter, defaultdict
+
+
+# ── Atomic JSON state writes (round 6 QA) ──────────────────────────────────
+# Several features persist state to JSON (quiz scores, subscribers, MP3
+# file_ids, duels). A crash mid-write used to corrupt the file, and
+# concurrent read-modify-write cycles could clobber each other. All state
+# writes go through these helpers: per-path lock + tmp file + atomic rename.
+_json_write_locks = {}
+_json_write_locks_guard = _threading.Lock()
+
+
+def _json_lock_for(path: str):
+    with _json_write_locks_guard:
+        lock = _json_write_locks.get(path)
+        if lock is None:
+            lock = _json_write_locks[path] = _threading.Lock()
+        return lock
+
+
+def atomic_json_write(path: str, data, **dump_kwargs) -> bool:
+    """Write JSON atomically (tmp + rename) under a per-path lock."""
+    lock = _json_lock_for(path)
+    with lock:
+        try:
+            tmp = f"{path}.tmp"
+            with open(tmp, 'w', encoding='utf-8') as f:
+                _json.dump(data, f, **dump_kwargs)
+            _os.replace(tmp, path)
+            return True
+        except Exception:
+            try:
+                _os.remove(tmp)
+            except Exception:
+                pass
+            return False
+
+
+def locked_json_update(path: str, update_fn, default=None, **dump_kwargs):
+    """Load JSON, apply update_fn(data)->new_data, save atomically.
+
+    The whole read-modify-write runs under the per-path lock, so concurrent
+    quiz finishes / duel updates can't clobber each other. Returns the new
+    data, or None if the write failed.
+    """
+    lock = _json_lock_for(path)
+    with lock:
+        data = default if default is not None else {}
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                loaded = _json.load(f)
+            if isinstance(loaded, dict):
+                data = loaded
+        except Exception:
+            pass
+        try:
+            new_data = update_fn(data)
+        except Exception:
+            return None
+        try:
+            tmp = f"{path}.tmp"
+            with open(tmp, 'w', encoding='utf-8') as f:
+                _json.dump(new_data, f, **dump_kwargs)
+            _os.replace(tmp, path)
+            return new_data
+        except Exception:
+            try:
+                _os.remove(tmp)
+            except Exception:
+                pass
+            return None
+
+
+def escape_markdown(text: str) -> str:
+    """Escape Telegram MarkdownV1 special chars in dynamic (user/provider) text.
+
+    Song/artist names come from users and providers and can contain _, *, `,
+    [ — any of which breaks parse_mode='Markdown' sends (BadRequest) or
+    garbles rendering. Static template text with deliberate formatting must
+    NOT go through this.
+    """
+    if not text:
+        return ''
+    return re.sub(r'([_*`\[\]])', r'\\\1', str(text))
+
 
 def get_song_statistics(lyrics: str) -> Dict:
     """
@@ -12,6 +99,19 @@ def get_song_statistics(lyrics: str) -> Dict:
     Returns:
         Dict: Statistics including word count, unique words, common words, etc.
     """
+    # Guard: pure function must never raise on empty/None input — it is called
+    # from live paths (stats, song dashboard, analysis) where a lyric-provider
+    # hiccup can hand us nothing.
+    if not lyrics or not lyrics.strip():
+        return {
+            'total_lines': 0,
+            'total_words': 0,
+            'unique_words': 0,
+            'meaningful_words': 0,
+            'top_words': [],
+            'repeated_phrases': [],
+            'vocabulary_richness': 0.0,
+        }
     # Enhanced stop words list with common lyrics-specific words and contractions
     stop_words = {'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'i', 
                 'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at',
@@ -223,6 +323,15 @@ def analyze_rhyme_pattern(lyrics: str) -> Dict:
     """Analyze rhyme patterns in lyrics."""
     import re
     from collections import defaultdict
+
+    # Guard: empty input would divide by zero below.
+    if not lyrics or not lyrics.strip():
+        return {
+            'total_lines': 0,
+            'rhyming_lines': 0,
+            'rhyme_density': 0.0,
+            'rhyme_groups': {},
+        }
 
     # Split into lines and clean up
     lines = [line.strip().lower() for line in lyrics.split('\n') if line.strip()]

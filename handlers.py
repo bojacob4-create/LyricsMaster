@@ -7,12 +7,12 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackContext, MessageHandler, Filters, CommandHandler
-from telegram.error import TelegramError
+from telegram.error import TelegramError, Unauthorized
 from buttons import (
     lyrics_buttons, song_dashboard_buttons, artist_buttons, artist_summary_buttons,
     recommend_buttons, song_list_buttons, ambiguous_buttons,
     analyze_buttons, stats_buttons, artist_analyze_buttons, recommend_pick_buttons,
-    daily_song_buttons, subscribe_count_buttons,
+    daily_song_buttons, subscribe_count_buttons, emoji_exit_buttons,
     recommend_results_buttons, daily_picker_buttons
 )
 from services.lyrics_service import get_song_lyrics, canonicalize_track_names
@@ -41,9 +41,10 @@ from utils import (
     get_detailed_song_analysis,
     format_detailed_analysis,
     detect_themes,
+    escape_markdown as md,
 )
 from services.youtube_service import get_youtube_link, format_youtube_response
-from services.youtube_downloader_service import download_youtube_video, download_youtube_audio, download_audio_for_song, cleanup_video, note_mp3_file_id, is_cached_mp3_path
+from services.youtube_downloader_service import download_youtube_video, download_youtube_audio, download_audio_for_song, cleanup_video, note_mp3_file_id, forget_mp3_file_id, is_cached_mp3_path
 from services.ai_info_service import get_person_info
 from services.artist_service import (
     get_artist_info, format_artist_info, get_trending_songs, format_trending,
@@ -226,6 +227,38 @@ def help_command(update: Update, context: CallbackContext):
         )
 
 
+# ── Unknown commands (round 6 QA) ───────────────────────────────────────────
+# Without this, a fat-fingered "/strt" hits no CommandHandler and the text
+# handler explicitly excludes commands → total silence, the bot looks dead.
+_KNOWN_COMMANDS = [
+    'start', 'help', 'song', 'lyrics', 'recommend', 'artist', 'youtube',
+    'translate', 'analyze', 'stats', 'top', 'trending', 'random', 'quiz',
+    'endquiz', 'throwback', 'mood', 'decade', 'mp3', 'download',
+    'subscribe', 'unsubscribe', 'daily', 'duel', 'emoji', 'mystats',
+    'badges', 'wiki', 'about', 'newmusic', 'extend', 'cancel',
+]
+
+
+def unknown_command_handler(update: Update, context: CallbackContext):
+    """Catch-all for mistyped commands: 'Did you mean /start?'"""
+    import difflib
+    try:
+        text = (update.message.text or '').strip()
+        cmd = text.split()[0].lstrip('/').split('@')[0].lower() if text else ''
+        matches = difflib.get_close_matches(cmd, _KNOWN_COMMANDS, n=1, cutoff=0.6)
+        if matches:
+            update.message.reply_text(
+                f"🤔 Did you mean /{matches[0]}?\n\n"
+                "Type /help to see everything I can do."
+            )
+        else:
+            update.message.reply_text(
+                "🤔 I don't know that command.\n\n"
+                "Type /help to see everything I can do."
+            )
+    except Exception as e:
+        logger.warning(f"unknown_command_handler error: {e}")
+
 
 def quiz_command(update: Update, context: CallbackContext):
     """Handle the /quiz command to start a lyrics quiz."""
@@ -352,6 +385,13 @@ _NO_WORDS = frozenset({
 
 _AMBIGUOUS_NOISE = {'song', 'songs', 'music', 'track', 'tracks', 'video', 'audio', 'clip', 'artist'}
 
+# Greetings are not song searches — "hello" must not become a Last.fm lookup
+# for Adele's "Hello". Short-circuited before the bare-title fast path.
+_GREETING_WORDS = frozenset({
+    'hi', 'hello', 'hey', 'yo', 'hiya', 'howdy', 'sup', 'hola',
+    'salam', 'salaam', 'marhaba', 'morning', 'evening', 'afternoon',
+})
+
 # Keywords that indicate the user has moved on to a new request (Step 3 guard).
 # Defined at module level to avoid re-allocating on every message.
 _INTENT_KEYWORDS = frozenset({
@@ -433,6 +473,16 @@ def natural_language_handler(update: Update, context: CallbackContext):
     if not text:
         return
 
+    # ── Round 6 QA: input length cap ───────────────────────────────────────
+    # Multi-thousand-character pastes must never reach provider APIs verbatim.
+    if len(text) > 500:
+        update.message.reply_text(
+            "📝 That's a bit long for me to read as one message!\n\n"
+            "Try a shorter song or artist name — like `Adele - Hello`.",
+            parse_mode='Markdown',
+        )
+        return
+
     # ── Round 4a: pending /extend song list (multi-line "Artist - Title") ───
     # Must run before the regex router, which would otherwise treat the
     # lines as a new song request.
@@ -443,9 +493,40 @@ def natural_language_handler(update: Update, context: CallbackContext):
 
     # ── Round 4b: emoji game guesses (free text, e.g. "Tyla - Water") ───────
     # Must run before the regex router for the same reason.
+    # Guards (round 6 QA): the game must never permanently hijack input.
+    #  - TTL: 10 min of inactivity auto-ends the game.
+    #  - Explicit new requests (mp3/lyrics/recommend/…) end the game and
+    #    fall through to normal routing instead of "❌ Not quite".
     if user_id in active_emoji:
-        _handle_emoji_guess(update, user_id, text)
-        return
+        _sess = active_emoji.get(user_id) or {}
+        if time.time() - _sess.get('last_active', 0) > 600:
+            active_emoji.pop(user_id, None)
+            update.message.reply_text(
+                "🎭 The emoji game ended (10 minutes idle).\n"
+                "Type /emoji anytime to play again! 🎶"
+            )
+            # Fall through — handle the current message normally.
+        else:
+            _sess['last_active'] = time.time()
+            _intent_probe = None
+            try:
+                _intent_probe, _ = detect_intent(text)
+            except Exception:
+                pass
+            # A bare "Artist - Title" guess routes as intent 'song' — that
+            # stays in the game. Anything with an explicit intent keyword is
+            # a new request: end the game, handle normally.
+            if _intent_probe and _intent_probe not in ('song',):
+                _score, _played = _sess.get('score', 0), _sess.get('played', 0)
+                active_emoji.pop(user_id, None)
+                update.message.reply_text(
+                    f"🎭 Emoji game ended (score {_score}/{_played}). "
+                    "On to your request! 👇"
+                )
+                # Fall through to normal routing below.
+            else:
+                _handle_emoji_guess(update, user_id, text)
+                return
 
     # ── Step 1: Regex router — always runs first ────────────────────────────
     # Deterministic, zero-latency, and must take priority over ALL stored
@@ -505,7 +586,7 @@ def natural_language_handler(update: Update, context: CallbackContext):
                 else:
                     _pending_confirmation.pop(user_id, None)
                     _rmsg = (
-                        f"🔍 I couldn't find a song called *{_seed}*.\n\n"
+                        f"🔍 I couldn't find a song called *{md(_seed)}*.\n\n"
                         f"Please use the format: `Artist - Song`\n"
                         f"Example: `Kavinsky - Nightcall`"
                     )
@@ -536,6 +617,9 @@ def natural_language_handler(update: Update, context: CallbackContext):
             'subscribe': subscribe_daily_command,
             'unsubscribe': unsubscribe_daily_command,
             'wiki': wiki_command,
+            'mp3': mp3_command,
+            'download': download_command,
+            'mood': mood_command,
         }
         handler = handler_map.get(intent)
         if handler:
@@ -546,12 +630,27 @@ def natural_language_handler(update: Update, context: CallbackContext):
 
     # ── Round 4c: duel + daily-challenge answers (A/B/C/D) ─────────────────
     # Checked before the regular quiz so the game sessions don't clash.
+    # Guards (round 6 QA): an active game owns the user's next message —
+    # non-answer text gets a nudge instead of silently falling through to
+    # an unrelated song search while the game stays half-open.
     answer_up = text.upper()
-    if user_id in active_duel_sessions and len(answer_up) == 1 and answer_up in 'ABCD':
-        _handle_duel_answer(update, context, user_id, answer_up)
+    if user_id in active_duel_sessions:
+        if len(answer_up) == 1 and answer_up in 'ABCD':
+            _handle_duel_answer(update, context, user_id, answer_up)
+            return
+        update.message.reply_text(
+            "⚔️ You're in a duel! Answer with A, B, C or D — "
+            "or /cancel to forfeit. 🏳️"
+        )
         return
-    if user_id in active_daily and len(answer_up) == 1 and answer_up in 'ABCD':
-        _handle_daily_answer(update, context, user_id, answer_up)
+    if user_id in active_daily:
+        if len(answer_up) == 1 and answer_up in 'ABCD':
+            _handle_daily_answer(update, context, user_id, answer_up)
+            return
+        update.message.reply_text(
+            "🎯 Daily challenge in progress! Answer with A, B, C or D — "
+            "or /cancel to give up. 🏳️"
+        )
         return
 
     # ── Step 2: Quiz state ───────────────────────────────────────────────────
@@ -561,6 +660,11 @@ def natural_language_handler(update: Update, context: CallbackContext):
         if len(answer) == 1 and answer in 'ABCD':
             quiz_answer(update, context)
             return
+        update.message.reply_text(
+            "🧠 Quiz in progress! Please answer with A, B, C or D — "
+            "or /cancel to stop the quiz."
+        )
+        return
 
     # ── Step 2.5: Pending dominant-match confirmation ────────────────────────
     # When the disambiguation layer showed "Did you mean X - Y?" and the match
@@ -692,6 +796,23 @@ def natural_language_handler(update: Update, context: CallbackContext):
         )
         return
 
+    # ── Step 3.52: Greetings ────────────────────────────────────────────────
+    # "hello"/"hi" are greetings, not song searches. Without this, the
+    # bare-title fast path below sends them to Last.fm as song titles
+    # ("Did you mean Adele — Hello?").
+    _greet = text.lower().strip().rstrip('!.?,')
+    if _greet in _GREETING_WORDS:
+        update.message.reply_text(
+            "👋 Hey there!\n\n"
+            "I can find lyrics, build song dashboards, recommend music, "
+            "grab MP3s and more.\n\n"
+            "Try:\n"
+            "• `Artist - Song` (e.g. `Tyla - Water`)\n"
+            "• /random for a surprise\n"
+            "• /help for everything I do"
+        )
+        return
+
     # ── Step 3.55: Bare artist name → artist card directly ──────────────────
     # Typing just an artist's name ("Tate McRae") should show their artist
     # card — not a "which song did you mean?" prompt. The local-DB lookup is
@@ -715,7 +836,15 @@ def natural_language_handler(update: Update, context: CallbackContext):
     # could never resolve these confidently anyway (see _is_bare_title_fast_path).
     if _is_bare_title_fast_path(text):
         _pending_recommend_artist.pop(user_id, None)
-        _seed = text.strip()
+        # Cap the seed: a paste accident must not become a pathological
+        # 500-char API query. Then fix obvious typos against known titles
+        # ("calin down" → "Calm Down") before the Last.fm search.
+        _seed = text.strip()[:100]
+        try:
+            from intent_router import _fuzzy_correct_title as _fp_fuzzy
+            _seed = _fp_fuzzy(_seed)
+        except Exception:
+            pass
         try:
             from services.nlp_router import (
                 search_song_candidates as _fp_search,
@@ -737,7 +866,7 @@ def natural_language_handler(update: Update, context: CallbackContext):
             else:
                 _pending_confirmation.pop(user_id, None)
                 _fp_msg = (
-                    f"🔍 I couldn't find a song called *{_seed}*.\n\n"
+                    f"🔍 I couldn't find a song called *{md(_seed)}*.\n\n"
                     "Please use the format:\n"
                     "`Artist - Song`\n\n"
                     "Example: `Tyla - Water`"
@@ -760,6 +889,18 @@ def natural_language_handler(update: Update, context: CallbackContext):
     # TWO INDEPENDENT SAFETY LAYERS:
     #   Layer 1 — Confidence:  >= 0.7 execute / 0.4–0.7 clarify / < 0.4 low_conf
     #   Layer 2 — Entity gate: deterministic check for required entities.
+
+    # ── Step 3.9: Non-verbal input ──────────────────────────────────────────
+    # Pure emoji/punctuation would burn a paid OpenAI call on zero
+    # information. Answer directly instead.
+    if not re.search(r'[^\W_]', text):
+        update.message.reply_text(
+            "🤖 I work with words!\n\n"
+            "Try `Artist - Song` (e.g. `Tyla - Water`),\n"
+            "or /help to see what I can do."
+        )
+        return
+
     try:
         from services.nlp_router import (
             parse_intent           as nlp_parse,
@@ -865,7 +1006,7 @@ def natural_language_handler(update: Update, context: CallbackContext):
                     else:
                         _pending_confirmation.pop(user_id, None)
                         _rec_msg = (
-                            f"🔍 I couldn't find a song called *{nlp_song}*.\n\n"
+                            f"🔍 I couldn't find a song called *{md(nlp_song)}*.\n\n"
                             f"Please use the format: `Artist - Song`\n"
                             f"Example: `Kavinsky - Nightcall`"
                         )
@@ -953,13 +1094,21 @@ def natural_language_handler(update: Update, context: CallbackContext):
 
 def callback_query_handler(update: Update, context: CallbackContext):
     query = update.callback_query
-    query.answer()
+    # Stale/tapped-twice callbacks raise here — never let that kill the tap.
+    try:
+        query.answer()
+    except Exception:
+        pass
 
     data = query.data
     if ':' not in data:
         return
 
     action, param = data.split(':', 1)
+    # Resolve token-registry payloads (long/Arabic/emoji queries) back to
+    # the full query; inline payloads pass through unchanged.
+    from buttons import cb_resolve
+    param = cb_resolve(param)
     user_id = update.effective_user.id
     _pending_recommend_artist.pop(user_id, None)
     logger.info(f"Callback from user {user_id}: action='{action}', param='{param}'")
@@ -1008,6 +1157,7 @@ def callback_query_handler(update: Update, context: CallbackContext):
         'artistsongs': _artist_songs_picker_command,
         'mood': mood_command,
         'decade': throwback_command,
+        'emoji_exit': emoji_exit_callback,
     }
 
     handler = handler_map.get(action)
@@ -1275,7 +1425,7 @@ def recommend_command(update: Update, context: CallbackContext):
                             )
                         ])
                     update.message.reply_text(
-                        f"🤔 \"{query}\" could be an artist *or* a song.\n"
+                        f"🤔 \"{md(query)}\" could be an artist *or* a song.\n"
                         "Which did you mean?",
                         parse_mode='Markdown',
                         reply_markup=InlineKeyboardMarkup(_am_rows),
@@ -1478,12 +1628,21 @@ def translate_lyrics_command(update: Update, context: CallbackContext):
         translated_lyrics = translate_text(lyrics, lang_code)
         if translated_lyrics:
             formatted_lyrics = format_lyrics(translated_lyrics)
-            response = (
+            header = (
                 f"🎵 {display_title}\n"
                 f"🌍 {lang_display} Translation:\n\n"
-                f"{formatted_lyrics}"
             )
-            processing_msg.edit_text(response)
+            # Chunk like /lyrics does — a single edit_text of a long song
+            # exceeds Telegram's 4096-char limit and the user gets an error
+            # after waiting through the whole translation.
+            max_chunk_size = 3000
+            chunks = [formatted_lyrics[i:i + max_chunk_size]
+                      for i in range(0, len(formatted_lyrics), max_chunk_size)]
+            processing_msg.edit_text(header + chunks[0])
+            for i, chunk in enumerate(chunks[1:], 1):
+                update.message.reply_text(
+                    f"🌍 Continuation ({i+1}/{len(chunks)})...\n\n" + chunk
+                )
             logger.info(f"Successfully sent {lang_display} translated lyrics to user {user_id}")
         else:
             logger.warning(f"Translation failed for user {user_id}")
@@ -1556,6 +1715,15 @@ def send_daily_song(context: CallbackContext):
                     )
 
                 logger.info(f"Sent {len(collected)} daily song(s) to user {user_id}")
+            except Unauthorized:
+                # User blocked the bot or deleted their account — stop
+                # retrying them every day (round 6 QA).
+                logger.warning(
+                    f"User {user_id} blocked the bot; auto-unsubscribing")
+                try:
+                    unsubscribe_user(user_id)
+                except Exception:
+                    pass
             except Exception as e:
                 logger.error(f"Failed to send daily song to user {user_id}: {str(e)}")
 
@@ -1971,7 +2139,7 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
             return
 
         response = (
-            f"📚 *{person_info['title']}*\n"
+            f"📚 *{md(person_info['title'])}*\n"
             "━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"{person_info['info']}"
         )
@@ -2009,6 +2177,12 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
         else:
             update.message.reply_text(error_message)
 
+# Per-user MP3 jobs in flight — keyed (user_id, artist, song). A second tap
+# while a download is running gets a "hang tight" reply instead of spawning
+# a duplicate pipeline (double downloads, double rate-limit load, two files).
+_mp3_in_progress = set()
+
+
 def mp3_command(update: Update, context: CallbackContext):
     """Handle the MP3 button — convert a known song to MP3."""
     user_id = update.effective_user.id
@@ -2022,78 +2196,26 @@ def mp3_command(update: Update, context: CallbackContext):
         raw = " ".join(context.args)
         logger.info(f"User {user_id} requested MP3: '{raw}'")
 
-        processing_message = update.message.reply_text(
-            "🎧 Converting to MP3...\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "⏳ Finding audio source and converting.\n"
-            "This may take 30–60 seconds."
-        )
-
-        def _stage(text: str):
-            try:
-                processing_message.edit_text(
-                    "🎧 Converting to MP3...\n"
-                    "━━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"{text}"
-                )
-            except Exception:
-                pass
-
         if ' - ' in raw:
             parts = raw.split(' - ', 1)
             artist_q, song_q = parts[0].strip(), parts[1].strip()
         else:
             artist_q, song_q = raw.strip(), ''
 
-        success, result = download_audio_for_song(artist_q, song_q, on_stage=_stage)
+        # Concurrency guard: one pipeline per (user, song) at a time.
+        job_key = (user_id, artist_q.lower(), song_q.lower())
+        if job_key in _mp3_in_progress:
+            update.message.reply_text(
+                "🎧 Already working on this one — hang tight!\n"
+                "Your MP3 is on its way."
+            )
+            return
+        _mp3_in_progress.add(job_key)
 
-        if success:
-            # Tier-0 hit: Telegram already hosts this file — send instantly.
-            if result[0] == 'file_id':
-                _, fid, title, uploader = result
-                try:
-                    update.message.reply_audio(
-                        audio=fid,
-                        caption=f"🎵 {title}\n⚡ Instant delivery",
-                        title=title,
-                        performer=uploader
-                    )
-                    processing_message.delete()
-                except Exception as send_err:
-                    logger.error(f"Failed to send cached audio: {send_err}")
-                    processing_message.edit_text(
-                        "❌ Couldn't send the audio file.\n"
-                        "Please try again."
-                    )
-                return
-
-            file_path, info_message, title, uploader = result
-            processing_message.edit_text(info_message)
-            try:
-                with open(file_path, 'rb') as audio_file:
-                    sent_msg = update.message.reply_audio(
-                        audio_file,
-                        caption=f"🎵 {title}",
-                        title=title,
-                        performer=uploader
-                    )
-                # Remember Telegram's file_id so the next request is instant.
-                try:
-                    if sent_msg and sent_msg.audio:
-                        note_mp3_file_id(artist_q, song_q, sent_msg.audio.file_id)
-                except Exception:
-                    pass
-            except Exception as send_err:
-                logger.error(f"Failed to send audio: {send_err}")
-                processing_message.edit_text(
-                    "❌ The MP3 was created but couldn't be sent.\n"
-                    "It may be too large for Telegram (50MB limit)."
-                )
-            # Never delete files that live in the MP3 cache — they're reused.
-            if not is_cached_mp3_path(file_path):
-                cleanup_video(file_path)
-        else:
-            processing_message.edit_text(result)
+        try:
+            _run_mp3_job(update, user_id, artist_q, song_q, raw)
+        finally:
+            _mp3_in_progress.discard(job_key)
 
     except Exception as e:
         logger.error(f"Error in mp3 command for user {user_id}: {str(e)}")
@@ -2101,6 +2223,89 @@ def mp3_command(update: Update, context: CallbackContext):
             "😓 Something went wrong with the MP3 conversion.\n"
             "Please try again later! 🔄"
         )
+
+
+def _run_mp3_job(update, user_id, artist_q, song_q, raw):
+    """Single MP3 pipeline run (concurrency-guarded by mp3_command)."""
+    processing_message = update.message.reply_text(
+        "🎧 Converting to MP3...\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "⏳ Finding audio source and converting.\n"
+        "This may take 30–60 seconds."
+    )
+
+    def _stage(text: str):
+        try:
+            processing_message.edit_text(
+                "🎧 Converting to MP3...\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"{text}"
+            )
+        except Exception:
+            pass
+
+    def _send_fresh_file(file_path, info_message, title, uploader):
+        processing_message.edit_text(info_message)
+        try:
+            with open(file_path, 'rb') as audio_file:
+                sent_msg = update.message.reply_audio(
+                    audio_file,
+                    caption=f"🎵 {title}",
+                    title=title,
+                    performer=uploader
+                )
+            # Remember Telegram's file_id so the next request is instant.
+            try:
+                if sent_msg and sent_msg.audio:
+                    note_mp3_file_id(artist_q, song_q, sent_msg.audio.file_id)
+            except Exception:
+                pass
+        except Exception as send_err:
+            logger.error(f"Failed to send audio: {send_err}")
+            processing_message.edit_text(
+                "❌ The MP3 was created but couldn't be sent.\n"
+                "It may be too large for Telegram (50MB limit)."
+            )
+        # Never delete files that live in the MP3 cache — they're reused.
+        if not is_cached_mp3_path(file_path):
+            cleanup_video(file_path)
+
+    success, result = download_audio_for_song(artist_q, song_q, on_stage=_stage)
+
+    if success:
+        # Tier-0 hit: Telegram already hosts this file — send instantly.
+        if result[0] == 'file_id':
+            _, fid, title, uploader = result
+            try:
+                update.message.reply_audio(
+                    audio=fid,
+                    caption=f"🎵 {title}\n⚡ Instant delivery",
+                    title=title,
+                    performer=uploader
+                )
+                processing_message.delete()
+            except Exception as send_err:
+                # Stale file_id (expired/invalid): drop it and transparently
+                # re-run the fresh download path instead of dead-ending.
+                logger.warning(f"Stale cached file_id for '{raw}': {send_err}")
+                forget_mp3_file_id(artist_q, song_q)
+                _stage("⚡ Cached copy expired — fetching a fresh one…")
+                success2, result2 = download_audio_for_song(
+                    artist_q, song_q, on_stage=_stage)
+                if success2 and result2[0] != 'file_id':
+                    file_path, info_message, title2, uploader2 = result2
+                    _send_fresh_file(file_path, info_message, title2, uploader2)
+                else:
+                    processing_message.edit_text(
+                        "❌ Couldn't send the audio file.\n"
+                        "Please try again in a moment. 🔄"
+                    )
+            return
+
+        file_path, info_message, title, uploader = result
+        _send_fresh_file(file_path, info_message, title, uploader)
+    else:
+        processing_message.edit_text(result)
 
 
 def _build_fallback_artist_profile(query: str):
@@ -2724,7 +2929,7 @@ def _send_mood_mix(update, user_id: int, mood: str):
     lines = [f"🎧 *{label} Mix*",
              "━━━━━━━━━━━━━━━━━━━━━", ""]
     for i, s in enumerate(songs, 1):
-        lines.append(f"*{i}.* {s['artist']} — {s['name']}")
+        lines.append(f"*{i}.* {md(s['artist'])} — {md(s['name'])}")
         if s.get('reason'):
             lines.append(f"   ↳ {s['reason']}")
     lines += ["",
@@ -2818,7 +3023,7 @@ def _send_extend_results(update, user_id: int, songs: list, intro: str):
         )
         return
 
-    given = '\n'.join(f"• {s['artist']} - {s['song']}" for s in songs[:5])
+    given = '\n'.join(f"• {md(s['artist'])} - {md(s['song'])}" for s in songs[:5])
     lines = [f"{intro} — *{vibe.get('label', 'your vibe')}*",
              "━━━━━━━━━━━━━━━━━━━━━",
              given,
@@ -2826,7 +3031,7 @@ def _send_extend_results(update, user_id: int, songs: list, intro: str):
              "✨ *Keep the vibe going:*",
              ""]
     for i, r in enumerate(recs, 1):
-        lines.append(f"*{i}.* {r['artist']} — {r['name']}")
+        lines.append(f"*{i}.* {md(r['artist'])} — {md(r['name'])}")
         if r.get('reason'):
             lines.append(f"   ↳ {r['reason']}")
     lines += ["",
@@ -2886,7 +3091,7 @@ def about_command(update: Update, context: CallbackContext):
             lines.append(f"Reading it as: {keywords}")
             lines.append("")
         for i, s in enumerate(songs, 1):
-            lines.append(f"*{i}.* {s['artist']} — {s['song']}")
+            lines.append(f"*{i}.* {md(s['artist'])} — {md(s['song'])}")
             if s.get('reason'):
                 lines.append(f"   ↳ {s['reason']}")
         lines += ["",
@@ -2944,7 +3149,7 @@ def throwback_command(update: Update, context: CallbackContext):
         lines = [f"{decade_emoji} *{decade} Throwback!*",
                  "━━━━━━━━━━━━━━━━━━━━━", ""]
         for i, s in enumerate(picks, 1):
-            lines.append(f"*{i}.* {s['artist']} — {s['song']}")
+            lines.append(f"*{i}.* {md(s['artist'])} — {md(s['song'])}")
             if s.get('fact'):
                 lines.append(f"   💡 {s['fact']}")
         lines += ["",
@@ -2996,7 +3201,7 @@ def newmusic_command(update: Update, context: CallbackContext):
         rank_emoji = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣']
         for i, s in enumerate(songs, 1):
             r = rank_emoji[i - 1] if i <= len(rank_emoji) else '🎵'
-            lines.append(f"{r} {s['artist']} — {s['song']}")
+            lines.append(f"{r} {md(s['artist'])} — {md(s['song'])}")
             if s.get('note'):
                 lines.append(f"   ↳ {s['note']}")
         lines += ["", "━━━━━━━━━━━━━━━━━━━━━",
@@ -3066,7 +3271,7 @@ def duel_command(update: Update, context: CallbackContext):
             except Exception:
                 pass
             update.message.reply_text(
-                f"⚔️ *You're in!* Duel vs *{duel.get('creator_name', 'your friend')}*\n"
+                f"⚔️ *You're in!* Duel vs *{md(duel.get('creator_name', 'your friend'))}*\n"
                 "Same 5 questions, most correct wins. Good luck! 🍀\n\n"
                 + _format_duel_question(code, 0, 0, len(questions)),
                 parse_mode='Markdown',
@@ -3340,13 +3545,15 @@ def emoji_command(update: Update, context: CallbackContext):
             return
         update.message.chat.send_action(action="typing")
         puzzle = get_emoji_puzzle()
-        active_emoji[user_id] = {'puzzle': puzzle, 'score': 0, 'played': 0}
+        active_emoji[user_id] = {'puzzle': puzzle, 'score': 0, 'played': 0,
+                                 'last_active': time.time()}
         update.message.reply_text(
             "🎭 *Emoji Guessing Game!*\n\n"
             f"{puzzle['emojis']}\n\n"
             "What song is this?\n"
             "Reply with *Artist - Title* (or type *stop* to end).",
             parse_mode='Markdown',
+            reply_markup=emoji_exit_buttons(),
         )
         logger.info(f"Started emoji game for user {user_id}")
     except Exception as e:
@@ -3363,7 +3570,7 @@ def _handle_emoji_guess(update, user_id: int, text: str):
     if not sess:
         return
     try:
-        if text.lower().strip() in ('stop', 'quit', 'end', '/stop'):
+        if text.lower().strip() in ('stop', 'quit', 'end', 'cancel', '/stop', '/cancel'):
             score, played = sess['score'], sess['played']
             active_emoji.pop(user_id, None)
             update.message.reply_text(
@@ -3390,12 +3597,14 @@ def _handle_emoji_guess(update, user_id: int, text: str):
                 f"Next one:\n{puzzle['emojis']}\n\n"
                 "What song is this?",
                 parse_mode='Markdown',
+                reply_markup=emoji_exit_buttons(),
             )
         else:
             update.message.reply_text(
                 "❌ Not quite — try again!\n"
                 f"Hint: think about what the emojis *mean*. 🤔\n\n"
-                f"{sess['puzzle']['emojis']}"
+                f"{sess['puzzle']['emojis']}",
+                reply_markup=emoji_exit_buttons(),
             )
     except Exception as e:
         logger.error(f"Error in emoji guess for user {user_id}: {str(e)}")
@@ -3403,6 +3612,55 @@ def _handle_emoji_guess(update, user_id: int, text: str):
             "😓 Something went wrong.\n"
             "Type *stop* to end or /emoji to restart.",
             parse_mode='Markdown',
+        )
+
+
+def emoji_exit_callback(update: Update, context: CallbackContext):
+    """Exit the emoji game via its inline '🚪 Exit game' button."""
+    user_id = update.effective_user.id
+    sess = active_emoji.pop(user_id, None)
+    # Via the callback dispatcher, update is a FakeUpdate carrying
+    # effective_message (the game message) — no callback_query attribute.
+    msg = getattr(update, 'effective_message', None)
+    try:
+        if msg:
+            if sess:
+                msg.edit_text(
+                    f"🎭 Game over! You got {sess.get('score', 0)} out of "
+                    f"{sess.get('played', 0)} right.\n"
+                    "Play again anytime with /emoji! 🎶"
+                )
+            else:
+                msg.edit_text("🎭 No active game — type /emoji to play! 🎶")
+    except Exception as e:
+        logger.warning(f"emoji_exit edit failed: {e}")
+
+
+def cancel_command(update: Update, context: CallbackContext):
+    """Handle /cancel — quit any active game or pending flow."""
+    user_id = update.effective_user.id
+    cleared = []
+    for name, store in (('emoji game', active_emoji),
+                        ('quiz', active_quizzes),
+                        ('duel', active_duel_sessions),
+                        ('daily challenge', active_daily)):
+        if user_id in store:
+            store.pop(user_id, None)
+            cleared.append(name)
+    for store in (_pending_recommend_artist, _pending_confirmation,
+                  _pending_extend):
+        store.pop(user_id, None)
+    _mp3_in_progress.discard(
+        next((k for k in _mp3_in_progress if k[0] == user_id), None))
+    if cleared:
+        update.message.reply_text(
+            f"🚪 Cancelled: {', '.join(cleared)}.\n\n"
+            "What next? /help shows everything I can do! 🎵"
+        )
+    else:
+        update.message.reply_text(
+            "Nothing to cancel — you're all clear! 🎵\n"
+            "Try /help to see what I can do."
         )
 
 

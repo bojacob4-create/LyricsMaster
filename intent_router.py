@@ -259,6 +259,91 @@ FILLER_WORDS = [
 ]
 
 
+# ── Mood-word lexicon (round 6 QA) ──────────────────────────────────────────
+# Lets inputs like "something happy" or "play happy sad songs" reach the
+# /mood feature without the literal word "mood".
+MOOD_WORDS = frozenset({
+    'happy', 'happier', 'happiest', 'sad', 'sadder', 'saddest',
+    'chill', 'chillout', 'chilled', 'angry', 'romantic', 'love',
+    'hype', 'hyped', 'calm', 'calmer', 'relaxed', 'relaxing',
+    'energetic', 'party', 'workout', 'sleepy', 'melancholy', 'moody',
+    'upbeat', 'downbeat', 'feelgood', 'lonely', 'nostalgic', 'nostalgia',
+    'emotional', 'dark', 'bright', 'summer', 'winter', 'rainy',
+})
+
+# Words allowed alongside mood words in a mood phrase ("something happy").
+# Anything else (e.g. "birthday") keeps the song path.
+_MOOD_PHRASE_OK = frozenset(FILLER_WORDS) | frozenset({
+    'feel', 'feeling', 'feels', 'felt', 'mood', 'moods', 'vibe', 'vibes',
+    'tunes', 'tune', 'track', 'tracks', 'playlist', 'mix',
+    'something', 'anything',
+})
+
+# Explicit framing words: without one of these (or 2+ mood words), a single
+# mood word with only generic filler ("find me happier") stays a song
+# search — "Happier" is a real song title, and the specific title wins.
+_MOOD_FRAMING_WORDS = frozenset({
+    'feel', 'feeling', 'feels', 'felt', 'mood', 'moods', 'vibe', 'vibes',
+    'tunes', 'tune', 'track', 'tracks', 'playlist', 'mix',
+    'something', 'anything',
+})
+
+
+def _extract_mood_word(text: str) -> str:
+    """First mood word in the text, or '' when none."""
+    for w in re.findall(r"[a-z]+(?:'[a-z]+)?", text.lower()):
+        if w in MOOD_WORDS:
+            return w
+    return ''
+
+
+def _is_mood_phrase(text: str) -> bool:
+    """True for inputs that are only mood words + filler ("something happy").
+
+    Guards: needs 2+ words (bare "happy" stays a song lookup — Pharrell),
+    explicit "Artist - Song" / "Song by Artist" structure always wins, and
+    a single mood word needs an explicit framing word ("something", "feel",
+    "vibe", ...) or a second mood word — otherwise "find me happier" is the
+    song "Happier", not a mood request.
+    """
+    words = re.findall(r"[a-z]+(?:'[a-z]+)?", text.lower())
+    if len(words) < 2 or ' - ' in text:
+        return False
+    if _BY_SONG_RE.match(text):
+        return False
+    mood_hits = sum(1 for w in words if w in MOOD_WORDS)
+    if mood_hits == 0:
+        return False
+    if not all(w in MOOD_WORDS or w in _MOOD_PHRASE_OK for w in words):
+        return False
+    if mood_hits >= 2:
+        return True
+    return any(w in _MOOD_FRAMING_WORDS for w in words)
+
+
+def _close_artist(name: str) -> Optional[str]:
+    """Canonical artist name for a close local-DB match, else None.
+
+    Stricter than get_artist_info's containment matching: "greedy by tate
+    mcrae" must NOT resolve to the Tate McRae card.
+    """
+    import difflib
+    try:
+        from services.artist_service import get_artist_info as _gai
+        hit = _gai(name)
+        if hit and difflib.SequenceMatcher(
+                None, name.lower(), hit['name'].lower()).ratio() >= 0.75:
+            return hit['name']
+    except Exception:
+        pass
+    return None
+
+
+def _known_artist(name: str) -> bool:
+    """True when the name matches the local artist DB (lazy import)."""
+    return _close_artist(name) is not None
+
+
 def _match_keywords(text: str, keywords: list) -> bool:
     for kw in keywords:
         if re.search(r'\b' + kw + r'\b', text, re.IGNORECASE):
@@ -289,7 +374,13 @@ def _normalize_song_query(raw: str) -> str:
     if by_match:
         song_part = by_match.group(1).strip()
         artist_part = by_match.group(2).strip()
-        if song_part and artist_part:
+        # Guards: pronouns can never be artists ("stand by me" is not
+        # "me - stand"), and questions stay with the NLP layer.
+        first_word = song_part.split()[0].lower() if song_part.split() else ''
+        if (song_part and artist_part
+                and len(song_part) >= 2 and len(artist_part) >= 2
+                and artist_part.lower() not in _PRONOUNS
+                and first_word not in _QUESTION_WORDS):
             return f"{artist_part} - {song_part}"
     return raw.strip()
 
@@ -353,7 +444,7 @@ def _clean_query_translate(text: str) -> str:
         result = _fuzzy_correct_title(result)
 
     if lang_suffix:
-        result = f"{result} {lang_suffix}"
+        result = f"{result} {lang_suffix}".strip()
     return result
 
 
@@ -392,6 +483,11 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
     if not text or text.startswith('/'):
         return None, ''
 
+    # Normalize sloppy typing before any matching: collapse inner whitespace
+    # ("BLINDING   LIGHTS") and repeated dashes ("drake--god's plan").
+    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'[-–—]{2,}', '-', text)
+
     yt_url = _extract_youtube_url(text)
     if yt_url:
         if _match_keywords(text, MP3_KEYWORDS):
@@ -410,6 +506,18 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
     if _match_keywords(text, THROWBACK_KEYWORDS):
         decade = _extract_decade(text)
         return 'throwback', decade
+
+    # Decade detected but no throwback keywords ("i want 80s music").
+    # Single tokens ("1985") stay on the song path to protect real titles.
+    if len(text.split()) >= 2:
+        _dec = _extract_decade(text)
+        if _dec:
+            return 'throwback', _dec
+
+    # Mood-word phrases ("something happy", "i feel sad") → /mood.
+    # Runs before the generic keyword scans so the feature is reachable.
+    if _is_mood_phrase(text):
+        return 'mood', _extract_mood_word(text)
 
     if _match_keywords(text, RANDOM_KEYWORDS):
         return 'random', ''
@@ -469,7 +577,22 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
         if not re.search(r'\b(youtube|video|mp3|audio)\b', _ps, re.IGNORECASE):
             _ps = _strip_filler_suffix(_ps)
             if _ps:
-                return 'song', _ps
+                # "play X by Y" keeps its by-structure as a song query.
+                if re.search(r'\bby\b', _ps, re.IGNORECASE):
+                    return 'song', _normalize_song_query(_ps)
+                # Mood-word soup ("play happy sad songs") → mood mix.
+                if _is_mood_phrase(_ps):
+                    return 'mood', _extract_mood_word(_ps)
+                # Bare known artist ("put on some drake") → artist card.
+                _core = re.sub(r'^(some|a)\s+', '', _ps,
+                               flags=re.IGNORECASE).strip()
+                _artist_hit = _close_artist(_core) if _core else None
+                if _artist_hit:
+                    return 'artist', _artist_hit
+                # Generic filler ("play some music") → surprise them.
+                if not _core or _core.lower() in _GENERIC_SONG_WORDS:
+                    return 'random', ''
+                return 'song', _normalize_song_query(_ps)
 
     if _match_keywords(text, YOUTUBE_KEYWORDS):
         query = _clean_query(text, ['video', 'music video', 'watch', 'play', 'youtube',

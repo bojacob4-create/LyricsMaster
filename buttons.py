@@ -1,13 +1,43 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from collections import OrderedDict
+import hashlib
+
+
+# ── Callback payload registry (round 6 QA) ─────────────────────────────────
+# Telegram caps callback_data at 64 BYTES. The old code truncated by
+# *characters*, so Arabic/CJK/emoji queries could still exceed the limit and
+# Telegram rejected the whole message (BUTTON_DATA_INVALID). Worse, plain
+# truncation silently corrupted long titles into different songs.
+#
+# Strategy: inline the query when it fits (the common case); otherwise store
+# the full query server-side under a short token. Buttons stay valid and
+# lossless. The registry is a bounded LRU — buttons are short-lived UI.
+_CB_REGISTRY = OrderedDict()
+_CB_REGISTRY_MAX = 1000
+_CB_TOKEN_PREFIX = '~'
+
+
+def _cb_token(query: str) -> str:
+    digest = hashlib.sha1(query.encode('utf-8')).hexdigest()[:12]
+    _CB_REGISTRY[digest] = query
+    _CB_REGISTRY.move_to_end(digest)
+    while len(_CB_REGISTRY) > _CB_REGISTRY_MAX:
+        _CB_REGISTRY.popitem(last=False)
+    return digest
+
+
+def cb_resolve(param: str) -> str:
+    """Resolve a callback param back to the full query (token or inline)."""
+    if param.startswith(_CB_TOKEN_PREFIX):
+        return _CB_REGISTRY.get(param[1:], param)
+    return param
 
 
 def _cb(action, query):
     data = f"{action}:{query}"
-    if len(data.encode('utf-8')) > 64:
-        max_q = 64 - len(action) - 1
-        query = query[:max_q]
-        data = f"{action}:{query}"
-    return data
+    if len(data.encode('utf-8')) <= 64:
+        return data
+    return f"{action}:{_CB_TOKEN_PREFIX}{_cb_token(query)}"
 
 
 def lyrics_buttons(query):
@@ -243,4 +273,11 @@ def decade_buttons():
             InlineKeyboardButton("💿 2000s", callback_data="decade:2000s"),
             InlineKeyboardButton("📱 2010s", callback_data="decade:2010s"),
         ],
+    ])
+
+
+def emoji_exit_buttons():
+    """Exit-game button shown on every emoji-game message."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🚪 Exit game", callback_data="emoji_exit:x")],
     ])

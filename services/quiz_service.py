@@ -134,6 +134,9 @@ def get_quiz_songs() -> List[Dict]:
 
 
 # ── Persistent best scores ────────────────────────────────────────────────
+# Writes go through utils.locked_json_update: the read-modify-write is held
+# under a per-file lock and saved via tmp+rename, so concurrent quiz
+# finishes can't clobber each other and a crash can't corrupt the file.
 
 def _load_scores() -> Dict:
     try:
@@ -143,28 +146,24 @@ def _load_scores() -> Dict:
         return {}
 
 
-def _save_scores(scores: Dict) -> None:
-    try:
-        with open(_SCORES_PATH, 'w', encoding='utf-8') as f:
-            json.dump(scores, f, ensure_ascii=False)
-    except Exception as e:
-        logger.warning(f"Could not save quiz scores: {e}")
-
-
 def _record_game(user_id: int, quiz: Dict) -> None:
     """Persist personal bests (best score %, best streak, games played)."""
     try:
-        scores = _load_scores()
-        key = str(user_id)
-        entry = scores.get(key, {"best_pct": 0, "best_streak": 0, "games": 0})
-        total = quiz.get("total_questions", 0)
-        pct = round(quiz.get("score", 0) / total * 100) if total else 0
-        entry["best_pct"] = max(entry.get("best_pct", 0), pct)
-        entry["best_streak"] = max(entry.get("best_streak", 0),
-                                   quiz.get("best_streak", 0))
-        entry["games"] = entry.get("games", 0) + 1
-        scores[key] = entry
-        _save_scores(scores)
+        from utils import locked_json_update
+
+        def _update(scores: Dict) -> Dict:
+            key = str(user_id)
+            entry = scores.get(key, {"best_pct": 0, "best_streak": 0, "games": 0})
+            total = quiz.get("total_questions", 0)
+            pct = round(quiz.get("score", 0) / total * 100) if total else 0
+            entry["best_pct"] = max(entry.get("best_pct", 0), pct)
+            entry["best_streak"] = max(entry.get("best_streak", 0),
+                                       quiz.get("best_streak", 0))
+            entry["games"] = entry.get("games", 0) + 1
+            scores[key] = entry
+            return scores
+
+        locked_json_update(_SCORES_PATH, _update, ensure_ascii=False)
     except Exception as e:
         logger.warning(f"Could not record quiz score: {e}")
 

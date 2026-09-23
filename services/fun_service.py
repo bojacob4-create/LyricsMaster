@@ -190,6 +190,24 @@ def _build_question_list(n: int) -> List[Dict]:
 
 # ── Duel ───────────────────────────────────────────────────────────────────
 
+# Duels expire 24h after creation (round 6 QA): old codes stayed joinable
+# forever and fun_duels.json grew unbounded.
+DUEL_TTL_SECONDS = 24 * 3600
+
+
+def _prune_expired_duels(duels: Dict) -> bool:
+    """Remove duels older than DUEL_TTL_SECONDS. Returns True if pruned."""
+    now = time.time()
+    expired = [code for code, d in duels.items()
+               if isinstance(d, dict)
+               and now - d.get("created", 0) > DUEL_TTL_SECONDS]
+    for code in expired:
+        duels.pop(code, None)
+    if expired:
+        logger.info(f"Pruned {len(expired)} expired duel(s)")
+    return bool(expired)
+
+
 def make_duel_code() -> str:
     """Random 6-char uppercase alphanumeric duel code."""
     alphabet = string.ascii_uppercase + string.digits
@@ -204,6 +222,8 @@ def create_duel(creator_id: int, creator_name: str,
     """
     try:
         duels = _load_json(DUELS_PATH)
+        if _prune_expired_duels(duels):
+            _save_json(DUELS_PATH, duels)
         code = make_duel_code()
         for _ in range(10):  # ensure uniqueness against existing duels
             if code not in duels:
@@ -244,6 +264,8 @@ def join_duel(code: str, user_id: int, user_name: str) -> Optional[Dict]:
     """
     try:
         duels = _load_json(DUELS_PATH)
+        if _prune_expired_duels(duels):
+            _save_json(DUELS_PATH, duels)
         key = str(code or "").strip().upper()
         duel = duels.get(key)
         if not isinstance(duel, dict):
