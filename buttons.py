@@ -218,3 +218,29 @@ def subscribe_count_buttons():
         [InlineKeyboardButton("2 songs per day", callback_data="subcount:2")],
         [InlineKeyboardButton("3 songs per day", callback_data="subcount:3")],
     ])
+
+
+def mood_buttons():
+    """Quick-reply mood picker for /mood (2 buttons per row)."""
+    from services.discovery_service import MOOD_BUTTONS
+    rows = []
+    for i in range(0, len(MOOD_BUTTONS), 2):
+        row = []
+        for label, key in MOOD_BUTTONS[i:i + 2]:
+            row.append(InlineKeyboardButton(label, callback_data=f"mood:{key}"))
+        rows.append(row)
+    return InlineKeyboardMarkup(rows)
+
+
+def decade_buttons():
+    """Decade picker for /throwback."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🎸 80s", callback_data="decade:80s"),
+            InlineKeyboardButton("📼 90s", callback_data="decade:90s"),
+        ],
+        [
+            InlineKeyboardButton("💿 2000s", callback_data="decade:2000s"),
+            InlineKeyboardButton("📱 2010s", callback_data="decade:2010s"),
+        ],
+    ])

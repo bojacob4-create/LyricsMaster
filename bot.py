@@ -28,7 +28,11 @@ from handlers import (
     wiki_command,
     artist_command, trending_command,
     song_command, top_command, random_command,
-    natural_language_handler, callback_query_handler
+    natural_language_handler, callback_query_handler,
+    # Round 4: discovery + fun
+    mood_command, extend_command, about_command, throwback_command,
+    newmusic_command, duel_command, daily_command, emoji_command,
+    mystats_command, badges_command,
 )
 from services.daily_song_service import send_daily_song
 
@@ -121,6 +125,16 @@ class TelegramBotWorker:
                 BotCommand("youtube",     "🎬 Find the music video"),
                 BotCommand("quiz",        "🎮 Lyrics guessing game"),
                 BotCommand("endquiz",     "End current quiz"),
+                BotCommand("mood",        "🎧 Mix for your mood"),
+                BotCommand("extend",      "🎶 Finish my playlist"),
+                BotCommand("about",       "💭 Find songs by theme"),
+                BotCommand("throwback",   "🕺 Decade throwbacks"),
+                BotCommand("newmusic",    "🔥 What's hot right now"),
+                BotCommand("duel",        "⚔️ Quiz duel with a friend"),
+                BotCommand("daily",       "🎯 Daily challenge"),
+                BotCommand("emoji",       "🎭 Emoji song guessing"),
+                BotCommand("mystats",     "🎧 Your music personality"),
+                BotCommand("badges",      "🏅 Your achievements"),
                 BotCommand("wiki",        "📚 Artist Wikipedia info"),
                 BotCommand("trending",    "📈 Trending songs now"),
                 BotCommand("subscribe",   "🔔 Daily song picks"),
@@ -271,6 +285,17 @@ class TelegramBotWorker:
             dp.add_handler(CommandHandler("song",        song_command))
             dp.add_handler(CommandHandler("top",         top_command))
             dp.add_handler(CommandHandler("random",      random_command))
+            # Round 4: discovery + fun
+            dp.add_handler(CommandHandler("mood",        mood_command))
+            dp.add_handler(CommandHandler("extend",      extend_command))
+            dp.add_handler(CommandHandler("about",       about_command))
+            dp.add_handler(CommandHandler("throwback",   throwback_command))
+            dp.add_handler(CommandHandler("newmusic",    newmusic_command))
+            dp.add_handler(CommandHandler("duel",        duel_command))
+            dp.add_handler(CommandHandler("daily",       daily_command))
+            dp.add_handler(CommandHandler("emoji",       emoji_command))
+            dp.add_handler(CommandHandler("mystats",     mystats_command))
+            dp.add_handler(CommandHandler("badges",      badges_command))
 
             dp.add_handler(CallbackQueryHandler(callback_query_handler))
             dp.add_handler(MessageHandler(

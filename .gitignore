@@ -1,0 +1,30 @@
+# Secrets & runtime data — never commit
+.env
+*.env
+
+# User/runtime JSON
+subscribers.json
+quiz_scores.json
+fun_duels.json
+fun_daily.json
+fun_stats.json
+fun_badges.json
+fun_quiz_cache.json
+
+# Logs
+*.log
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Media & generated files
+*.mp3
+*.wav
+*.ogg
+*.mp4
+*.m4a
+generated-icon.png

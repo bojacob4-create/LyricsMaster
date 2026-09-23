@@ -52,7 +52,71 @@ from services.artist_service import (
 from input_parser import parse_song_query, search_lyrics_with_fallback, clean_input
 from intent_router import detect_intent
 
+# ── Round 4: discovery + fun services ─────────────────────────────────────
+from services.discovery_service import (
+    MOOD_BUTTONS, normalize_mood, get_mood_mix,
+    parse_extend_lines, get_recent_picks, blend_vibe, get_extend_recs,
+    interpret_theme, match_theme,
+    DECADE_POOLS, normalize_decade, get_throwback,
+    get_new_music,
+)
+from services.fun_service import (
+    create_duel, join_duel, get_duel_questions,
+    record_duel_answer, duel_standings, delete_duel,
+    get_daily_status, record_daily_play, make_daily_questions,
+    get_emoji_puzzle, check_emoji_guess,
+    log_interaction, get_music_stats,
+    BADGES, award_badge, get_user_badges, auto_award_from_stats,
+)
+from services.quiz_service import _correct_display
+from services.recommendation_service import _detect_genre_fast
+from buttons import mood_buttons, decade_buttons
+
 logger = logging.getLogger(__name__)
+
+# ── Round 4: per-user session state (in-memory; games are live sessions) ────
+_pending_extend = {}        # user_id -> True while waiting for song list
+active_emoji = {}           # user_id -> {'puzzle', 'score', 'played'}
+active_duel_sessions = {}   # user_id -> {'code','idx','score','chat_id','name'}
+active_daily = {}           # user_id -> {'questions','idx','score'}
+_duel_chat_ids = {}         # code -> {str(user_id): chat_id} for result delivery
+
+
+def _safe_genre(artist_name: str) -> str:
+    """Local genre lookup — never network, never raises."""
+    try:
+        return _detect_genre_fast(artist_name or '')
+    except Exception:
+        return 'pop'
+
+
+def _new_badge_lines(user_id: int) -> list:
+    """Award stat-based badges; return Markdown congrats lines for new ones."""
+    lines = []
+    try:
+        for bid in auto_award_from_stats(user_id):
+            b = BADGES.get(bid, {})
+            lines.append(
+                f"🏅 New badge: {b.get('emoji', '🎖️')} "
+                f"*{b.get('name', bid)}* — {b.get('desc', '')}"
+            )
+    except Exception as e:
+        logger.debug(f"badge auto-award failed: {e}")
+    return lines
+
+
+def _award_badge_line(user_id: int, badge_id: str) -> str:
+    """Award one badge; return a Markdown congrats line or ''."""
+    try:
+        if award_badge(user_id, badge_id):
+            b = BADGES.get(badge_id, {})
+            return (
+                f"\n\n🏅 New badge: {b.get('emoji', '🎖️')} "
+                f"*{b.get('name', badge_id)}* — {b.get('desc', '')}"
+            )
+    except Exception as e:
+        logger.debug(f"badge award failed: {e}")
+    return ""
 
 def start_command(update: Update, context: CallbackContext):
     """Send a message when the command /start is issued."""
@@ -67,12 +131,16 @@ def start_command(update: Update, context: CallbackContext):
         "🎤 */lyrics* — Song lyrics with mood\n"
         "📊 */stats* — Word counts and patterns\n"
         "🎵 */recommend* — Discover similar songs\n"
+        "🎧 */mood* — A mix for your mood\n"
+        "🎶 */extend* — Finish my playlist\n"
         "🔍 */analyze* — Deep lyrical breakdown\n"
         "🎤 */artist* — Quick artist profile\n"
         "🔝 */top* — Top songs by genre\n"
         "🎲 */random [genre]* — Random song discovery\n"
         "🎬 */youtube* — Find the music video\n"
         "🎮 */quiz* — Lyrics guessing game\n"
+        "⚔️ */duel* — Quiz duel with a friend\n"
+        "🎯 */daily* — Daily challenge\n"
         "🔔 */subscribe* — Daily song picks\n\n"
         "*Try it now:*\n"
         "• /song OneRepublic - Counting Stars\n"
@@ -113,6 +181,11 @@ def help_command(update: Update, context: CallbackContext):
         "▫️ */translate* — Translate lyrics to any language\n\n"
         "*🎵 Discovery*\n"
         "▫️ */recommend* — Find similar songs\n"
+        "▫️ */mood* — A mix for your mood 🎧\n"
+        "▫️ */extend* — Finish my playlist (give me 3 songs)\n"
+        "▫️ */about* — Find songs by theme or meaning 💭\n"
+        "▫️ */throwback* — 80s / 90s / 2000s / 2010s gems 🕺\n"
+        "▫️ */newmusic* — What's hot right now 🔥\n"
         "▫️ */top* — Top songs by genre\n"
         "▫️ */artist* — Quick artist profile\n"
         "▫️ */youtube* — Find the music video\n"
@@ -120,7 +193,12 @@ def help_command(update: Update, context: CallbackContext):
         "▫️ */trending* — Trending songs now\n\n"
         "*🎮 Fun*\n"
         "▫️ */quiz* — Lyrics guessing game (110+ songs, 3 game modes!)\n"
-        "▫️ */endquiz* — End current quiz\n\n"
+        "▫️ */endquiz* — End current quiz\n"
+        "▫️ */duel* — Quiz duel with a friend ⚔️\n"
+        "▫️ */daily* — Daily 5-question challenge 🎯\n"
+        "▫️ */emoji* — Guess the song from emojis 🎭\n"
+        "▫️ */mystats* — Your music personality 🎧\n"
+        "▫️ */badges* — Your achievements 🏅\n\n"
         "*🔔 Daily Updates*\n"
         "▫️ */subscribe* — Get daily song picks\n"
         "▫️ */unsubscribe* — Stop daily updates\n\n"
@@ -171,6 +249,13 @@ def quiz_command(update: Update, context: CallbackContext):
         )
         response += format_quiz_question(quiz_data["current_question"], quiz_data)
 
+        # Round 4: stats + first-quiz badge
+        try:
+            log_interaction(user_id, 'quiz_start')
+            response += _award_badge_line(user_id, 'first_quiz')
+        except Exception as _e:
+            logger.debug(f"round4 quiz hook failed: {_e}")
+
         update.message.reply_text(response)
         logger.info(f"Successfully started quiz for user {user_id}")
 
@@ -198,6 +283,15 @@ def quiz_answer(update: Update, context: CallbackContext):
         logger.debug(f"Quiz answer from user {user_id}: {answer}")
 
         is_correct, feedback = check_answer(user_id, answer)
+
+        # Round 4: track correct answers + milestone badges (local only)
+        try:
+            if is_correct:
+                log_interaction(user_id, 'quiz_correct')
+            for _bl in _new_badge_lines(user_id):
+                feedback += f"\n{_bl}"
+        except Exception as _e:
+            logger.debug(f"round4 quiz hook failed: {_e}")
 
         update.message.reply_text(feedback)
         logger.info(f"Quiz answer processed for user {user_id}: correct={is_correct}")
@@ -304,6 +398,20 @@ def natural_language_handler(update: Update, context: CallbackContext):
     if not text:
         return
 
+    # ── Round 4a: pending /extend song list (multi-line "Artist - Title") ───
+    # Must run before the regex router, which would otherwise treat the
+    # lines as a new song request.
+    if user_id in _pending_extend:
+        _pending_extend.pop(user_id, None)
+        _handle_extend_songs(update, user_id, text)
+        return
+
+    # ── Round 4b: emoji game guesses (free text, e.g. "Tyla - Water") ───────
+    # Must run before the regex router for the same reason.
+    if user_id in active_emoji:
+        _handle_emoji_guess(update, user_id, text)
+        return
+
     # ── Step 1: Regex router — always runs first ────────────────────────────
     # Deterministic, zero-latency, and must take priority over ALL stored
     # state.  If the user typed a new structured request, clear any pending
@@ -398,6 +506,16 @@ def natural_language_handler(update: Update, context: CallbackContext):
             handler(update, context)
         else:
             logger.debug(f"Unknown intent '{intent}' for user {user_id}")
+        return
+
+    # ── Round 4c: duel + daily-challenge answers (A/B/C/D) ─────────────────
+    # Checked before the regular quiz so the game sessions don't clash.
+    answer_up = text.upper()
+    if user_id in active_duel_sessions and len(answer_up) == 1 and answer_up in 'ABCD':
+        _handle_duel_answer(update, context, user_id, answer_up)
+        return
+    if user_id in active_daily and len(answer_up) == 1 and answer_up in 'ABCD':
+        _handle_daily_answer(update, context, user_id, answer_up)
         return
 
     # ── Step 2: Quiz state ───────────────────────────────────────────────────
@@ -835,6 +953,8 @@ def callback_query_handler(update: Update, context: CallbackContext):
         'random': random_command,
         'wiki': wiki_command,
         'artistsongs': _artist_songs_picker_command,
+        'mood': mood_command,
+        'decade': throwback_command,
     }
 
     handler = handler_map.get(action)
@@ -1156,6 +1276,11 @@ def recommend_command(update: Update, context: CallbackContext):
             r['artist'].lower() for r in recommendations
         ]
         logger.info(f"Successfully sent recommendations to user {user_id}")
+        # Round 4: taste stats (local only)
+        try:
+            log_interaction(user_id, 'recommend', genre=_safe_genre(use_artist))
+        except Exception as _e:
+            logger.debug(f"round4 stats hook failed: {_e}")
 
     except Exception as e:
         logger.error(f"Error processing recommend command for user {user_id}: {str(e)}")
@@ -2392,6 +2517,13 @@ def random_command(update: Update, context: CallbackContext):
             reply_markup=song_dashboard_buttons(btn_query),
         )
         logger.info(f"Successfully sent random song to user {user_id}")
+        # Round 4: taste stats + milestone badges (local, never breaks picks)
+        try:
+            log_interaction(user_id, 'random', genre=_safe_genre(artist_name))
+            for _bl in _new_badge_lines(user_id):
+                update.message.reply_text(_bl, parse_mode='Markdown')
+        except Exception as _e:
+            logger.debug(f"round4 stats hook failed: {_e}")
 
     except Exception as e:
         logger.error(f"Error in random command for user {user_id}: {str(e)}")
@@ -2400,3 +2532,829 @@ def random_command(update: Update, context: CallbackContext):
             "Please try again! 🔄"
         )
 
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# ROUND 4 — Discovery (mood / extend / about / throwback / newmusic)
+#           + Fun (duel / daily / emoji / mystats / badges)
+# All heavy logic lives in services/discovery_service.py and
+# services/fun_service.py (local-first, APIs are optional enhancement).
+# ══════════════════════════════════════════════════════════════════════════
+
+_MOOD_LABELS = {key: label for label, key in MOOD_BUTTONS}
+
+
+# ── 1. /mood ──────────────────────────────────────────────────────────────
+
+def mood_command(update: Update, context: CallbackContext):
+    """Handle /mood — a 5-song mix for the user's mood."""
+    user_id = update.effective_user.id
+    try:
+        text = " ".join(context.args or []).strip()
+        if not text:
+            update.message.reply_text(
+                "🎧 *How are you feeling?*\n"
+                "Pick a mood and I'll build you a mix:",
+                parse_mode='Markdown',
+                reply_markup=mood_buttons(),
+            )
+            return
+
+        mood = normalize_mood(text)
+        if not mood and text.lower() in _MOOD_LABELS:
+            mood = text.lower()
+        if not mood:
+            update.message.reply_text(
+                f"🤔 I don't know the mood \"{text}\" yet.\n"
+                "Try one of these:",
+                reply_markup=mood_buttons(),
+            )
+            return
+
+        _send_mood_mix(update, user_id, mood)
+    except Exception as e:
+        logger.error(f"Error in mood command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Couldn't build your mix right now.\n"
+            "Please try again! 🔄"
+        )
+
+
+def _send_mood_mix(update, user_id: int, mood: str):
+    """Fetch and send a mood mix (works fully offline)."""
+    label = _MOOD_LABELS.get(mood, mood.title())
+    update.message.chat.send_action(action="typing")
+    songs = get_mood_mix(mood, 5)
+    if not songs:
+        update.message.reply_text(
+            "😓 I couldn't put a mix together right now.\n"
+            "Please try again! 🔄"
+        )
+        return
+
+    lines = [f"🎧 *{label} Mix*",
+             "━━━━━━━━━━━━━━━━━━━━━", ""]
+    for i, s in enumerate(songs, 1):
+        lines.append(f"*{i}.* {s['artist']} — {s['name']}")
+        if s.get('reason'):
+            lines.append(f"   ↳ {s['reason']}")
+    lines += ["",
+              "━━━━━━━━━━━━━━━━━━━━━",
+              "🎧 /mood — another mood  •  🎲 /random — surprise me"]
+    try:
+        log_interaction(user_id, 'recommend', genre=_safe_genre(songs[0]['artist']))
+    except Exception:
+        pass
+    update.message.reply_text(
+        '\n'.join(lines),
+        parse_mode='Markdown',
+        disable_web_page_preview=True,
+        reply_markup=song_list_buttons(
+            [{'artist': s['artist'], 'song': s['name']} for s in songs]
+        ),
+    )
+    logger.info(f"Sent mood mix ({mood}) to user {user_id}")
+
+
+# ── 2. /extend ────────────────────────────────────────────────────────────
+
+def extend_command(update: Update, context: CallbackContext):
+    """Handle /extend — 'finish my playlist' from 3 songs."""
+    user_id = update.effective_user.id
+    try:
+        full = update.message.text or ''
+        body = re.sub(r'^/extend(@\w+)?\s*', '', full).strip()
+
+        if body:
+            songs = parse_extend_lines(body)
+            if songs:
+                _send_extend_results(update, user_id, songs,
+                                     intro="🎶 Based on your songs")
+                return
+            # Had text but nothing parseable — ask again properly.
+            _pending_extend[user_id] = True
+            update.message.reply_text(
+                "🤔 I couldn't read any songs there.\n\n"
+                "Send me 3 songs, one per line, like this:\n"
+                "Tyla - Water\nRema - Calm Down\nAyra Starr - Rush"
+            )
+            return
+
+        # No songs given — try the user's recent /random history first.
+        recent = get_recent_picks(user_id, 3)
+        if len(recent) >= 2:
+            _send_extend_results(update, user_id, recent,
+                                 intro="🎶 Based on your recent random picks")
+            return
+
+        _pending_extend[user_id] = True
+        update.message.reply_text(
+            "🎶 *Finish My Playlist*\n\n"
+            "Send me 3 songs you love — one per line, like this:\n"
+            "Tyla - Water\nRema - Calm Down\nAyra Starr - Rush\n\n"
+            "I'll find 5 more that fit the vibe! ✨",
+            parse_mode='Markdown',
+        )
+    except Exception as e:
+        logger.error(f"Error in extend command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong.\n"
+            "Please try again! 🔄"
+        )
+
+
+def _handle_extend_songs(update, user_id: int, text: str):
+    """Process the song list sent after /extend asked for it."""
+    songs = parse_extend_lines(text)
+    if not songs:
+        update.message.reply_text(
+            "🤔 I still couldn't read any songs.\n\n"
+            "One per line, like: *Tyla - Water*\n"
+            "Or /extend to start over.",
+            parse_mode='Markdown',
+        )
+        return
+    _send_extend_results(update, user_id, songs,
+                         intro="🎶 Based on your songs")
+
+
+def _send_extend_results(update, user_id: int, songs: list, intro: str):
+    update.message.chat.send_action(action="typing")
+    vibe = blend_vibe(songs)
+    recs = get_extend_recs(songs, 5)
+    if not recs:
+        update.message.reply_text(
+            "😓 I couldn't find matches for that vibe right now.\n"
+            "Please try again! 🔄"
+        )
+        return
+
+    given = '\n'.join(f"• {s['artist']} - {s['song']}" for s in songs[:5])
+    lines = [f"{intro} — *{vibe.get('label', 'your vibe')}*",
+             "━━━━━━━━━━━━━━━━━━━━━",
+             given,
+             "",
+             "✨ *Keep the vibe going:*",
+             ""]
+    for i, r in enumerate(recs, 1):
+        lines.append(f"*{i}.* {r['artist']} — {r['name']}")
+        if r.get('reason'):
+            lines.append(f"   ↳ {r['reason']}")
+    lines += ["",
+              "━━━━━━━━━━━━━━━━━━━━━",
+              "🎶 /extend — try another set"]
+    try:
+        log_interaction(user_id, 'recommend',
+                        genre=vibe.get('genre') or _safe_genre(recs[0]['artist']))
+    except Exception:
+        pass
+    update.message.reply_text(
+        '\n'.join(lines),
+        parse_mode='Markdown',
+        disable_web_page_preview=True,
+        reply_markup=song_list_buttons(
+            [{'artist': r['artist'], 'song': r['name']} for r in recs]
+        ),
+    )
+    logger.info(f"Sent extend results ({vibe.get('label')}) to user {user_id}")
+
+
+# ── 3. /about ─────────────────────────────────────────────────────────────
+
+def about_command(update: Update, context: CallbackContext):
+    """Handle /about — find songs by theme/meaning."""
+    user_id = update.effective_user.id
+    try:
+        query = " ".join(context.args or []).strip()
+        if not query:
+            update.message.reply_text(
+                "💭 *Songs about… what?*\n\n"
+                "Tell me a theme and I'll find songs that match its meaning:\n"
+                "• /about songs about starting over\n"
+                "• /about summer nights\n"
+                "• /about heartbreak",
+                parse_mode='Markdown',
+            )
+            return
+
+        update.message.chat.send_action(action="typing")
+        processing_msg = update.message.reply_text(
+            f"💭 Thinking about \"{query}\"… ✨"
+        )
+        theme = interpret_theme(query)
+        songs = match_theme(theme, 5)
+        if not songs:
+            processing_msg.edit_text(
+                "😓 I couldn't find songs for that theme.\n"
+                "Try different words! 💭"
+            )
+            return
+
+        keywords = ', '.join(theme.get('keywords', [])[:5])
+        header = f"💭 *Songs about {query}*" if len(query) < 40 else "💭 *Theme match*"
+        lines = [header, "━━━━━━━━━━━━━━━━━━━━━", ""]
+        if keywords:
+            lines.append(f"Reading it as: {keywords}")
+            lines.append("")
+        for i, s in enumerate(songs, 1):
+            lines.append(f"*{i}.* {s['artist']} — {s['song']}")
+            if s.get('reason'):
+                lines.append(f"   ↳ {s['reason']}")
+        lines += ["",
+                  "━━━━━━━━━━━━━━━━━━━━━",
+                  "💭 /about — try another theme"]
+        try:
+            genres = theme.get('genres') or []
+            log_interaction(user_id, 'recommend',
+                            genre=genres[0] if genres else None)
+        except Exception:
+            pass
+        processing_msg.edit_text(
+            '\n'.join(lines),
+            parse_mode='Markdown',
+            disable_web_page_preview=True,
+            reply_markup=song_list_buttons(
+                [{'artist': s['artist'], 'song': s['song']} for s in songs]
+            ),
+        )
+        logger.info(f"Sent about/theme results to user {user_id}")
+    except Exception as e:
+        logger.error(f"Error in about command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong.\n"
+            "Please try again! 🔄"
+        )
+
+
+# ── 4. /throwback ─────────────────────────────────────────────────────────
+
+def throwback_command(update: Update, context: CallbackContext):
+    """Handle /throwback — decade explorer (80s/90s/2000s/2010s)."""
+    user_id = update.effective_user.id
+    try:
+        arg = " ".join(context.args or []).strip()
+        if not arg:
+            update.message.reply_text(
+                "🕺 *Pick a decade!*",
+                parse_mode='Markdown',
+                reply_markup=decade_buttons(),
+            )
+            return
+
+        decade = normalize_decade(arg)
+        picks = get_throwback(decade, 5)
+        if not picks:
+            update.message.reply_text(
+                "😓 Couldn't dig up that decade right now.\n"
+                "Please try again! 🔄"
+            )
+            return
+
+        decade_emoji = {'80s': '🎸', '90s': '📼',
+                        '2000s': '💿', '2010s': '📱'}.get(decade, '🕺')
+        lines = [f"{decade_emoji} *{decade} Throwback!*",
+                 "━━━━━━━━━━━━━━━━━━━━━", ""]
+        for i, s in enumerate(picks, 1):
+            lines.append(f"*{i}.* {s['artist']} — {s['song']}")
+            if s.get('fact'):
+                lines.append(f"   💡 {s['fact']}")
+        lines += ["",
+                  "━━━━━━━━━━━━━━━━━━━━━",
+                  "🕺 /throwback — another decade"]
+        update.message.reply_text(
+            '\n'.join(lines),
+            parse_mode='Markdown',
+            disable_web_page_preview=True,
+            reply_markup=song_list_buttons(
+                [{'artist': s['artist'], 'song': s['song']} for s in picks]
+            ),
+        )
+        logger.info(f"Sent throwback ({decade}) to user {user_id}")
+    except Exception as e:
+        logger.error(f"Error in throwback command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong.\n"
+            "Please try again! 🔄"
+        )
+
+
+# ── 5. /newmusic ──────────────────────────────────────────────────────────
+
+def newmusic_command(update: Update, context: CallbackContext):
+    """Handle /newmusic — what's charting right now (honest labeling)."""
+    user_id = update.effective_user.id
+    try:
+        genre = " ".join(context.args or []).strip() or None
+        update.message.chat.send_action(action="typing")
+        songs, is_live = get_new_music(genre, 5)
+        if not songs:
+            update.message.reply_text(
+                "😓 Couldn't fetch the charts right now.\n"
+                "Please try again! 🔄"
+            )
+            return
+
+        if is_live:
+            header = ("🔥 *Hot Right Now*\n"
+                      "What everyone's playing on the charts:")
+            footer_note = ("\n_Charts update regularly — "
+                           "this is what's trending, not release dates._")
+        else:
+            header = ("🔥 *Hot Right Now*\n"
+                      "Popular picks while the live chart refreshes:")
+            footer_note = ""
+        lines = [header, "━━━━━━━━━━━━━━━━━━━━━", ""]
+        rank_emoji = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣']
+        for i, s in enumerate(songs, 1):
+            r = rank_emoji[i - 1] if i <= len(rank_emoji) else '🎵'
+            lines.append(f"{r} {s['artist']} — {s['song']}")
+            if s.get('note'):
+                lines.append(f"   ↳ {s['note']}")
+        lines += ["", "━━━━━━━━━━━━━━━━━━━━━",
+                  "🔥 /newmusic — refresh  •  🎲 /random — surprise me"]
+        if footer_note:
+            lines.append(footer_note)
+        update.message.reply_text(
+            '\n'.join(lines),
+            parse_mode='Markdown',
+            disable_web_page_preview=True,
+            reply_markup=song_list_buttons(
+                [{'artist': s['artist'], 'song': s['song']} for s in songs]
+            ),
+        )
+        logger.info(f"Sent newmusic (live={is_live}) to user {user_id}")
+    except Exception as e:
+        logger.error(f"Error in newmusic command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong.\n"
+            "Please try again! 🔄"
+        )
+
+
+# ── 6. /duel ──────────────────────────────────────────────────────────────
+
+def _format_duel_question(duel_code: str, idx: int, score: int,
+                          total_q: int) -> str:
+    questions = get_duel_questions(duel_code)
+    q = questions[idx]
+    quiz_data = {"total_questions": idx, "score": score}
+    return (f"⚔️ *Duel — Question {idx + 1}/{total_q}*\n\n"
+            + format_quiz_question(q, quiz_data))
+
+
+def duel_command(update: Update, context: CallbackContext):
+    """Handle /duel — create or join a 5-question quiz duel."""
+    user_id = update.effective_user.id
+    name = update.effective_user.first_name or "Player"
+    chat_id = update.effective_chat.id
+    try:
+        args = context.args or []
+        if args:
+            # ── Join a friend's duel ──
+            code = args[0].strip().upper()
+            duel = join_duel(code, user_id, name)
+            if not duel:
+                update.message.reply_text(
+                    "😕 I couldn't find that duel.\n\n"
+                    "Check the code with your friend — it looks like `A3F9K2`.\n"
+                    "Or start your own with /duel ⚔️"
+                )
+                return
+            questions = get_duel_questions(code)
+            if len(questions) < 3:
+                update.message.reply_text(
+                    "😓 That duel didn't have enough questions.\n"
+                    "Ask your friend to create a new one with /duel ⚔️"
+                )
+                return
+            _duel_chat_ids.setdefault(code, {})[str(user_id)] = chat_id
+            active_duel_sessions[user_id] = {
+                'code': code, 'idx': 0, 'score': 0,
+                'chat_id': chat_id, 'name': name,
+            }
+            try:
+                log_interaction(user_id, 'duel')
+            except Exception:
+                pass
+            update.message.reply_text(
+                f"⚔️ *You're in!* Duel vs *{duel.get('creator_name', 'your friend')}*\n"
+                "Same 5 questions, most correct wins. Good luck! 🍀\n\n"
+                + _format_duel_question(code, 0, 0, len(questions)),
+                parse_mode='Markdown',
+            )
+            logger.info(f"User {user_id} joined duel {code}")
+            return
+
+        # ── Create a duel ──
+        update.message.reply_text(
+            "⚔️ Creating your duel… gathering 5 questions! 🎲"
+        )
+        duel = create_duel(user_id, name)
+        code = duel.get('code', '')
+        questions = get_duel_questions(code)
+        if len(questions) < 3:
+            delete_duel(code)
+            update.message.reply_text(
+                "😓 I couldn't gather enough questions right now.\n"
+                "Please try again in a moment! 🔄"
+            )
+            return
+        _duel_chat_ids.setdefault(code, {})[str(user_id)] = chat_id
+        active_duel_sessions[user_id] = {
+            'code': code, 'idx': 0, 'score': 0,
+            'chat_id': chat_id, 'name': name,
+        }
+        try:
+            log_interaction(user_id, 'duel')
+        except Exception:
+            pass
+        update.message.reply_text(
+            f"⚔️ *Duel created!* Your code: `{code}`\n\n"
+            "Send the code to a friend — they join with:\n"
+            f"/duel {code}\n\n"
+            "You'll both answer the same 5 questions. "
+            "Most correct answers wins! 🏆\n\n"
+            + _format_duel_question(code, 0, 0, len(questions)),
+            parse_mode='Markdown',
+        )
+        logger.info(f"User {user_id} created duel {code}")
+    except Exception as e:
+        logger.error(f"Error in duel command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong.\n"
+            "Please try again! 🔄"
+        )
+
+
+def _handle_duel_answer(update, context, user_id: int, answer: str):
+    """Process one A/B/C/D answer inside a duel."""
+    sess = active_duel_sessions.get(user_id)
+    if not sess:
+        return
+    try:
+        questions = get_duel_questions(sess['code'])
+        if sess['idx'] >= len(questions):
+            active_duel_sessions.pop(user_id, None)
+            return
+        q = questions[sess['idx']]
+        correct = (ord(answer) - ord('A')) == q.get('answer_index', 0)
+        try:
+            record_duel_answer(sess['code'], user_id, correct)
+        except Exception:
+            pass
+        if correct:
+            sess['score'] += 1
+            feedback = "✅ Correct!"
+        else:
+            feedback = f"❌ Not quite! The answer was: {_correct_display(q)}"
+        sess['idx'] += 1
+
+        if sess['idx'] < len(questions):
+            update.message.reply_text(
+                f"{feedback}\n\n"
+                + _format_duel_question(sess['code'], sess['idx'],
+                                        sess['score'], len(questions)),
+                parse_mode='Markdown',
+            )
+            return
+
+        # ── Duel finished for this player ──
+        active_duel_sessions.pop(user_id, None)
+        code = sess['code']
+        st = duel_standings(code)
+        names = st.get('names', {})
+        scores = st.get('scores', {})
+        nq = len(questions)
+
+        if not st.get('finished', {}).get(str(user_id)):
+            # Opponent hasn't finished yet — wait for them.
+            update.message.reply_text(
+                f"{feedback}\n\n"
+                f"🏁 You finished: *{sess['score']}/{nq}*\n"
+                "Waiting for your opponent to finish… ⏳\n"
+                "I'll announce the winner as soon as they're done! 🏆",
+                parse_mode='Markdown',
+            )
+            return
+
+        # ── Both finished — declare the winner to both players ──
+        players = list(scores.keys())
+        if len(players) == 2:
+            a, b = players[0], players[1]
+            sa, sb = scores.get(a, 0), scores.get(b, 0)
+            na, nb = names.get(a, 'Player 1'), names.get(b, 'Player 2')
+            winner = st.get('winner')
+            if winner == 'tie':
+                result = (f"⚔️ *Duel over — it's a TIE!* 🤝\n\n"
+                          f"{na}: {sa}/{nq}\n{nb}: {sb}/{nq}")
+                winner_id = None
+            else:
+                wname = names.get(str(winner), 'Winner')
+                result = (f"⚔️ *Duel over!* 🏆\n\n"
+                          f"{na}: {sa}/{nq}\n{nb}: {sb}/{nq}\n\n"
+                          f"🎉 *{wname} wins!*")
+                winner_id = int(winner)
+        else:
+            result = (f"⚔️ *Duel over!*\n\nYour score: *{sess['score']}/{nq}*")
+            winner_id = None
+
+        badge_line = ""
+        if winner_id:
+            badge_line = _award_badge_line(winner_id, 'duel_champ')
+
+        # Tell the finisher…
+        update.message.reply_text(
+            f"{feedback}\n\n{result}{badge_line}",
+            parse_mode='Markdown',
+        )
+        # …and the opponent (whose chat id we stored at join time).
+        try:
+            chats = _duel_chat_ids.get(code, {})
+            for uid_str, cid in chats.items():
+                if int(uid_str) != user_id:
+                    context.bot.send_message(
+                        chat_id=cid,
+                        text=f"{result}{badge_line if int(uid_str) == winner_id else ''}",
+                        parse_mode='Markdown',
+                    )
+        except Exception as e:
+            logger.debug(f"duel notify failed: {e}")
+        try:
+            delete_duel(code)
+            _duel_chat_ids.pop(code, None)
+        except Exception:
+            pass
+        logger.info(f"Duel {code} completed, winner={st.get('winner')}")
+    except Exception as e:
+        logger.error(f"Error in duel answer for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong.\n"
+            "Try /duel to start over! 🔄"
+        )
+
+
+# ── 7. /daily ─────────────────────────────────────────────────────────────
+
+def daily_command(update: Update, context: CallbackContext):
+    """Handle /daily — 5 questions, one play per day, streaks."""
+    user_id = update.effective_user.id
+    try:
+        status = get_daily_status(user_id)
+        if not status.get('can_play'):
+            update.message.reply_text(
+                "✅ You've already played today!\n\n"
+                f"🔥 Current streak: *{status.get('streak', 0)}* day(s)\n"
+                f"🏆 Best streak: *{status.get('best_streak', 0)}* day(s)\n\n"
+                "Come back tomorrow to keep the flame alive! 🔥",
+                parse_mode='Markdown',
+            )
+            return
+
+        questions = make_daily_questions(5)
+        if len(questions) < 3:
+            update.message.reply_text(
+                "😓 I couldn't gather today's questions right now.\n"
+                "Please try again in a moment! 🔄"
+            )
+            return
+
+        active_daily[user_id] = {'questions': questions, 'idx': 0, 'score': 0}
+        streak_line = ""
+        if status.get('streak', 0) > 0:
+            streak_line = f"\n🔥 You're on a *{status['streak']}*-day streak — keep it going!"
+        update.message.reply_text(
+            "🎯 *Daily Challenge!*\n"
+            "5 questions, one play per day." + streak_line + "\n\n"
+            + _format_daily_question(user_id),
+            parse_mode='Markdown',
+        )
+        logger.info(f"Started daily challenge for user {user_id}")
+    except Exception as e:
+        logger.error(f"Error in daily command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong.\n"
+            "Please try again! 🔄"
+        )
+
+
+def _format_daily_question(user_id: int) -> str:
+    sess = active_daily[user_id]
+    q = sess['questions'][sess['idx']]
+    quiz_data = {"total_questions": sess['idx'], "score": sess['score']}
+    total = len(sess['questions'])
+    return (f"🎯 *Daily — Question {sess['idx'] + 1}/{total}*\n\n"
+            + format_quiz_question(q, quiz_data))
+
+
+def _handle_daily_answer(update, context, user_id: int, answer: str):
+    """Process one A/B/C/D answer inside the daily challenge."""
+    sess = active_daily.get(user_id)
+    if not sess:
+        return
+    try:
+        questions = sess['questions']
+        q = questions[sess['idx']]
+        correct = (ord(answer) - ord('A')) == q.get('answer_index', 0)
+        if correct:
+            sess['score'] += 1
+            feedback = "✅ Correct!"
+        else:
+            feedback = f"❌ Not quite! The answer was: {_correct_display(q)}"
+        sess['idx'] += 1
+
+        if sess['idx'] < len(questions):
+            update.message.reply_text(
+                f"{feedback}\n\n" + _format_daily_question(user_id),
+                parse_mode='Markdown',
+            )
+            return
+
+        # ── Daily complete ──
+        active_daily.pop(user_id, None)
+        total = len(questions)
+        score = sess['score']
+        res = record_daily_play(user_id, score, total)
+        try:
+            log_interaction(user_id, 'daily')
+        except Exception:
+            pass
+        msg = (f"{feedback}\n\n"
+               f"🎯 *Daily complete!* {score}/{total}\n"
+               f"🔥 Streak: *{res.get('streak', 0)}* day(s)\n"
+               f"🏆 Best: *{res.get('best_streak', 0)}* day(s)")
+        if res.get('new_best'):
+            msg += "\n✨ New personal best streak!"
+        for bl in _new_badge_lines(user_id):
+            msg += f"\n{bl}"
+        update.message.reply_text(msg, parse_mode='Markdown')
+        logger.info(f"Daily complete for user {user_id}: {score}/{total}")
+    except Exception as e:
+        logger.error(f"Error in daily answer for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong.\n"
+            "Try /daily to start over! 🔄"
+        )
+
+
+# ── 8. /emoji ─────────────────────────────────────────────────────────────
+
+def emoji_command(update: Update, context: CallbackContext):
+    """Handle /emoji — guess the song from an emoji rendition."""
+    user_id = update.effective_user.id
+    try:
+        if user_id in active_emoji:
+            update.message.reply_text(
+                "🎭 You're already playing!\n"
+                "Guess the song or type *stop* to end the game.",
+                parse_mode='Markdown',
+            )
+            return
+        update.message.chat.send_action(action="typing")
+        puzzle = get_emoji_puzzle()
+        active_emoji[user_id] = {'puzzle': puzzle, 'score': 0, 'played': 0}
+        update.message.reply_text(
+            "🎭 *Emoji Guessing Game!*\n\n"
+            f"{puzzle['emojis']}\n\n"
+            "What song is this?\n"
+            "Reply with *Artist - Title* (or type *stop* to end).",
+            parse_mode='Markdown',
+        )
+        logger.info(f"Started emoji game for user {user_id}")
+    except Exception as e:
+        logger.error(f"Error in emoji command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong.\n"
+            "Please try again! 🔄"
+        )
+
+
+def _handle_emoji_guess(update, user_id: int, text: str):
+    """Process one free-text guess inside the emoji game."""
+    sess = active_emoji.get(user_id)
+    if not sess:
+        return
+    try:
+        if text.lower().strip() in ('stop', 'quit', 'end', '/stop'):
+            score, played = sess['score'], sess['played']
+            active_emoji.pop(user_id, None)
+            update.message.reply_text(
+                f"🎭 *Game over!*\n\n"
+                f"You guessed *{score}* out of *{played}* right. "
+                f"{'🏆 Amazing!' if score >= 5 else 'Nice playing! 🎶'}\n\n"
+                "Play again anytime with /emoji!",
+                parse_mode='Markdown',
+            )
+            return
+
+        try:
+            log_interaction(user_id, 'emoji')
+        except Exception:
+            pass
+        if check_emoji_guess(sess['puzzle'], text):
+            sess['score'] += 1
+            sess['played'] += 1
+            puzzle = get_emoji_puzzle()
+            sess['puzzle'] = puzzle
+            update.message.reply_text(
+                f"✅ Correct! That's *{text.strip()}*. "
+                f"Score: *{sess['score']}* 🎉\n\n"
+                f"Next one:\n{puzzle['emojis']}\n\n"
+                "What song is this?",
+                parse_mode='Markdown',
+            )
+        else:
+            update.message.reply_text(
+                "❌ Not quite — try again!\n"
+                f"Hint: think about what the emojis *mean*. 🤔\n\n"
+                f"{sess['puzzle']['emojis']}"
+            )
+    except Exception as e:
+        logger.error(f"Error in emoji guess for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong.\n"
+            "Type *stop* to end or /emoji to restart.",
+            parse_mode='Markdown',
+        )
+
+
+# ── 9. /mystats ───────────────────────────────────────────────────────────
+
+def mystats_command(update: Update, context: CallbackContext):
+    """Handle /mystats — the user's music personality."""
+    user_id = update.effective_user.id
+    try:
+        stats = get_music_stats(user_id)
+        if not stats.get('total'):
+            update.message.reply_text(
+                "🌱 *Your taste profile is growing!*\n\n"
+                "Use the bot a little — /random, /recommend, /quiz — "
+                "and I'll show your music personality here. 🎧",
+                parse_mode='Markdown',
+            )
+            return
+
+        lines = ["🎧 *Your Music Personality*",
+                 "━━━━━━━━━━━━━━━━━━━━━", "",
+                 stats.get('label', ''), "",
+                 "*Top genres:*"]
+        for genre, pct in stats.get('top', [])[:3]:
+            bar = '🟩' * max(1, pct // 20) + '⬜' * (5 - max(1, pct // 20))
+            lines.append(f"• {genre.title()} — {pct}% {bar}")
+        lines += ["",
+                  f"🎵 Songs explored: *{stats.get('total', 0)}*",
+                  f"✅ Quiz correct: *{stats.get('quiz_correct', 0)}*",
+                  "",
+                  "━━━━━━━━━━━━━━━━━━━━━",
+                  "🏅 /badges — see your achievements"]
+        update.message.reply_text('\n'.join(lines), parse_mode='Markdown')
+        logger.info(f"Sent mystats to user {user_id}")
+    except Exception as e:
+        logger.error(f"Error in mystats command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong.\n"
+            "Please try again! 🔄"
+        )
+
+
+# ── 10. /badges ───────────────────────────────────────────────────────────
+
+def badges_command(update: Update, context: CallbackContext):
+    """Handle /badges — earned + locked achievements."""
+    user_id = update.effective_user.id
+    try:
+        ub = get_user_badges(user_id)
+        earned = ub.get('earned', [])
+        locked = ub.get('locked', [])
+        lines = ["🏅 *Your Badges*",
+                 "━━━━━━━━━━━━━━━━━━━━━", ""]
+        if earned:
+            lines.append(f"*Earned ({len(earned)}):*")
+            for bid in earned:
+                b = BADGES.get(bid, {})
+                lines.append(
+                    f"{b.get('emoji', '🎖️')} *{b.get('name', bid)}*\n"
+                    f"   ↳ {b.get('desc', '')}"
+                )
+            lines.append("")
+        else:
+            lines.append("No badges yet — your journey starts now! 🚀")
+            lines.append("")
+        if locked:
+            lines.append(f"*Still to earn ({len(locked)}):*")
+            for bid in locked:
+                b = BADGES.get(bid, {})
+                lines.append(
+                    f"🔒 *{b.get('name', bid)}*\n"
+                    f"   ↳ {b.get('desc', '')}"
+                )
+        lines += ["",
+                  "━━━━━━━━━━━━━━━━━━━━━",
+                  "Play /quiz, /daily and /duel to earn them all! 🎮"]
+        update.message.reply_text('\n'.join(lines), parse_mode='Markdown')
+        logger.info(f"Sent badges to user {user_id}")
+    except Exception as e:
+        logger.error(f"Error in badges command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Something went wrong.\n"
+            "Please try again! 🔄"
+        )
