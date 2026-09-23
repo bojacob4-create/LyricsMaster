@@ -21,6 +21,8 @@ ARTIST_DATABASE = {
                'top_songs': ['Essence', 'Ojuelegba', 'Come Closer', 'Joro', 'Soco']},
     'taylor swift': {'name': 'Taylor Swift', 'genre': 'Pop / Country', 'debut': 2006, 'country': 'USA',
                      'top_songs': ['Shake It Off', 'Love Story', 'Blank Space', 'Anti-Hero', 'Cruel Summer']},
+    'tate mcrae': {'name': 'Tate McRae', 'genre': 'Pop / Dance-pop', 'debut': 2017, 'country': 'Canada',
+                   'top_songs': ['greedy', "You Broke Me First", "She's All I Wanna Be", 'Exes', 'Sports car']},
     'ed sheeran': {'name': 'Ed Sheeran', 'genre': 'Pop / Folk', 'debut': 2011, 'country': 'UK',
                    'top_songs': ['Shape of You', 'Perfect', 'Thinking Out Loud', 'Photograph', 'Bad Habits']},
     'adele': {'name': 'Adele', 'genre': 'Pop / Soul', 'debut': 2008, 'country': 'UK',

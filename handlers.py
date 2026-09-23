@@ -2050,17 +2050,45 @@ def _build_fallback_artist_profile(query: str):
             ('latin', 'Latin'), ('reggaeton', 'Reggaeton'), ('folk', 'Folk'),
             ('alternative', 'Alternative'), ('indie', 'Indie'), ('metal', 'Metal'),
             ('punk', 'Punk'), ('blues', 'Blues'), ('funk', 'Funk'), ('dance', 'Dance'),
-            ('afrobeat', 'Afrobeats'), ('reggae', 'Reggae'), ('k-pop', 'K-Pop'),
+            ('afrobeat', 'Afrobeats'), ('afrobeats', 'Afrobeats'), ('reggae', 'Reggae'), ('k-pop', 'K-Pop'),
             ('kpop', 'K-Pop'), ('amapiano', 'Amapiano'),
         ]
         extract_lower = extract[:500].lower()
+        extract_orig = extract[:500]  # original case, for proper-noun filtering
+        # Word-boundary matching: "dancer" must not match "dance",
+        # "rapper" must not match "rap", "popular" must not match "pop".
+        # Also skip matches inside multi-word capitalized phrases (proper
+        # nouns like the TV show "So You Think You Can Dance").
+        def _genre_present(pattern: str) -> bool:
+            rx = re.compile(r'\b' + re.escape(pattern) + r'\b', re.IGNORECASE)
+            for m in rx.finditer(extract_orig):
+                word = extract_orig[m.start():m.end()]
+                prev = re.findall(r'[A-Za-z]+', extract_orig[:m.start()][-40:])
+                nxt = re.findall(r'[A-Za-z]+', extract_orig[m.end():][:40])
+                # Skip proper-noun phrases: a capitalized genre word glued to
+                # other capitalized words ("So You Think You Can Dance",
+                # "Latin Grammy Award") is a title/award, not a genre mention.
+                if word[:1].isupper() and (
+                    any(w[:1].isupper() for w in prev[-2:])
+                    or any(w[:1].isupper() for w in nxt[:2])
+                ):
+                    continue
+                return True
+            return bool(rx.search(desc))
         found_genres = []
         for pattern, label in genre_patterns:
-            if pattern in extract_lower or pattern in desc:
+            if _genre_present(pattern):
                 if label not in found_genres:
                     found_genres.append(label)
         if found_genres:
             genre = ' / '.join(found_genres[:2])
+        else:
+            # Last-resort: a "singer"/"rapper" with no explicit genre is
+            # most likely pop / hip-hop — better than a wrong guess or nothing.
+            if re.search(r'\brapper\b', desc) or re.search(r'\brapper\b', extract_lower):
+                genre = 'Hip-Hop'
+            elif re.search(r'\bsinger\b', desc) or re.search(r'\bsinger\b', extract_lower):
+                genre = 'Pop'
 
         country_patterns = [
             ('american', 'USA'), ('british', 'UK'), ('canadian', 'Canada'),
@@ -2072,10 +2100,16 @@ def _build_fallback_artist_profile(query: str):
             ('mexican', 'Mexico'), ('trinidadian', 'Trinidad'),
             ('english', 'UK'), ('scottish', 'UK'), ('welsh', 'UK'),
         ]
+        # Take the nationality word that appears FIRST in the bio ("is a
+        # Canadian singer..."), not the first pattern in our list — the old
+        # code saw "American reality TV series" and wrongly picked USA.
+        bio_text = f"{desc} {extract_lower}"
+        best_pos = None
         for pattern, label in country_patterns:
-            if pattern in desc or pattern in extract_lower:
+            m = re.search(r'\b' + re.escape(pattern) + r'\b', bio_text)
+            if m and (best_pos is None or m.start() < best_pos):
+                best_pos = m.start()
                 country = label
-                break
 
         debut_match = re.search(r'(?:debut|career|started|began).{0,30}?(\d{4})', extract_lower[:500])
         if debut_match:
