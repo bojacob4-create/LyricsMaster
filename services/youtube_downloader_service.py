@@ -2,6 +2,7 @@ import logging
 from typing import Optional, Dict, Tuple
 import os
 import re
+import time
 import yt_dlp
 import unicodedata
 import string
@@ -447,6 +448,18 @@ def is_cached_mp3_path(path: str) -> bool:
 
 
 # ── Download helper (unchanged semantics) ──────────────────────────────────
+# One client per attempt: yt-dlp merges formats across every requested
+# client, so a mixed list can pick a web-client format URL that then 403s.
+# Rotating single clients keeps the chosen format on the client that
+# produced it. Permanent failures (DRM, private, age-gated, copyright,
+# deleted) abort the rotation immediately.
+_YT_CLIENT_ATTEMPTS = ('android', 'web', 'ios')
+_PERMANENT_DL_ERRORS = ('drm', 'private video', 'age-restricted',
+                        'age restricted', 'copyright', 'unavailable',
+                        'not available', 'requires authentication',
+                        'sign in to confirm')
+
+
 def _download_url_to_mp3(download_url: str, file_prefix: str, label: str) -> str:
     """
     Download bestaudio from a resolved URL and convert to a real MP3
@@ -454,32 +467,57 @@ def _download_url_to_mp3(download_url: str, file_prefix: str, label: str) -> str
     """
     logger.info(f"[MP3][DOWNLOAD] Starting | provider={label} | url='{download_url}'")
     output_template = f'{file_prefix}.%(ext)s'
-    dl_opts = {
-        'format': 'bestaudio/best',
-        'noplaylist': True,
-        'quiet': True,
-        'no_warnings': True,
-        'outtmpl': output_template,
-        'restrictfilenames': True,
-        'socket_timeout': 20,
-        'retries': 2,
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-    }
-    try:
-        with yt_dlp.YoutubeDL(dl_opts) as ydl:
-            ret = ydl.download([download_url])
-        if ret != 0:
-            raise RuntimeError(f"yt-dlp returned non-zero code: {ret}")
-    except yt_dlp.utils.DownloadError as de:
-        logger.warning(f"[MP3][DOWNLOAD] DownloadError | provider={label}: {de}")
-        raise
-    except Exception as e:
-        logger.warning(f"[MP3][DOWNLOAD] Error | provider={label}: {type(e).__name__}: {e}")
-        raise
+    is_youtube = 'youtube.com' in download_url or 'youtu.be' in download_url
+    clients = _YT_CLIENT_ATTEMPTS if is_youtube else (None,)
+    last_err: Optional[Exception] = None
+
+    def _clean_partials():
+        for m in globmod.glob(os.path.join(os.getcwd(), f'{file_prefix}.*')):
+            try:
+                os.remove(m)
+            except OSError:
+                pass
+
+    for client in clients:
+        _clean_partials()
+        dl_opts = {
+            'format': 'bestaudio/best',
+            'noplaylist': True,
+            'quiet': True,
+            'no_warnings': True,
+            'outtmpl': output_template,
+            'restrictfilenames': True,
+            'socket_timeout': 20,
+            'retries': 2,
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+        }
+        if client:
+            dl_opts['extractor_args'] = {'youtube': {'player_client': [client]}}
+        try:
+            with yt_dlp.YoutubeDL(dl_opts) as ydl:
+                ret = ydl.download([download_url])
+            if ret != 0:
+                raise RuntimeError(f"yt-dlp returned non-zero code: {ret}")
+            last_err = None
+            break
+        except yt_dlp.utils.DownloadError as de:
+            last_err = de
+            logger.warning(f"[MP3][DOWNLOAD] DownloadError | provider={label} "
+                           f"| client={client}: {de}")
+            if any(k in str(de).lower() for k in _PERMANENT_DL_ERRORS):
+                raise
+        except Exception as e:
+            last_err = e
+            logger.warning(f"[MP3][DOWNLOAD] Error | provider={label} "
+                           f"| client={client}: {type(e).__name__}: {e}")
+        time.sleep(2)
+
+    if last_err is not None:
+        raise last_err
 
     mp3_path = os.path.join(os.getcwd(), f'{file_prefix}.mp3')
     if os.path.exists(mp3_path):
@@ -628,8 +666,10 @@ def download_audio_for_song(artist: str, song: str,
                        _build_success_msg(title_c, uploader_c, dur, size_mb),
                        title_c, uploader_c))
 
-    # Try the top 2 scored candidates across ALL providers.
-    for rank, (s, provider, e) in enumerate(scored[:2]):
+    # Try the top 3 scored candidates across ALL providers. YouTube 403s
+    # and SoundCloud DRM blocks are often per-URL, so one more fallback
+    # is usually the difference between success and "not available".
+    for rank, (s, provider, e) in enumerate(scored[:3]):
         url = e.get('webpage_url') or e.get('url')
         title_c = e.get('title') or query
         uploader_c = e.get('uploader') or artist
