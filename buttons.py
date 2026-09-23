@@ -51,7 +51,7 @@ def artist_buttons(artist_name, top_songs=None):
             rows.append([InlineKeyboardButton(f"🎵 {s}", callback_data=_cb("song", song_query))])
     rows.append([
         InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", artist_name)),
-        InlineKeyboardButton("🎧 Similar", callback_data=_cb("recommend", artist_name)),
+        InlineKeyboardButton("🎧 Similar", callback_data=_cb("recommend", f"artist:{artist_name}")),
     ])
     rows.append([
         InlineKeyboardButton("📚 Wiki", callback_data=_cb("wiki", artist_name)),
@@ -190,7 +190,7 @@ def artist_analyze_buttons(artist_name):
         ],
         [
             InlineKeyboardButton("📺 YouTube", callback_data=_cb("youtube", artist_name)),
-            InlineKeyboardButton("🎧 Similar Songs", callback_data=_cb("recommend", artist_name)),
+            InlineKeyboardButton("🎧 Similar Songs", callback_data=_cb("recommend", f"artist:{artist_name}")),
         ],
     ])
 

@@ -46,8 +46,10 @@ def get_song_statistics(lyrics: str) -> Dict:
     # Replace multiple spaces with single space
     lyrics_clean = re.sub(r'\s+', ' ', lyrics_clean)
 
-    # Get all words, keeping contractions intact
-    words = re.findall(r"\b[a-z']+\b", lyrics_clean)
+    # Get all words, keeping contractions intact.
+    # Unicode-aware: accented letters (é, ñ, …) count as part of the word
+    # instead of silently dropping the whole word from the count.
+    words = re.findall(r"[^\W\d_]+(?:'[^\W\d_]+)*", lyrics_clean)
     word_count = len(words)
 
     # Filter out stop words and get meaningful words
@@ -165,19 +167,34 @@ MOOD_KEYWORDS = {
 }
 
 
-def _count_mood_hits(lyrics_lower: str) -> Dict:
+def _count_mood_hits(lyrics_lower: str, normalize: bool = False) -> Dict:
+    """Count mood-keyword hits per mood.
+
+    With normalize=True each mood's count is scaled by
+    (average keyword-list size / that mood's list size), so moods that
+    simply have longer keyword lists don't win by default.
+    """
     counts = {}
+    avg_list_size = (
+        sum(len(kw) for kw in MOOD_KEYWORDS.values()) / len(MOOD_KEYWORDS)
+    )
     for mood, keywords in MOOD_KEYWORDS.items():
         total = 0
         for kw in keywords:
             total += len(re.findall(r'\b' + re.escape(kw) + r'\b', lyrics_lower))
+        if normalize and keywords:
+            total = total * avg_list_size / len(keywords)
         counts[mood] = total
     return counts
 
 
 def detect_song_mood(lyrics: str) -> str:
-    """Detect the mood of a song based on its lyrics."""
-    mood_counts = _count_mood_hits(lyrics.lower())
+    """Detect the mood of a song based on its lyrics.
+
+    Hit counts are normalized by keyword-list size so every mood competes
+    on equal footing.
+    """
+    mood_counts = _count_mood_hits(lyrics.lower(), normalize=True)
     dominant_mood = max(mood_counts.items(), key=lambda x: x[1])[0]
     return dominant_mood if mood_counts[dominant_mood] > 0 else 'energetic'
 
@@ -253,11 +270,13 @@ def get_detailed_song_analysis(lyrics: str) -> Dict:
     }
 
     lyrics_lower = lyrics.lower()
-    raw_counts = _count_mood_hits(lyrics_lower)
+    # Normalized by keyword-list size (see _count_mood_hits) so the bars are
+    # comparable across moods.
+    mood_counts = _count_mood_hits(lyrics_lower, normalize=True)
 
     total_words = max(len(re.findall(r'\b\w+\b', lyrics_lower)), 1)
     mood_intensity = {}
-    for m, raw in raw_counts.items():
+    for m, raw in mood_counts.items():
         density = raw / total_words
         score = min(10, round(density * 200))
         mood_intensity[m] = score
@@ -384,6 +403,14 @@ def format_detailed_analysis(analysis: Dict) -> str:
     result += (
         f"\n🎭 Mood: {mood_emoji} {mood_data['primary_mood'].title()}\n"
         + '\n'.join(mood_bars) + '\n'
+    )
+
+    themes = analysis.get('themes') or []
+    if themes and themes != ['general']:
+        themes_fmt = ', '.join(t.replace('_', ' ').title() for t in themes)
+        result += f"\n🎨 Themes: {themes_fmt}\n"
+
+    result += (
         f"\n🎶 Rhyme Pattern\n"
         f"  {rhyme['rhyming_lines']}/{rhyme['total_lines']} lines rhyme ({rhyme_density}%)\n"
         f"  → {rhyme_note}\n"

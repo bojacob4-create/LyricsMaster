@@ -211,10 +211,34 @@ def quiz_answer(update: Update, context: CallbackContext):
 
 
 _pending_recommend_artist = {}
+# Values are dicts: {'artist': str, 'query': str} where 'query' is the
+# original user input that led to the artist question (needed so an artist
+# correction from the user can be matched back to the song they meant).
 
 # Stores dominant-match confirmation waiting for user's "yes/no" reply.
 # Structure: {user_id: {'artist': str, 'song': str, 'intent_cmd': str}}
 _pending_confirmation: dict = {}
+
+
+def _names_match(a: str, b: str) -> bool:
+    """Fuzzy artist-name equality: containment either way, case-insensitive."""
+    a1, a2 = (a or '').lower().strip(), (b or '').lower().strip()
+    return bool(a1) and bool(a2) and (a1 in a2 or a2 in a1)
+
+
+def _query_matches_song(query: str, song: str) -> bool:
+    """Check whether a song title matches the user's original query.
+
+    Used when the user corrects a wrongly-guessed artist: the original
+    query ("rush") should describe the found song ("Rush").
+    """
+    q, s = (query or '').lower().strip(), (song or '').lower().strip()
+    if not q or not s:
+        return False
+    if q in s or s in q:
+        return True
+    qwords = [w for w in re.findall(r'[a-z0-9]+', q) if len(w) > 2]
+    return bool(qwords) and all(w in s for w in qwords)
 
 _YES_WORDS = frozenset({
     'yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'correct',
@@ -452,7 +476,12 @@ def natural_language_handler(update: Update, context: CallbackContext):
             _pending_recommend_artist.pop(user_id, None)
         else:
             # Plain short text — treat as song title for pending artist.
-            artist_name = _pending_recommend_artist[user_id]
+            _pend = _pending_recommend_artist[user_id]
+            if isinstance(_pend, dict):
+                artist_name = _pend.get('artist', '')
+                original_query = _pend.get('query', '')
+            else:  # legacy plain-string state
+                artist_name, original_query = _pend, ''
             from services.lyrics_service import search_song_info
             update.message.chat.send_action(action="typing")
             result = search_song_info(artist_name, text)
@@ -460,9 +489,21 @@ def natural_language_handler(update: Update, context: CallbackContext):
             song_query = None
             if result:
                 found_artist, found_song, _ = result
-                a1 = artist_name.lower().strip()
-                a2 = found_artist.lower().strip()
-                if a1 in a2 or a2 in a1:
+                if _names_match(artist_name, found_artist):
+                    # Normal case: "<song>" by the pending artist.
+                    valid = True
+                    song_query = f"{found_artist} - {found_song}"
+                elif (original_query
+                      and _names_match(text, found_artist)
+                      and _query_matches_song(original_query, found_song)):
+                    # Correction case: the bot guessed the wrong artist
+                    # ("Which Rush song?" for the band) and the user replied
+                    # with the real artist ("Ayra Starr") — the original
+                    # query ("rush") was the song title all along.
+                    logger.info(
+                        f"[NLP] Artist correction for user {user_id}: "
+                        f"'{original_query}' is '{found_artist} - {found_song}'"
+                    )
                     valid = True
                     song_query = f"{found_artist} - {found_song}"
             if not valid:
@@ -1014,13 +1055,61 @@ def recommend_command(update: Update, context: CallbackContext):
         )
         update.message.chat.send_action(action="typing")
 
-        if _is_artist_only_query(query):
+        # "artist:" prefix (sent by artist-dashboard buttons) forces artist
+        # mode and skips the artist-vs-song disambiguation below.
+        force_artist_mode = False
+        if query.lower().startswith('artist:'):
+            force_artist_mode = True
+            query = query[len('artist:'):].strip()
+
+        if query and (_is_artist_only_query(query) or force_artist_mode):
             clean = clean_input(query)
             info = get_artist_info(clean)
             artist_display = info['name'] if info else clean.title()
+
+            if not force_artist_mode:
+                # The query is a known artist name BUT could also be a song
+                # title ("rush" = the band Rush AND songs by Ayra Starr /
+                # Troye Sivan). Ask which one instead of guessing wrong.
+                try:
+                    from services.nlp_router import (
+                        search_song_candidates as _am_search,
+                    )
+                    from buttons import _cb as _am_cb
+                    _am_cands = _am_search(query) or []
+                except Exception as _am_err:
+                    logger.warning(f"[recommend] artist/song check failed: {_am_err}")
+                    _am_cands = []
+                if _am_cands and _am_cands[0]['artist'].lower() != artist_display.lower():
+                    _am_rows = [[
+                        InlineKeyboardButton(
+                            f"🎤 Artist: {artist_display}",
+                            callback_data=_am_cb("recommend", f"artist:{artist_display}"),
+                        )
+                    ]]
+                    for _c in _am_cands[:3]:
+                        _am_rows.append([
+                            InlineKeyboardButton(
+                                f"🎵 {_c['song']} — {_c['artist']}",
+                                callback_data=_am_cb(
+                                    "recommend", f"{_c['artist']} - {_c['song']}"
+                                ),
+                            )
+                        ])
+                    update.message.reply_text(
+                        f"🤔 \"{query}\" could be an artist *or* a song.\n"
+                        "Which did you mean?",
+                        parse_mode='Markdown',
+                        reply_markup=InlineKeyboardMarkup(_am_rows),
+                    )
+                    return
+
             top_songs = _fetch_artist_top_songs(artist_display)
             if top_songs:
-                _pending_recommend_artist[user_id] = artist_display
+                _pending_recommend_artist[user_id] = {
+                    'artist': artist_display,
+                    'query': query,
+                }
                 update.message.reply_text(
                     f"🎧 Which {artist_display} song should I use to find similar songs?\n\n"
                     "Pick one below or type another song manually:",
@@ -1485,7 +1574,7 @@ def analyze_command(update: Update, context: CallbackContext):
             )
             return
 
-        # Visible progress — analysis runs lyric search + an AI pass.
+        # Visible progress — analysis runs a lyric search + local stats pass.
         update.message.reply_text(
             f"🧠 Analyzing \"{query}\"…\n"
             "This usually takes a few seconds. 📊"
