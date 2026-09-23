@@ -170,6 +170,7 @@ def recommend_results_buttons(source_query, recommendations):
         for rec in recommendations[:5]:
             song_q = f"{rec['artist']} - {rec['name']}"
             rows.append([InlineKeyboardButton(f"🎵 {rec['name']} — {rec['artist']}", callback_data=_cb("song", song_q))])
+    rows.append([InlineKeyboardButton("🔄 More like this", callback_data=_cb("more_recs", source_query))])
     return InlineKeyboardMarkup(rows)
 
 

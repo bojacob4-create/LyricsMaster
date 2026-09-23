@@ -422,6 +422,16 @@ GENRE_RECOMMENDATIONS = {
         {'artist': 'Rema', 'name': 'Holiday', 'reason': 'Latest Afrobeats from 2024'},
         {'artist': 'Asake', 'name': 'Lonely at the Top', 'reason': 'Introspective Afrobeats 2023'},
         {'artist': 'Burna Boy', 'name': 'City Boys', 'reason': 'Afrobeats swagger anthem'},
+        {'artist': 'Ayra Starr', 'name': 'All The Love', 'reason': 'Soulful Afrobeats 2025'},
+        {'artist': 'Rema', 'name': 'Baby (Is it a Crime)', 'reason': 'Afrobeats groove 2025'},
+        {'artist': 'Wizkid', 'name': 'Piece of Me', 'reason': 'Smooth Afrobeats 2024'},
+        {'artist': 'Davido', 'name': 'Awuke', 'reason': 'Feel-good Afrobeats 2024'},
+        {'artist': 'Tems', 'name': 'Love Is A Kingdom', 'reason': 'Ethereal Afrobeats-R&B'},
+        {'artist': 'Asake', 'name': 'MMS', 'reason': 'Street-pop anthem 2024'},
+        {'artist': 'Omah Lay', 'name': 'Moving', 'reason': 'Bouncy Afrobeats 2024'},
+        {'artist': 'Shallipopi', 'name': 'Laho', 'reason': 'Viral Afrobeats street hit'},
+        {'artist': 'Kizz Daniel', 'name': 'Marhaba', 'reason': 'Dancefloor Afrobeats 2024'},
+        {'artist': 'Young Jonn', 'name': 'Che Che', 'reason': 'Amapiano party starter'},
     ],
     'pop': [
         {'artist': 'Dua Lipa', 'name': 'Levitating', 'reason': 'Infectious disco-pop energy'},
@@ -442,6 +452,15 @@ GENRE_RECOMMENDATIONS = {
         {'artist': 'Ariana Grande', 'name': 'yes, and?', 'reason': 'Confident pop-dance return 2024'},
         {'artist': 'Sabrina Carpenter', 'name': 'Please Please Please', 'reason': 'Retro-pop charm 2024'},
         {'artist': 'Billie Eilish', 'name': 'LUNCH', 'reason': 'Alt-pop banger from 2024'},
+        {'artist': 'Tate McRae', 'name': 'greedy', 'reason': 'Viral pop hit 2023'},
+        {'artist': 'Chappell Roan', 'name': 'Good Luck, Babe!', 'reason': 'Breakout pop 2024'},
+        {'artist': 'Charli XCX', 'name': '360', 'reason': 'Brat-era electro-pop 2024'},
+        {'artist': 'Gracie Abrams', 'name': "I Love You, I'm Sorry", 'reason': 'Heartfelt pop 2024'},
+        {'artist': 'Billie Eilish', 'name': 'BIRDS OF A FEATHER', 'reason': 'Tender alt-pop 2024'},
+        {'artist': 'Sabrina Carpenter', 'name': 'Taste', 'reason': 'Playful pop 2024'},
+        {'artist': 'Ariana Grande', 'name': 'we can\'t be friends', 'reason': 'Emotional pop 2024'},
+        {'artist': 'Taylor Swift', 'name': 'I Can Do It With a Broken Heart', 'reason': 'Synth-pop 2024'},
+        {'artist': 'Dua Lipa', 'name': 'Training Season', 'reason': 'Dance-pop 2024'},
     ],
     'rnb': [
         {'artist': 'SZA', 'name': 'Snooze', 'reason': 'Dreamy contemporary R&B'},
@@ -489,6 +508,15 @@ GENRE_RECOMMENDATIONS = {
         {'artist': 'Doechii', 'name': 'Nissan Altima', 'reason': 'Standout rap voice from 2024'},
         {'artist': 'Playboi Carti', 'name': 'Sky', 'reason': 'Atmospheric trap experience'},
         {'artist': 'Lil Wayne', 'name': 'Kat Food', 'reason': 'Veteran rap with fresh delivery'},
+        {'artist': 'Doja Cat', 'name': 'Agora Hills', 'reason': 'Sultry rap-sung crossover'},
+        {'artist': 'Drake', 'name': 'Family Matters', 'reason': '2024 rap battle heavyweight'},
+        {'artist': 'Kendrick Lamar', 'name': 'tv off', 'reason': 'West Coast banger 2024'},
+        {'artist': 'Tyler, The Creator', 'name': 'Sticky', 'reason': 'High-energy 2024 rap'},
+        {'artist': 'Doechii', 'name': 'DENIAL IS A RIVER', 'reason': 'Breakout rap storytelling 2025'},
+        {'artist': 'GloRilla', 'name': 'TGIF', 'reason': 'Memphis party rap 2024'},
+        {'artist': 'Central Cee', 'name': 'BAND4BAND', 'reason': 'UK drill crossover 2024'},
+        {'artist': 'Latto', 'name': 'Sugar Honey Iced Tea', 'reason': 'Confident Southern rap 2024'},
+        {'artist': 'J. Cole', 'name': 'Port Antonio', 'reason': 'Lyrical masterclass 2024'},
     ],
     'rock': [
         {'artist': 'Arctic Monkeys', 'name': 'Do I Wanna Know?', 'reason': 'Dark atmospheric rock'},
@@ -2640,7 +2668,8 @@ _APPLE_MIN_QUALITY = 76.0  # Minimum average score for top-5 Apple picks to beat
 
 
 def _get_apple_recommendations(artist: str, song: str,
-                                source_profile: Dict) -> Optional[List[Dict]]:
+                                source_profile: Dict,
+                                exclude_artists: frozenset = frozenset()) -> Optional[List[Dict]]:
     """
     Score + rank Apple Music top 100 by vibe similarity.
 
@@ -2654,7 +2683,9 @@ def _get_apple_recommendations(artist: str, song: str,
 
     filtered = [
         c for c in candidates
-        if c['artist'].lower() != artist.lower() and c['name'].lower() != song.lower()
+        if c['artist'].lower() != artist.lower()
+        and c['name'].lower() != song.lower()
+        and c['artist'].lower() not in exclude_artists
     ]
     if len(filtered) < 3:
         return None
@@ -2738,7 +2769,9 @@ def _get_apple_recommendations(artist: str, song: str,
 
 
 def _get_curated_recommendations(artist: str, song: str,
-                                  mood: str, source_profile: Dict) -> List[Dict]:
+                                  mood: str, source_profile: Dict,
+                                  limit: int = 5,
+                                  exclude_artists: frozenset = frozenset()) -> List[Dict]:
     """Score + rank curated genre pool by vibe similarity."""
     genre = source_profile['genre']
     source_style = source_profile.get('style', 'unknown')
@@ -2830,8 +2863,10 @@ def _get_curated_recommendations(artist: str, song: str,
                 seen_keys.add(key)
                 pool.append((entry, pg))
 
-    # Filter out source artist
-    pool = [(e, g) for e, g in pool if e['artist'].lower() != artist.lower()]
+    # Filter out source artist + already-shown artists (refresh path)
+    pool = [(e, g) for e, g in pool
+            if e['artist'].lower() != artist.lower()
+            and e['artist'].lower() not in exclude_artists]
 
     # Score each candidate
     scored = []
@@ -2847,7 +2882,7 @@ def _get_curated_recommendations(artist: str, song: str,
     jittered = [(s + random.uniform(-3, 3), e, g) for s, e, g in top_pool]
     jittered.sort(key=lambda x: x[0], reverse=True)
 
-    # Artist diversity: no artist appears more than once in the final 5.
+    # Artist diversity: no artist appears more than once in the final set.
     # Iterate through the scored list in order; skip duplicate artists.
     result = []
     seen_artists: set = set()
@@ -2856,15 +2891,15 @@ def _get_curated_recommendations(artist: str, song: str,
         if ak not in seen_artists:
             seen_artists.add(ak)
             result.append(dict(entry))
-        if len(result) == 5:
+        if len(result) == limit:
             break
 
-    # Safety fallback: if dedup left fewer than 5, pad from remaining scored
-    if len(result) < 5:
+    # Safety fallback: if dedup left fewer than requested, pad from remaining scored
+    if len(result) < limit:
         for _, entry, _pool_genre in scored:
             if dict(entry) not in result:
                 result.append(dict(entry))
-            if len(result) == 5:
+            if len(result) == limit:
                 break
 
     return result
@@ -2897,7 +2932,7 @@ def _get_lastfm_similar_candidates(artist: str, song: str) -> tuple:
                 'track':       song,
                 'api_key':     api_key,
                 'format':      'json',
-                'limit':       30,
+                'limit':       60,
                 'autocorrect': '1',
             },
             timeout=6,
@@ -2959,7 +2994,9 @@ def _get_lastfm_similar_candidates(artist: str, song: str) -> tuple:
 
 
 def _get_lastfm_recommendations(artist: str, song: str,
-                                 source_profile: Dict) -> Optional[List[Dict]]:
+                                 source_profile: Dict,
+                                 limit: int = 5,
+                                 exclude_artists: frozenset = frozenset()) -> Optional[List[Dict]]:
     """
     Score + rank Last.fm similar tracks by vibe similarity to the source profile.
 
@@ -3000,6 +3037,9 @@ def _get_lastfm_recommendations(artist: str, song: str,
     for c in raw:
         # Skip any track that is by the source artist (including featuring variants)
         if source_artist_lower in c['artist'].lower():
+            continue
+        # Skip artists the user already saw (fresh/refresh path)
+        if c['artist'].lower() in exclude_artists:
             continue
 
         c_genre = _detect_genre_fast(c['artist'])
@@ -3047,11 +3087,11 @@ def _get_lastfm_recommendations(artist: str, song: str,
                 c['artist'], c['name'], c_genre, source_profile, ''
             )
             result.append(rec)
-        if len(result) == 5:
+        if len(result) == limit:
             break
 
     # Safety pad from the broader scored list if we're still short
-    if len(result) < 5:
+    if len(result) < limit:
         for _, c, c_genre in scored:
             ak = c['artist'].lower()
             if ak not in seen_artists and ak != artist.lower():
@@ -3061,7 +3101,7 @@ def _get_lastfm_recommendations(artist: str, song: str,
                     c['artist'], c['name'], c_genre, source_profile, ''
                 )
                 result.append(rec)
-            if len(result) == 5:
+            if len(result) == limit:
                 break
 
     if len(result) < 3:
@@ -3078,23 +3118,35 @@ def _get_lastfm_recommendations(artist: str, song: str,
 # Public API (unchanged signatures)
 # ──────────────────────────────────────────────────────────────────────────────
 
-@lru_cache(maxsize=512)
-def get_similar_songs(artist: str, song: str, mood: str) -> List[Dict]:
-    """
-    Return 5 recommended songs similar in vibe to the source.
+def _merge_recommendations(*sources, limit: int = 5) -> List[Dict]:
+    """Round-robin merge of recommendation sources, deduplicated by artist.
 
-    Candidate discovery priority (song-first architecture):
-      1. Last.fm track.getSimilar  — live, listener-overlap similarity graph.
-                                     Up to 30 candidates, scored + ecosystem-filtered.
-                                     Used when ≥ 3 candidates pass the ecosystem gate.
-      2. Curated pool              — static GENRE_RECOMMENDATIONS per genre.
-                                     Deterministic, always available, ~15-20 per genre.
-      3. Blend                     — when Last.fm returns 3-4 songs, curated fills the
-                                     remaining slots (avoiding duplicate artists).
-
-    Apple Music is NOT used in this path.  It remains active only in
-    artist_service.py for /trending and /top chart features.
+    Sources are interleaved (Last.fm → Apple → curated …) so the final list
+    mixes the listener-similarity graph with fresh chart picks instead of
+    being dominated by a single source.
     """
+    merged: List[Dict] = []
+    seen: set = set()
+    lists = [s or [] for s in sources]
+    i = 0
+    while len(merged) < limit and any(i < len(l) for l in lists):
+        for l in lists:
+            if i < len(l):
+                r = l[i]
+                ak = r['artist'].lower()
+                if ak not in seen:
+                    seen.add(ak)
+                    merged.append(r)
+                    if len(merged) == limit:
+                        return merged
+        i += 1
+    return merged
+
+
+def _get_similar_songs_uncached(artist: str, song: str, mood: str,
+                                exclude_artists: frozenset = frozenset(),
+                                limit: int = 5) -> List[Dict]:
+    """Uncached recommendation pipeline shared by cached + fresh entry points."""
     try:
         genre          = _detect_genre(artist, song, mood)
         source_profile = _build_song_profile(artist, song, mood, genre)
@@ -3105,36 +3157,36 @@ def get_similar_songs(artist: str, song: str, mood: str) -> List[Dict]:
             f"vocal={source_profile['vocal']} era={source_profile['era']}"
         )
 
-        # ── 1. Last.fm similarity graph ──────────────────────────────────────
-        lastfm_recs = _get_lastfm_recommendations(artist, song, source_profile)
+        # ── 1. Last.fm similarity graph (listener overlap) ───────────────────
+        lastfm_recs = _get_lastfm_recommendations(
+            artist, song, source_profile,
+            limit=max(limit, 5), exclude_artists=exclude_artists)
 
-        if lastfm_recs and len(lastfm_recs) >= 5:
-            # Full Last.fm result set — return directly
-            return lastfm_recs
+        # ── 2. Apple Music Top 100 (live charts, quality-gated) ──────────────
+        apple_recs = _get_apple_recommendations(
+            artist, song, source_profile, exclude_artists=exclude_artists)
 
-        # ── 2. Curated pool ──────────────────────────────────────────────────
-        logger.info(f"[REC] Curated (scored) for '{artist} - {song}'")
-        curated = _get_curated_recommendations(artist, song, mood, source_profile)
+        # ── 3. Curated pool (always available) ───────────────────────────────
+        curated = _get_curated_recommendations(
+            artist, song, mood, source_profile,
+            limit=limit, exclude_artists=exclude_artists)
 
-        if not lastfm_recs:
-            # No Last.fm data (key absent, track not found, or too few results)
-            return curated
+        merged = _merge_recommendations(lastfm_recs, apple_recs, curated,
+                                        limit=limit)
+        if len(merged) >= 3:
+            logger.info(
+                f"[REC] Merged {len(lastfm_recs or [])} Last.fm + "
+                f"{len(apple_recs or [])} Apple + "
+                f"{len(merged) - len(lastfm_recs or []) - len(apple_recs or [])} curated "
+                f"for '{artist} - {song}'"
+            )
+            return merged
 
-        # ── 3. Blend — Last.fm partial + curated fill ────────────────────────
-        # Last.fm gave 3-4 songs; pad to 5 from the curated pool, no duplicates.
-        merged       = list(lastfm_recs)
-        seen_artists = {r['artist'].lower() for r in merged}
-        for rec in curated:
-            if rec['artist'].lower() not in seen_artists:
-                seen_artists.add(rec['artist'].lower())
-                merged.append(rec)
-            if len(merged) == 5:
-                break
-
-        logger.info(
-            f"[REC] Blend: {len(lastfm_recs)} Last.fm + "
-            f"{len(merged) - len(lastfm_recs)} curated for '{artist} - {song}'"
-        )
+        # Ultimate fallback: curated pool without exclusions
+        if exclude_artists:
+            logger.info(f"[REC] Fallback: curated without exclusions for '{artist} - {song}'")
+            return _get_curated_recommendations(artist, song, mood,
+                                                source_profile, limit=limit)
         return merged
 
     except Exception as e:
@@ -3142,6 +3194,34 @@ def get_similar_songs(artist: str, song: str, mood: str) -> List[Dict]:
         genre          = _detect_genre_fast(artist)
         source_profile = _build_song_profile(artist, song, mood, genre)
         return _get_curated_recommendations(artist, song, mood, source_profile)
+
+
+@lru_cache(maxsize=512)
+def get_similar_songs(artist: str, song: str, mood: str) -> List[Dict]:
+    """
+    Return 5 recommended songs similar in vibe to the source.
+
+    Candidate discovery (song-first architecture):
+      1. Last.fm track.getSimilar — live, listener-overlap similarity graph.
+         Up to 60 candidates, scored + ecosystem-filtered.
+      2. Apple Music Top 100     — live charts, scored by vibe similarity with
+         a quality gate (only genuinely matching songs are kept).
+      3. Curated pool            — static GENRE_RECOMMENDATIONS per genre.
+         Deterministic, always available.
+
+    The three sources are interleaved (round-robin, artist-deduplicated) so
+    results mix proven listener favorites with fresh chart picks.
+    """
+    return _get_similar_songs_uncached(artist, song, mood)
+
+
+def get_similar_songs_fresh(artist: str, song: str, mood: str,
+                            exclude_artists=()) -> List[Dict]:
+    """Uncached refresh: re-runs the pipeline with new jitter and skips
+    artists the user already saw (powers the "🔄 More like this" button)."""
+    excl = frozenset(a.lower() for a in (exclude_artists or ()))
+    return _get_similar_songs_uncached(artist, song, mood,
+                                       exclude_artists=excl, limit=5)
 
 
 def format_recommendations(recommendations: List[Dict], based_on: str = None) -> str:

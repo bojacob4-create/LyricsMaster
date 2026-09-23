@@ -20,7 +20,7 @@ from services.translator_service import (
     translate_to_arabic, translate_text, get_language_code,
     get_language_display, get_supported_languages_text
 )
-from services.recommendation_service import get_similar_songs, format_recommendations
+from services.recommendation_service import get_similar_songs, get_similar_songs_fresh, format_recommendations
 from services.quiz_service import (
     start_quiz, check_answer, get_quiz_stats, end_quiz,
     format_multiple_choice_options, format_quiz_question, active_quizzes
@@ -70,7 +70,7 @@ def start_command(update: Update, context: CallbackContext):
         "🔍 */analyze* — Deep lyrical breakdown\n"
         "🎤 */artist* — Quick artist profile\n"
         "🔝 */top* — Top songs by genre\n"
-        "🎲 */random* — Random song discovery\n"
+        "🎲 */random [genre]* — Random song discovery\n"
         "🎬 */youtube* — Find the music video\n"
         "🎮 */quiz* — Lyrics guessing game\n"
         "🔔 */subscribe* — Daily song picks\n\n"
@@ -105,7 +105,7 @@ def help_command(update: Update, context: CallbackContext):
         "🎵 *Lyrics Master — Command Guide* 🎸\n\n"
         "*🎵 All-in-One*\n"
         "▫️ */song* — Full song dashboard\n"
-        "▫️ */random* — Random song discovery\n\n"
+        "▫️ */random [genre]* — Random song discovery\n\n"
         "*🎤 Lyrics & Analysis*\n"
         "▫️ */lyrics* — Get song lyrics\n"
         "▫️ */stats* — Word counts and patterns\n"
@@ -119,7 +119,7 @@ def help_command(update: Update, context: CallbackContext):
         "▫️ */wiki* — Artist Wikipedia info\n"
         "▫️ */trending* — Trending songs now\n\n"
         "*🎮 Fun*\n"
-        "▫️ */quiz* — Lyrics guessing game (40 songs!)\n"
+        "▫️ */quiz* — Lyrics guessing game (110+ songs, 3 game modes!)\n"
         "▫️ */endquiz* — End current quiz\n\n"
         "*🔔 Daily Updates*\n"
         "▫️ */subscribe* — Get daily song picks\n"
@@ -214,6 +214,10 @@ _pending_recommend_artist = {}
 # Values are dicts: {'artist': str, 'query': str} where 'query' is the
 # original user input that led to the artist question (needed so an artist
 # correction from the user can be matched back to the song they meant).
+
+# Tracks artists already shown per (user, seed song) so the "More like this"
+# button can serve fresh picks: {(user_id, seed_lower): [artist_lower, ...]}.
+_shown_recs = {}
 
 # Stores dominant-match confirmation waiting for user's "yes/no" reply.
 # Structure: {user_id: {'artist': str, 'song': str, 'intent_cmd': str}}
@@ -818,6 +822,7 @@ def callback_query_handler(update: Update, context: CallbackContext):
     handler_map = {
         'lyrics': lyrics_command,
         'recommend': recommend_command,
+        'more_recs': more_recs_command,
         'artist': artist_command,
         'youtube': youtube_command,
         'mp3': mp3_command,
@@ -1146,6 +1151,10 @@ def recommend_command(update: Update, context: CallbackContext):
         btn_query = display_title if display_title else query
         markup = recommend_results_buttons(btn_query, recommendations)
         update.message.reply_text(formatted_recommendations, reply_markup=markup)
+        # Remember shown artists so "🔄 More like this" serves fresh picks.
+        _shown_recs[(user_id, btn_query.lower())] = [
+            r['artist'].lower() for r in recommendations
+        ]
         logger.info(f"Successfully sent recommendations to user {user_id}")
 
     except Exception as e:
@@ -1153,6 +1162,68 @@ def recommend_command(update: Update, context: CallbackContext):
         update.message.reply_text(
             "😓 Oops! Something went wrong while getting recommendations.\n"
             "Please try again in a moment! 🔄"
+        )
+
+
+def more_recs_command(update: Update, context: CallbackContext):
+    """Handle the '🔄 More like this' button — fresh recommendations."""
+    user_id = update.effective_user.id
+    try:
+        query = " ".join(context.args).strip()
+        if not query:
+            update.message.reply_text(
+                "😕 I lost track of the original song. Try /recommend again! 🎵"
+            )
+            return
+
+        update.message.reply_text(
+            f"🔄 Digging deeper for songs like \"{query}\"…\n"
+            "One moment! 🎵"
+        )
+        update.message.chat.send_action(action="typing")
+
+        artist, song, lyrics, status = search_lyrics_with_fallback(query)
+        if not lyrics:
+            update.message.reply_text(
+                "😕 I couldn't re-find that song (the button link may have been cut short).\n"
+                "Try /recommend with the full \"Artist - Song\" name! 🔍"
+            )
+            return
+
+        display_title = f"{artist} - {song}" if artist and song else (artist or song)
+        mood = detect_song_mood(lyrics)
+        use_artist = artist if artist else query
+        use_song = song if song else query
+
+        exclude = _shown_recs.get((user_id, query.lower()), [])
+        if not exclude:
+            exclude = _shown_recs.get((user_id, display_title.lower()), [])
+
+        fresh = get_similar_songs_fresh(use_artist, use_song, mood,
+                                        exclude_artists=exclude)
+        if len(fresh) < 3:
+            update.message.reply_text(
+                f"🎵 That's everything I've got for \"{display_title}\" for now!\n"
+                "Try /recommend with a different song for new ideas. ✨"
+            )
+            return
+
+        shown = _shown_recs.setdefault((user_id, query.lower()), [])
+        for r in fresh:
+            ak = r['artist'].lower()
+            if ak not in shown:
+                shown.append(ak)
+
+        formatted = format_recommendations(fresh, display_title)
+        btn_query = display_title if display_title else query
+        markup = recommend_results_buttons(btn_query, fresh)
+        update.message.reply_text(formatted, reply_markup=markup)
+        logger.info(f"Sent fresh recommendations to user {user_id} for '{display_title}'")
+
+    except Exception as e:
+        logger.error(f"Error in more_recs for user {user_id}: {e}")
+        update.message.reply_text(
+            "😓 Couldn't fetch more songs right now. Try again in a moment! 🔄"
         )
 
 
@@ -2247,7 +2318,9 @@ def random_command(update: Update, context: CallbackContext):
             "Finding you something great! ✨"
         )
 
-        pick = get_random_song()
+        args = context.args or []
+        genre_arg = " ".join(args).strip() or None
+        pick = get_random_song(user_id=user_id, genre=genre_arg)
         artist_name = pick['artist']
         song_name = pick['song']
 
@@ -2306,7 +2379,9 @@ def random_command(update: Update, context: CallbackContext):
         parts.append(
             f"\n\n━━━━━━━━━━━━━━━━━━━━━\n"
             f"🎤 /lyrics {artist_name} {song_name} — full lyrics\n"
-            f"🎲 /random — try another!"
+            f"🎲 /random — another surprise"
+            + (" 🌍" if genre_arg else "")
+            + "\n💡 Tip: /random pop, /random afrobeats, /random rock…"
         )
 
         response = ''.join(parts)

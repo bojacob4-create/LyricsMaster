@@ -1,5 +1,6 @@
 import logging
 import requests
+from collections import deque
 from typing import Optional, Dict, List
 
 logger = logging.getLogger(__name__)
@@ -229,7 +230,115 @@ RANDOM_SONGS_POOL = [
     {'artist': 'Frank Ocean', 'song': 'Nights'},
     {'artist': 'Fleetwood Mac', 'song': 'Dreams'},
     {'artist': 'Queen', 'song': 'Bohemian Rhapsody'},
+    # ── Expansion: global, multi-genre, multi-era (120 total) ──
+    {'artist': 'Ayra Starr', 'song': 'Rush'},
+    {'artist': 'Wizkid', 'song': 'Essence'},
+    {'artist': 'Davido', 'song': 'Fall'},
+    {'artist': 'CKay', 'song': 'Love Nwantiti'},
+    {'artist': 'Tems', 'song': 'Free Mind'},
+    {'artist': 'Asake', 'song': 'Lonely At The Top'},
+    {'artist': 'Omah Lay', 'song': 'Soso'},
+    {'artist': 'Fireboy DML', 'song': 'Peru'},
+    {'artist': 'Joeboy', 'song': 'Alcohol'},
+    {'artist': 'King Promise', 'song': 'Terminator'},
+    {'artist': 'Tate McRae', 'song': 'greedy'},
+    {'artist': 'Gracie Abrams', 'song': "I Love You, I'm Sorry"},
+    {'artist': 'Chappell Roan', 'song': 'Good Luck, Babe!'},
+    {'artist': 'Charli XCX', 'song': '360'},
+    {'artist': 'Billie Eilish', 'song': 'bad guy'},
+    {'artist': 'Dua Lipa', 'song': 'Houdini'},
+    {'artist': 'Ariana Grande', 'song': 'we can\'t be friends'},
+    {'artist': 'Sabrina Carpenter', 'song': 'Please Please Please'},
+    {'artist': 'Taylor Swift', 'song': 'Cruel Summer'},
+    {'artist': 'Olivia Rodrigo', 'song': 'vampire'},
+    {'artist': 'Drake', 'song': 'One Dance'},
+    {'artist': 'Kendrick Lamar', 'song': 'Not Like Us'},
+    {'artist': 'Travis Scott', 'song': 'Goosebumps'},
+    {'artist': 'Doja Cat', 'song': 'Paint The Town Red'},
+    {'artist': 'Nicki Minaj', 'song': 'Super Freaky Girl'},
+    {'artist': 'Cardi B', 'song': 'I Like It'},
+    {'artist': '21 Savage', 'song': 'a lot'},
+    {'artist': 'Future', 'song': 'WAIT FOR U'},
+    {'artist': 'J. Cole', 'song': 'No Role Modelz'},
+    {'artist': 'SZA', 'song': 'Snooze'},
+    {'artist': 'The Weeknd', 'song': 'Die For You'},
+    {'artist': 'Frank Ocean', 'song': 'Pink + White'},
+    {'artist': 'Daniel Caesar', 'song': 'Get You'},
+    {'artist': 'H.E.R.', 'song': 'Damage'},
+    {'artist': 'Summer Walker', 'song': 'Girls Need Love'},
+    {'artist': 'Brent Faiyaz', 'song': 'Dead Man Walking'},
+    {'artist': 'Steve Lacy', 'song': 'Bad Habit'},
+    {'artist': 'Victoria Monét', 'song': 'On My Mama'},
+    {'artist': 'Usher', 'song': "DJ Got Us Fallin' In Love"},
+    {'artist': 'Bad Bunny', 'song': 'Tití Me Preguntó'},
+    {'artist': 'Shakira', 'song': 'Bzrp Music Sessions, Vol. 53'},
+    {'artist': 'Karol G', 'song': 'Provenza'},
+    {'artist': 'Rauw Alejandro', 'song': 'Todo de Ti'},
+    {'artist': 'Rosalía', 'song': 'Despechá'},
+    {'artist': 'Peso Pluma', 'song': 'Ella Baila Sola'},
+    {'artist': 'J Balvin', 'song': 'Mi Gente'},
+    {'artist': 'Maluma', 'song': 'Hawái'},
+    {'artist': 'Queen', 'song': "Don't Stop Me Now"},
+    {'artist': 'The Beatles', 'song': 'Here Comes The Sun'},
+    {'artist': 'Arctic Monkeys', 'song': '505'},
+    {'artist': 'Tame Impala', 'song': 'The Less I Know The Better'},
+    {'artist': 'Red Hot Chili Peppers', 'song': 'Californication'},
+    {'artist': 'Oasis', 'song': 'Wonderwall'},
+    {'artist': 'The Strokes', 'song': 'Last Nite'},
+    {'artist': 'Foo Fighters', 'song': 'Everlong'},
+    {'artist': 'Linkin Park', 'song': 'In The End'},
+    {'artist': 'Hozier', 'song': 'Too Sweet'},
+    {'artist': 'Bon Iver', 'song': 'Skinny Love'},
+    {'artist': 'Vampire Weekend', 'song': 'A-Punk'},
+    {'artist': 'Glass Animals', 'song': 'Heat Waves'},
+    {'artist': 'Clairo', 'song': 'Bags'},
+    {'artist': 'Phoebe Bridgers', 'song': 'Motion Sickness'},
+    {'artist': 'The 1975', 'song': 'Somebody Else'},
+    {'artist': 'Fred again..', 'song': 'places to be'},
+    {'artist': 'Disclosure', 'song': 'You & Me'},
+    {'artist': 'Calvin Harris', 'song': 'Summer'},
+    {'artist': 'David Guetta', 'song': 'Titanium'},
+    {'artist': 'Swedish House Mafia', 'song': "Don't You Worry Child"},
+    {'artist': 'Flume', 'song': 'Never Be Like You'},
+    {'artist': 'Kaytranada', 'song': '10%'},
+    {'artist': 'Jung Kook', 'song': 'Seven'},
+    {'artist': 'BTS', 'song': 'Dynamite'},
+    {'artist': 'BLACKPINK', 'song': 'How You Like That'},
+    {'artist': 'NewJeans', 'song': 'Super Shy'},
+    {'artist': 'Stray Kids', 'song': 'S-Class'},
+    {'artist': 'Michael Jackson', 'song': 'Billie Jean'},
+    {'artist': 'Whitney Houston', 'song': 'I Wanna Dance with Somebody'},
+    {'artist': 'ABBA', 'song': 'Dancing Queen'},
+    {'artist': 'Elton John', 'song': 'Cold Heart'},
+    {'artist': 'Bee Gees', 'song': "Stayin' Alive"},
+    {'artist': 'Toto', 'song': 'Africa'},
+    {'artist': 'a-ha', 'song': 'Take On Me'},
+    {'artist': 'Chris Stapleton', 'song': 'White Horse'},
+    {'artist': 'Zach Bryan', 'song': 'Something in the Orange'},
+    {'artist': 'Noah Kahan', 'song': 'Stick Season'},
+    {'artist': 'Kacey Musgraves', 'song': 'Deeper Well'},
+    {'artist': 'Rihanna', 'song': 'Umbrella'},
+    {'artist': 'Rihanna', 'song': 'Diamonds'},
+    {'artist': 'Adele', 'song': 'Rolling in the Deep'},
+    {'artist': 'Sam Smith', 'song': 'Unholy'},
+    {'artist': 'Doja Cat', 'song': 'Woman'},
+    {'artist': 'Lizzo', 'song': 'About Damn Time'},
+    {'artist': 'Jack Harlow', 'song': 'First Class'},
+    {'artist': 'Metro Boomin', 'song': 'Creepin\''},
 ]
+
+
+def _note_random_pick(user_id, pick):
+    """Remember a random pick per user so /random avoids recent repeats."""
+    if user_id is None:
+        return
+    dq = _recent_random_picks.get(user_id)
+    if dq is None:
+        dq = _recent_random_picks[user_id] = deque(maxlen=12)
+    dq.append(f"{pick['artist']} - {pick['song']}".lower())
+
+
+_recent_random_picks = {}
 
 
 def get_top_by_genre(genre_query: str) -> Optional[tuple]:
@@ -284,9 +393,46 @@ def get_available_genres() -> List[str]:
     return genres
 
 
-def get_random_song() -> Dict:
+def get_random_song(user_id=None, genre=None) -> Dict:
+    """Pick a random song for discovery.
+
+    - genre: when a valid genre is given, pick from that genre's top songs.
+    - Otherwise ~25% of picks come from the live Apple Music Top 100
+      (1-hour cached) for freshness, the rest from the curated pool.
+    - Per-user recent picks are avoided (last 12) so /random feels fresh.
+    """
     import random as rng
-    return rng.choice(RANDOM_SONGS_POOL)
+
+    if genre:
+        resolved = GENRE_ALIASES.get(genre.lower().strip(), genre.lower().strip())
+        if resolved in GENRE_TOP_SONGS:
+            songs = list(GENRE_TOP_SONGS[resolved])
+            rng.shuffle(songs)
+            pick = {'artist': songs[0]['artist'], 'song': songs[0]['song']}
+            _note_random_pick(user_id, pick)
+            return pick
+
+    if rng.random() < 0.25:
+        try:
+            from services.recommendation_service import _fetch_apple_top_songs
+            chart = _fetch_apple_top_songs()
+            if chart:
+                c = rng.choice(chart)
+                pick = {'artist': c['artist'], 'song': c['name']}
+                _note_random_pick(user_id, pick)
+                return pick
+        except Exception:
+            pass
+
+    recent = _recent_random_picks.get(user_id) if user_id else None
+    pick = rng.choice(RANDOM_SONGS_POOL)
+    if recent:
+        for _ in range(15):
+            if f"{pick['artist']} - {pick['song']}".lower() not in recent:
+                break
+            pick = rng.choice(RANDOM_SONGS_POOL)
+    _note_random_pick(user_id, pick)
+    return dict(pick)
 
 
 def get_artist_info(name: str) -> Optional[Dict]:
