@@ -26,6 +26,29 @@ _ARTIST_SONG_RE = re.compile(
     re.IGNORECASE,
 )
 
+# "Song by Artist" free-form pattern, e.g. "water by tyla".
+# Lets users skip the "Artist - Song" format for the most natural phrasing.
+_BY_SONG_RE = re.compile(
+    r'^(.{2,60}?)\s+by\s+(.{2,60})$',
+    re.IGNORECASE,
+)
+
+# First words that mark the input as a question — those stay with the NLP layer.
+_QUESTION_WORDS = frozenset({
+    'what', 'which', 'who', 'whom', 'when', 'where', 'why', 'how',
+    'is', 'are', 'was', 'were', 'do', 'does', 'did', 'can', 'could',
+})
+
+# Pronouns can never be an artist name — guards titles like "Stand By Me"
+# from being misread as "<pronoun> - <rest>".
+_PRONOUNS = frozenset({'me', 'you', 'him', 'her', 'them', 'us', 'it'})
+
+# Generic placeholders on the song side: "songs by adele" → recommend adele.
+_GENERIC_SONG_WORDS = frozenset({
+    'song', 'songs', 'music', 'track', 'tracks',
+    'something', 'anything', 'tune', 'tunes',
+})
+
 LYRICS_KEYWORDS = [
     'lyrics', 'lyric', 'words to', 'words of', 'text of', 'text for',
     'show me the lyrics', 'get lyrics', 'find lyrics', 'what are the lyrics',
@@ -349,5 +372,24 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
         part_b = _art_song.group(2).strip()
         if len(part_a) >= 2 and len(part_b) >= 2:
             return 'song', f"{part_a} - {part_b}"
+
+    # "Song by Artist" free-form pattern (no keyword needed).
+    # Catches inputs like "water by tyla" or "blinding lights by the weeknd".
+    # Runs AFTER the dash-pair check so an explicit "Artist - Song" wins,
+    # and after all keyword checks so "play X by Y" style intents keep priority.
+    # Questions ("what song by adele?") and pronoun artists ("stand by me")
+    # are left for the NLP layer, which understands them better.
+    if '?' not in text:
+        _by_match = _BY_SONG_RE.match(text)
+        if _by_match:
+            _song_part = _by_match.group(1).strip()
+            _artist_part = _by_match.group(2).strip()
+            _first_word = _song_part.split()[0].lower() if _song_part.split() else ''
+            if (len(_song_part) >= 2 and len(_artist_part) >= 2
+                    and _first_word not in _QUESTION_WORDS
+                    and _artist_part.lower() not in _PRONOUNS):
+                if _song_part.lower() in _GENERIC_SONG_WORDS:
+                    return 'recommend', _artist_part
+                return 'song', f"{_artist_part} - {_song_part}"
 
     return None, text

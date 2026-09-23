@@ -438,6 +438,10 @@ def parse_intent(text: str) -> Dict:
                 {"role": "user",   "content": text},
             ],
             text={"format": {"type": "json_object"}},
+            # Hard timeout: without this a hung API call blocks the user's
+            # message handler indefinitely. 10s is generous for a mini model;
+            # on timeout we fall back to the format hint via _FALLBACK.
+            timeout=10,
         )
         raw = response.output_text.strip()
     except Exception as e:

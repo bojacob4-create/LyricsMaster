@@ -249,6 +249,25 @@ def _clean_ambiguous_query(text: str) -> str:
     return result
 
 
+def _is_bare_title_fast_path(text: str) -> bool:
+    """True when the message is a bare song title that should skip the NLP layer.
+
+    Short inputs (<=3 words) with no intent keywords can never be resolved
+    confidently by the OpenAI router — they always end at Last.fm
+    disambiguation ("Did you mean X - Y?").  Skipping the API round-trip
+    (~1-3s) reaches the identical result faster and costs nothing.
+    """
+    words = text.strip().split()
+    if not words or len(words) > 3:
+        return False
+    if ' - ' in text or ' – ' in text or ' — ' in text:
+        return False
+    if any(w.lower().strip('.,!?') in _INTENT_KEYWORDS for w in words):
+        return False
+    # Need at least 2 alphabetic chars — "???" / "123" have no searchable content.
+    return sum(1 for c in text if c.isalpha()) >= 2
+
+
 def natural_language_handler(update: Update, context: CallbackContext):
     """Handle non-command text messages via intent detection."""
     user_id = update.effective_user.id
@@ -472,6 +491,44 @@ def natural_language_handler(update: Update, context: CallbackContext):
             "• /lyrics The Weeknd - Blinding Lights\n"
             "• /recommend Counting Stars"
         )
+        return
+
+    # ── Step 3.6: Bare-title fast path ───────────────────────────────────────
+    # Short keyword-less inputs ("water", "blinding lights") skip the OpenAI
+    # round-trip and go straight to Last.fm disambiguation — the NLP layer
+    # could never resolve these confidently anyway (see _is_bare_title_fast_path).
+    if _is_bare_title_fast_path(text):
+        _pending_recommend_artist.pop(user_id, None)
+        _seed = text.strip()
+        try:
+            from services.nlp_router import (
+                search_song_candidates as _fp_search,
+                is_dominant_match      as _fp_is_dom,
+                disambiguation_message as _fp_disambig,
+            )
+            _fp_cands = _fp_search(_seed)
+            if _fp_cands:
+                if _fp_is_dom(_fp_cands):
+                    _fp_top = _fp_cands[0]
+                    _pending_confirmation[user_id] = {
+                        'artist':     _fp_top['artist'],
+                        'song':       _fp_top['song'],
+                        'intent_cmd': 'song',
+                    }
+                else:
+                    _pending_confirmation.pop(user_id, None)
+                _fp_msg = _fp_disambig(_seed, 'song', _fp_cands)
+            else:
+                _pending_confirmation.pop(user_id, None)
+                _fp_msg = (
+                    f"🔍 I couldn't find a song called *{_seed}*.\n\n"
+                    "Please use the format:\n"
+                    "`Artist - Song`\n\n"
+                    "Example: `Tyla - Water`"
+                )
+            update.message.reply_text(_fp_msg, parse_mode='Markdown')
+        except Exception as _fp_err:
+            logger.warning(f"[fast-path] Disambiguation error: {_fp_err}")
         return
 
     # ── Step 4: NLP fallback ─────────────────────────────────────────────────
@@ -949,6 +1006,12 @@ def recommend_command(update: Update, context: CallbackContext):
             )
             return
 
+        # Visible progress — recommendations can take several seconds on a
+        # cold cache (Last.fm similarity + genre + tag lookups, sequential).
+        update.message.reply_text(
+            f"🔍 Finding songs like \"{query}\"…\n"
+            "This usually takes a few seconds. 🎵"
+        )
         update.message.chat.send_action(action="typing")
 
         if _is_artist_only_query(query):
@@ -1422,6 +1485,11 @@ def analyze_command(update: Update, context: CallbackContext):
             )
             return
 
+        # Visible progress — analysis runs lyric search + an AI pass.
+        update.message.reply_text(
+            f"🧠 Analyzing \"{query}\"…\n"
+            "This usually takes a few seconds. 📊"
+        )
         update.message.chat.send_action(action="typing")
 
         artist, song, lyrics, status = search_lyrics_with_fallback(query)

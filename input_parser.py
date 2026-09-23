@@ -1,5 +1,6 @@
 import re
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple, List
 from services.lyrics_service import search_song_info
 
@@ -115,8 +116,12 @@ def search_lyrics_with_fallback(raw_input: str) -> Tuple[Optional[str], Optional
         right = parts[1].strip()
 
         if left and right:
-            r1 = search_song_info(left,  right)   # left=artist, right=song
-            r2 = search_song_info(right, left)    # right=artist, left=song
+            # Both orderings are independent network calls — run them in
+            # parallel to halve worst-case latency on this path.
+            with ThreadPoolExecutor(max_workers=2) as _pool:
+                _r1 = _pool.submit(search_song_info, left,  right)  # left=artist
+                _r2 = _pool.submit(search_song_info, right, left)   # right=artist
+                r1, r2 = _r1.result(), _r2.result()
             best = _best_of(r1, r2, cleaned)
             if best:
                 logger.info(f"Separator hit (bidirectional): '{best[0]} - {best[1]}'")
@@ -128,8 +133,10 @@ def search_lyrics_with_fallback(raw_input: str) -> Tuple[Optional[str], Optional
         right = parts[1].strip()
 
         if left and right:
-            r1 = search_song_info(left,  right)
-            r2 = search_song_info(right, left)
+            with ThreadPoolExecutor(max_workers=2) as _pool:
+                _r1 = _pool.submit(search_song_info, left,  right)
+                _r2 = _pool.submit(search_song_info, right, left)
+                r1, r2 = _r1.result(), _r2.result()
             best = _best_of(r1, r2, cleaned)
             if best:
                 logger.info(f"Compact-dash hit (bidirectional): '{best[0]} - {best[1]}'")
@@ -151,8 +158,10 @@ def search_lyrics_with_fallback(raw_input: str) -> Tuple[Optional[str], Optional
                 break
             part1 = ' '.join(words[:i])
             part2 = ' '.join(words[i:])
-            r1 = search_song_info(part1, part2)
-            r2 = search_song_info(part2, part1)
+            with ThreadPoolExecutor(max_workers=2) as _pool:
+                _w1 = _pool.submit(search_song_info, part1, part2)
+                _w2 = _pool.submit(search_song_info, part2, part1)
+                r1, r2 = _w1.result(), _w2.result()
             best = _best_of(r1, r2, cleaned)
             if best:
                 logger.info(f"Word-split hit: '{best[0]} - {best[1]}'")
