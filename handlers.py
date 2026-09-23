@@ -371,6 +371,41 @@ def _clean_ambiguous_query(text: str) -> str:
     return result
 
 
+_local_song_titles_cache = None
+
+
+def _local_song_titles() -> set:
+    """Lowercase song titles from our local pools (quiz + random + genre tops).
+
+    Used by the bare-artist-name step to spot names that are ALSO song
+    titles (e.g. "rush"), so those keep the disambiguation prompt instead
+    of jumping straight to an artist card.
+    """
+    global _local_song_titles_cache
+    if _local_song_titles_cache is None:
+        titles = set()
+        try:
+            from services.quiz_service import get_quiz_songs
+            for s in get_quiz_songs():
+                if isinstance(s, dict) and s.get('song'):
+                    titles.add(s['song'].lower().strip())
+        except Exception:
+            pass
+        try:
+            from services.artist_service import RANDOM_SONGS_POOL, GENRE_TOP_SONGS
+            for s in RANDOM_SONGS_POOL:
+                if isinstance(s, dict) and s.get('song'):
+                    titles.add(s['song'].lower().strip())
+            for songs in GENRE_TOP_SONGS.values():
+                for s in songs:
+                    if isinstance(s, dict) and s.get('song'):
+                        titles.add(s['song'].lower().strip())
+        except Exception:
+            pass
+        _local_song_titles_cache = titles
+    return _local_song_titles_cache
+
+
 def _is_bare_title_fast_path(text: str) -> bool:
     """True when the message is a bare song title that should skip the NLP layer.
 
@@ -656,6 +691,23 @@ def natural_language_handler(update: Update, context: CallbackContext):
             "• /recommend Counting Stars"
         )
         return
+
+    # ── Step 3.55: Bare artist name → artist card directly ──────────────────
+    # Typing just an artist's name ("Tate McRae") should show their artist
+    # card — not a "which song did you mean?" prompt. The local-DB lookup is
+    # free (no network, no added latency). If the name is ALSO a known song
+    # title, fall through to the disambiguation prompt as before.
+    if _is_bare_title_fast_path(text):
+        _bare_artist = get_artist_info(text.strip())
+        if _bare_artist and text.strip().lower() not in _local_song_titles():
+            _pending_recommend_artist.pop(user_id, None)
+            logger.info(
+                f"NL bare artist name for user {user_id}: "
+                f"'{text.strip()}' → artist card"
+            )
+            context.args = text.strip().split()
+            artist_command(update, context)
+            return
 
     # ── Step 3.6: Bare-title fast path ───────────────────────────────────────
     # Short keyword-less inputs ("water", "blinding lights") skip the OpenAI
