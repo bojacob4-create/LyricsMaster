@@ -28,3 +28,4 @@ venv/
 *.mp4
 *.m4a
 generated-icon.png
+mp3_cache/

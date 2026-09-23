@@ -43,7 +43,7 @@ from utils import (
     detect_themes,
 )
 from services.youtube_service import get_youtube_link, format_youtube_response
-from services.youtube_downloader_service import download_youtube_video, download_youtube_audio, download_audio_for_song, cleanup_video
+from services.youtube_downloader_service import download_youtube_video, download_youtube_audio, download_audio_for_song, cleanup_video, note_mp3_file_id, is_cached_mp3_path
 from services.ai_info_service import get_person_info
 from services.artist_service import (
     get_artist_info, format_artist_info, get_trending_songs, format_trending,
@@ -2029,32 +2029,69 @@ def mp3_command(update: Update, context: CallbackContext):
             "This may take 30–60 seconds."
         )
 
+        def _stage(text: str):
+            try:
+                processing_message.edit_text(
+                    "🎧 Converting to MP3...\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"{text}"
+                )
+            except Exception:
+                pass
+
         if ' - ' in raw:
             parts = raw.split(' - ', 1)
             artist_q, song_q = parts[0].strip(), parts[1].strip()
         else:
             artist_q, song_q = raw.strip(), ''
 
-        success, result = download_audio_for_song(artist_q, song_q)
+        success, result = download_audio_for_song(artist_q, song_q, on_stage=_stage)
 
         if success:
+            # Tier-0 hit: Telegram already hosts this file — send instantly.
+            if result[0] == 'file_id':
+                _, fid, title, uploader = result
+                try:
+                    update.message.reply_audio(
+                        audio=fid,
+                        caption=f"🎵 {title}\n⚡ Instant delivery",
+                        title=title,
+                        performer=uploader
+                    )
+                    processing_message.delete()
+                except Exception as send_err:
+                    logger.error(f"Failed to send cached audio: {send_err}")
+                    processing_message.edit_text(
+                        "❌ Couldn't send the audio file.\n"
+                        "Please try again."
+                    )
+                return
+
             file_path, info_message, title, uploader = result
             processing_message.edit_text(info_message)
             try:
                 with open(file_path, 'rb') as audio_file:
-                    update.message.reply_audio(
+                    sent_msg = update.message.reply_audio(
                         audio_file,
                         caption=f"🎵 {title}",
                         title=title,
                         performer=uploader
                     )
+                # Remember Telegram's file_id so the next request is instant.
+                try:
+                    if sent_msg and sent_msg.audio:
+                        note_mp3_file_id(artist_q, song_q, sent_msg.audio.file_id)
+                except Exception:
+                    pass
             except Exception as send_err:
                 logger.error(f"Failed to send audio: {send_err}")
                 processing_message.edit_text(
                     "❌ The MP3 was created but couldn't be sent.\n"
                     "It may be too large for Telegram (50MB limit)."
                 )
-            cleanup_video(file_path)
+            # Never delete files that live in the MP3 cache — they're reused.
+            if not is_cached_mp3_path(file_path):
+                cleanup_video(file_path)
         else:
             processing_message.edit_text(result)
 
