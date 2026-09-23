@@ -32,6 +32,58 @@ _COVER_WORDS = frozenset({
     'cover', 'karaoke', 'tribute', 'parody', 'bootleg', 'mashup', 'vip', 'remix',
 })
 
+# ── Video-suffix stripping (round 5) ──────────────────────────────────────
+# Providers sometimes return track names like
+# "Rod Wave - Dope Girl (Official Audio)". These suffixes are display noise —
+# strip them so the user always sees a clean "Artist - Song".
+_VIDEO_SUFFIX_RES = [
+    re.compile(r'\s*[\(\[]\s*official\s+(?:music\s+)?video\s*[\)\]]\s*$', re.IGNORECASE),
+    re.compile(r'\s*[\(\[]\s*official\s+audio\s*[\)\]]\s*$', re.IGNORECASE),
+    re.compile(r'\s*[\(\[]\s*official\s+lyric(?:s)?\s+video\s*[\)\]]\s*$', re.IGNORECASE),
+    re.compile(r'\s*[\(\[]\s*music\s+video\s*[\)\]]\s*$', re.IGNORECASE),
+    re.compile(r'\s*[\(\[]\s*lyric\s+video\s*[\)\]]\s*$', re.IGNORECASE),
+    re.compile(r'\s*[\(\[]\s*lyrics\s+video\s*[\)\]]\s*$', re.IGNORECASE),
+    re.compile(r'\s*[\(\[]\s*visualizer\s*[\)\]]\s*$', re.IGNORECASE),
+    re.compile(r'\s*[\(\[]\s*audio\s*[\)\]]\s*$', re.IGNORECASE),
+    re.compile(r'\s*-\s*official\s+(?:music\s+)?video\s*$', re.IGNORECASE),
+    re.compile(r'\s*-\s*official\s+audio\s*$', re.IGNORECASE),
+]
+
+
+def canonicalize_track_names(artist: str, track: str) -> Tuple[str, str]:
+    """Return a clean (artist, track) pair for display.
+
+    - Dedupes a repeated artist name embedded in the track
+      ("Rod Wave - Dope Girl" with artist "Rod Wave" → "Dope Girl").
+    - Strips video suffixes ("(Official Audio)", "[Official Video]").
+    - Normalizes whitespace.
+    Parentheticals that are part of the real title
+    ("(from GTAVI: The Album)") are left untouched.
+    """
+    artist = re.sub(r'\s+', ' ', (artist or '')).strip()
+    track = re.sub(r'\s+', ' ', (track or '')).strip()
+    if artist and track:
+        lowered = track.lower()
+        a_lower = artist.lower()
+        stripped = False
+        for sep in (' - ', ' – ', ' — ', '-'):
+            if lowered.startswith(a_lower + sep):
+                rest = track[len(artist) + len(sep):].strip()
+                if len(rest) >= 2:
+                    track = rest
+                    stripped = True
+                break
+        if not stripped and lowered.startswith(a_lower + ' '):
+            rest = track[len(artist) + 1:].strip()
+            if len(rest) >= 2:
+                track = rest
+        for rx in _VIDEO_SUFFIX_RES:
+            new = rx.sub('', track).strip()
+            if new and new != track:
+                track = new
+        track = re.sub(r'\s+', ' ', track).strip()
+    return artist, track
+
 
 def _normalize_tokens(text: str) -> set:
     """Return a set of clean lowercase tokens, stripping punctuation and splitting hyphens."""
@@ -91,6 +143,7 @@ def _fetch_from_lrclib_direct(artist: str, song: str) -> Optional[Tuple[str, str
             if lyrics and len(lyrics) > 30:
                 api_artist = data.get('artistName', artist)
                 api_track  = data.get('trackName',  song)
+                api_artist, api_track = canonicalize_track_names(api_artist, api_track)
                 logger.info(f"lrclib direct hit: '{api_artist} - {api_track}'")
                 return api_artist, api_track, _clean_lyrics(lyrics)
     except Exception as e:
@@ -157,8 +210,11 @@ def _fetch_from_lrclib_search(
 
                 result = best_clean if best_clean is not None else best_any
                 if result:
+                    ra, rt, rl = result
+                    ra, rt = canonicalize_track_names(ra, rt)
+                    result = (ra, rt, rl)
                     logger.info(
-                        f"lrclib search hit: '{result[0]} - {result[1]}' "
+                        f"lrclib search hit: '{ra} - {rt}' "
                         f"(score={best_clean_score if best_clean else best_any_score},"
                         f" clean={'yes' if best_clean else 'no'}) for query '{query}'"
                     )
@@ -297,6 +353,7 @@ def search_song_info(artist: str, song: str) -> Optional[Tuple[str, str, str]]:
             ovh_lyrics = _fetch_from_lyrics_ovh(search_artist, search_song)
             if ovh_lyrics:
                 clean_song = _clean_slug_title(search_song, search_artist)
+                search_artist, clean_song = canonicalize_track_names(search_artist, clean_song)
                 logger.info(
                     f"lyrics.ovh fallback hit in search_song_info: "
                     f"'{search_artist} - {clean_song}'"

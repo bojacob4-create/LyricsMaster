@@ -15,7 +15,7 @@ from buttons import (
     daily_song_buttons, subscribe_count_buttons,
     recommend_results_buttons, daily_picker_buttons
 )
-from services.lyrics_service import get_song_lyrics
+from services.lyrics_service import get_song_lyrics, canonicalize_track_names
 from services.translator_service import (
     translate_to_arabic, translate_text, get_language_code,
     get_language_display, get_supported_languages_text
@@ -497,6 +497,7 @@ def natural_language_handler(update: Update, context: CallbackContext):
             'top': top_command,
             'random': random_command,
             'quiz': quiz_command,
+            'throwback': throwback_command,
             'subscribe': subscribe_daily_command,
             'unsubscribe': unsubscribe_daily_command,
             'wiki': wiki_command,
@@ -2454,6 +2455,11 @@ def random_command(update: Update, context: CallbackContext):
         if not lyrics:
             artist = artist_name
             song = song_name
+
+        # Round 5: canonical display — exactly one clean "Artist - Song".
+        # Dedupes repeated artist names ("Rod Wave - Rod Wave - Dope Girl"),
+        # strips "(Official Audio)"-style suffixes, normalizes whitespace.
+        artist, song = canonicalize_track_names(artist or '', song or '')
 
         display_title = f"{artist} - {song}" if artist and song else (artist or song or f"{artist_name} - {song_name}")
 

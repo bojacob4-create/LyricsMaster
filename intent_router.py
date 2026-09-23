@@ -33,6 +33,33 @@ _BY_SONG_RE = re.compile(
     re.IGNORECASE,
 )
 
+# "play <song>" / "put on <song>" — the user wants the song itself.
+# Checked right after "play something by X" (→ recommend) and before the
+# generic YouTube keyword scan: the song dashboard already embeds the video
+# link, so the richer 'song' intent wins unless the text explicitly says
+# youtube/video/mp3/audio (those keep the old youtube/mp3 intents).
+_PLAY_SONG_RE = re.compile(
+    r'^(?:can you\s+|could you\s+)?(?:please\s+)?(?:play|put on)\s+(.+?)[.!?]*$',
+    re.IGNORECASE,
+)
+
+# "who sings/sang <song>" — the answer is the artist, shown front and center
+# on the song dashboard, so route there.
+_WHO_SINGS_RE = re.compile(r'^who\s+sings\s+(.+?)\??$', re.IGNORECASE)
+_WHO_SANG_RE  = re.compile(r'^who\s+sang\s+(.+?)\??$',  re.IGNORECASE)
+
+# "find/show/get/give me <X>" — X is an artist when we know them, else a song.
+_FIND_ME_RE = re.compile(
+    r'^(?:find|show|get|give)\s+me\s+(.+?)[.!?]*$',
+    re.IGNORECASE,
+)
+
+# "that song that goes <lyrics fragment>" — search by the fragment.
+_THAT_SONG_RE = re.compile(
+    r'^(?:that|the) song that goes\s+(.+?)[.!?]*$',
+    re.IGNORECASE,
+)
+
 # First words that mark the input as a question — those stay with the NLP layer.
 _QUESTION_WORDS = frozenset({
     'what', 'which', 'who', 'whom', 'when', 'where', 'why', 'how',
@@ -130,6 +157,92 @@ RANDOM_KEYWORDS = [
     'random', 'surprise me', 'random song', 'pick a song',
     'anything', 'something random',
 ]
+
+THROWBACK_KEYWORDS = [
+    'throwback', 'from the 80s', 'from the 90s', 'from the 2000s',
+    'from the 2010s', "from the 80's", "from the 90's",
+    'nineties', 'eighties', 'oldies', 'classic hits',
+    '80s hits', '90s hits', '2000s hits', '2010s hits',
+    'take me back', 'back to the',
+]
+
+
+def _extract_decade(text: str) -> str:
+    """Map free text to '80s'/'90s'/'2000s'/'2010s'; '' when none found."""
+    m = re.search(r'\b(80|90)s\b', text, re.IGNORECASE)
+    if m:
+        return f"{m.group(1)}s"
+    m = re.search(r'\b(2000|2010)s\b', text, re.IGNORECASE)
+    if m:
+        return f"{m.group(1)}s"
+    m = re.search(r'\b(19[89]\d|20[01]\d)\b', text)
+    if m:
+        year = int(m.group(1))
+        if year < 1990:
+            return '80s'
+        if year < 2000:
+            return '90s'
+        if year < 2010:
+            return '2000s'
+        return '2010s'
+    if re.search(r'\bnineties\b', text, re.IGNORECASE):
+        return '90s'
+    if re.search(r'\beighties\b', text, re.IGNORECASE):
+        return '80s'
+    return ''
+
+
+# ── Typo-tolerant song titles (round 5) ────────────────────────────────────
+# Local corpus of known song titles used to fuzzy-correct obvious typos
+# ("calin down" → "Calm Down"). Only used where the user typed a single
+# song phrase (e.g. the translate path), never on "Artist - Song" input.
+_LOCAL_TITLES = None  # lower-title -> original title
+
+
+def _local_song_titles() -> dict:
+    global _LOCAL_TITLES
+    if _LOCAL_TITLES is None:
+        titles = {}
+        try:
+            from services.artist_service import RANDOM_SONGS_POOL, GENRE_TOP_SONGS
+            for p in RANDOM_SONGS_POOL:
+                t = (p.get('song') or '').strip()
+                if t:
+                    titles.setdefault(t.lower(), t)
+            for songs in GENRE_TOP_SONGS.values():
+                for s in songs:
+                    t = (s.get('song') or '').strip()
+                    if t:
+                        titles.setdefault(t.lower(), t)
+        except Exception:
+            pass
+        try:
+            from services.quiz_service import get_quiz_songs
+            for s in get_quiz_songs():
+                t = (s.get('song') or '').strip()
+                if t:
+                    titles.setdefault(t.lower(), t)
+        except Exception:
+            pass
+        _LOCAL_TITLES = titles
+    return _LOCAL_TITLES
+
+
+def _fuzzy_correct_title(text: str) -> str:
+    """Correct an obvious typo in a bare song phrase; return text unchanged
+    when no close local title exists."""
+    import difflib
+    cleaned = text.strip()
+    if not cleaned or len(cleaned.split()) > 6:
+        return text
+    titles = _local_song_titles()
+    if not titles:
+        return text
+    matches = difflib.get_close_matches(cleaned.lower(), titles.keys(),
+                                        n=1, cutoff=0.82)
+    if matches and matches[0] != cleaned.lower():
+        return titles[matches[0]]
+    return text
 
 SUBSCRIBE_KEYWORDS = [
     'subscribe', 'daily songs', 'send me daily', 'daily picks',
@@ -234,6 +347,11 @@ def _clean_query_translate(text: str) -> str:
     result = _strip_filler_suffix(result)
     result = _normalize_song_query(result)
 
+    # Typo tolerance for a bare song phrase ("calin down" → "Calm Down").
+    # Only when no artist was given — "Artist - Song" input is never touched.
+    if ' - ' not in result and ' – ' not in result:
+        result = _fuzzy_correct_title(result)
+
     if lang_suffix:
         result = f"{result} {lang_suffix}"
     return result
@@ -289,6 +407,10 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
     if _match_keywords(text, QUIZ_KEYWORDS):
         return 'quiz', ''
 
+    if _match_keywords(text, THROWBACK_KEYWORDS):
+        decade = _extract_decade(text)
+        return 'throwback', decade
+
     if _match_keywords(text, RANDOM_KEYWORDS):
         return 'random', ''
 
@@ -339,6 +461,16 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
         artist = _play_by.group(1).strip().rstrip('.')
         return 'recommend', artist
 
+    # "play <song>" / "put on <song>" → song dashboard (embeds the video link).
+    # Explicit youtube/video/mp3/audio mentions fall through to the old scans.
+    _play_song = _PLAY_SONG_RE.match(text)
+    if _play_song:
+        _ps = _play_song.group(1).strip()
+        if not re.search(r'\b(youtube|video|mp3|audio)\b', _ps, re.IGNORECASE):
+            _ps = _strip_filler_suffix(_ps)
+            if _ps:
+                return 'song', _ps
+
     if _match_keywords(text, YOUTUBE_KEYWORDS):
         query = _clean_query(text, ['video', 'music video', 'watch', 'play', 'youtube',
                                      'show', 'find'])
@@ -361,6 +493,35 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
     if _match_keywords(text, DOWNLOAD_KEYWORDS):
         query = _clean_query(text, ['download', 'save', 'get'])
         return 'download', query
+
+    # "who sings/sang <song>" → the artist is the answer; the song dashboard
+    # shows it front and center.
+    for _rx in (_WHO_SINGS_RE, _WHO_SANG_RE):
+        _m = _rx.match(text)
+        if _m:
+            _q = _m.group(1).strip().strip('"').strip("'").strip()
+            if _q:
+                return 'song', _q
+
+    # "that song that goes <lyrics fragment>" → search by the fragment.
+    _ts = _THAT_SONG_RE.match(text)
+    if _ts:
+        _frag = _ts.group(1).strip().strip('"').strip("'").strip()
+        if _frag:
+            return 'song', _frag
+
+    # "find/show/get/give me <X>" → artist when we know them, else a song.
+    _fm = _FIND_ME_RE.match(text)
+    if _fm:
+        _rest = _strip_filler_suffix(_fm.group(1).strip())
+        if _rest:
+            try:
+                from services.artist_service import get_artist_info as _gai
+                if _gai(_rest):
+                    return 'artist', _rest
+            except Exception:
+                pass
+            return 'song', _rest
 
     # "Artist - Song" explicit structured format (last resort before NLP).
     # Catches inputs like "Gemini - Hola", "Radiohead - Creep", etc.
