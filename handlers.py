@@ -3697,11 +3697,16 @@ def _send_mood_mix(update, user_id: int, mood: str):
         )
         return
 
-    lines = [f"🎧 *{label} Mix*",
-             "━━━━━━━━━━━━━━━━━━━━━", ""]
+    lines = [f"🎧 *{label} Mix*"]
+    reasons = [s.get('reason') or '' for s in songs]
+    all_live = reasons and all(r.startswith('🔥') for r in reasons)
+    if all_live:
+        # One shared note up top — the per-song line would just repeat 5×.
+        lines.append(f"🔥 Live: what Last.fm listeners reach for when feeling {mood}")
+    lines += ["━━━━━━━━━━━━━━━━━━━━━", ""]
     for i, s in enumerate(songs, 1):
         lines.append(f"*{i}.* {md(s['artist'])} — {md(s['name'])}")
-        if s.get('reason'):
+        if s.get('reason') and not all_live:
             lines.append(f"   ↳ {s['reason']}")
     lines += ["",
               "━━━━━━━━━━━━━━━━━━━━━",
