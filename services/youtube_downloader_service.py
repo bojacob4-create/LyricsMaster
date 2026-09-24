@@ -1128,6 +1128,14 @@ def download_audio_for_song(artist: str, song: str,
         prefix = f'audio_{key[:10]}_{rank_label}'
 
         def _child(q, durl, pfx, label):
+            # The fork inherits bot.py's SIGTERM/SIGINT handlers, which catch
+            # the signal and shut down gracefully WITHOUT exiting — so the
+            # parent's terminate() at the stall deadline left a lingering
+            # ~80MB child instead of killing it. Reset to default so
+            # terminate() really terminates.
+            import signal as _signal
+            _signal.signal(_signal.SIGTERM, _signal.SIG_DFL)
+            _signal.signal(_signal.SIGINT, _signal.SIG_DFL)
             try:
                 q.put(('ok', _download_url_to_mp3(durl, pfx, label=label)))
             except Exception as e:
@@ -1142,6 +1150,10 @@ def download_audio_for_song(artist: str, song: str,
         if p.is_alive():
             p.terminate()
             p.join(5)
+            if p.is_alive():
+                # Last resort: SIGKILL can't be caught or ignored.
+                p.kill()
+                p.join(5)
             # Tidy partials the killed child may have left behind.
             for m in globmod.glob(os.path.join(os.getcwd(), f'{prefix}.*')):
                 try:
