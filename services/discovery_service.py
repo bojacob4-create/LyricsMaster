@@ -10,8 +10,10 @@ falls back to a good local answer when the API is limited, slow, or down.
 Module import performs NO network I/O.  Every public function never raises:
 on any failure it returns [] / {} / a safe default.
 
-Exception to the local-first rule: mood mixes are LIVE-first (Last.fm tag
-charts) by explicit product direction — the pool is fallback/shortfall only.
+Exception to the local-first rule: mood mixes are LIVE-first by explicit
+product direction — a blend of fresh releases (<=24 months, live Apple
+chart) matched to the mood plus the live Last.fm tag chart; the pool is
+fallback/shortfall only.
 """
 
 import json
@@ -21,7 +23,11 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple
 
-from services.recommendation_service import get_similar_songs, ARTIST_GENRE_MAP
+from services.recommendation_service import (
+    get_similar_songs, ARTIST_GENRE_MAP,
+    _MOOD_KEYWORDS, _MOOD_COMPAT, _GENRE_MOOD_DEFAULT,
+)
+from services.live_charts import get_fresh_songs
 from services.artist_service import (
     GENRE_TOP_SONGS,
     GENRE_ALIASES,
@@ -105,6 +111,62 @@ _MOOD_LASTFM_TAG: Dict[str, str] = {
 }
 _MOOD_TAG_CACHE: Dict[str, Tuple[float, List[Dict]]] = {}  # tag -> (ts, tracks)
 _MOOD_TAG_TTL_SECS = 12 * 3600  # 12h — tag charts move slowly
+
+# Canonical mood -> internal mood key used by the recommendation engine's
+# mood inference (title keywords + genre defaults).
+_MOOD_INTERNAL = {
+    'happy': 'happy',
+    'energetic': 'energetic',
+    'relaxed': 'chill',
+    'sad': 'sad',
+    'romantic': 'romantic',
+    'party': 'energetic',
+    'focus': 'chill',
+}
+
+
+def _mood_fresh_picks(mood: str, n: int = 2,
+                      exclude: set = None) -> List[Dict]:
+    """Fresh releases (<=24 months, live Apple chart) matched to the mood.
+
+    Strict and predictable: the title must contain a real keyword of the
+    requested mood, and the artist's known genre must not contradict it
+    (unknown genres don't count for or against).  Artist-diverse, never
+    raises.  When nothing qualifies, the tag chart fills the mix.
+    """
+    try:
+        internal = _MOOD_INTERNAL.get((mood or '').lower(), 'happy')
+        mood_kws = _MOOD_KEYWORDS.get(internal, set())
+        fresh = get_fresh_songs() or []
+        exclude = exclude or set()
+        out, seen_artists = [], set()
+        for s in fresh:
+            a = str(s.get('artist') or '').strip()
+            t = str(s.get('song') or '').strip()
+            if not a or not t:
+                continue
+            if (a.lower(), t.lower()) in exclude:
+                continue
+            if a.lower() in seen_artists:
+                continue
+            words = set(re.sub(r"[^a-z\s]", "", t.lower()).split())
+            if not (mood_kws & words):
+                continue  # no title evidence — don't guess
+            genre = ARTIST_GENRE_MAP.get(a.lower(), '')
+            genre_mood = _GENRE_MOOD_DEFAULT.get(genre)
+            if genre_mood:
+                compat = (_MOOD_COMPAT.get((internal, genre_mood))
+                          or _MOOD_COMPAT.get((genre_mood, internal)) or 0)
+                if compat < 40:
+                    continue  # genre contradicts the mood
+            seen_artists.add(a.lower())
+            out.append({'artist': a, 'name': t,
+                        'reason': f"🆕 Fresh release picked for your {mood} mood"})
+            if len(out) >= n:
+                break
+        return out
+    except Exception:
+        return []
 
 
 def normalize_mood(text: str) -> Optional[str]:
@@ -459,17 +521,24 @@ def _mood_lastfm_tag_tracks(mood: str, limit: int = 12) -> List[Dict]:
 
 
 def get_mood_mix(mood: str, n: int = 5) -> List[Dict]:
-    """Mood mix — LIVE-first: Last.fm tag charts ranked by real listeners.
+    """Mood mix — LIVE-first, blended from two live sources.
 
-    Returns [{'artist','name','reason'}].  The Last.fm tag chart for the
-    mood is the primary source (12h cached, ~0.5s when fresh); the local
-    MOOD_SONG_POOLS only fills a shortfall or serves when the API is
-    down — so the user always gets a mix.  Never raises.
+    1. Fresh releases (<=24 months, live Apple chart) whose inferred mood
+       genuinely matches — the "current" half of the mix.
+    2. The Last.fm tag chart for the mood (live-fetched, 12h cached) —
+       the "crowd-validated" half.
+    The local MOOD_SONG_POOLS only fills a shortfall or serves when both
+    live sources are down — so the user always gets a mix.  Never raises.
     """
     try:
         mood = (mood or '').lower()
         n = max(1, min(int(n or 5), 10))
-        out = _mood_lastfm_tag_tracks(mood, limit=max(n * 2, 10))[:n]
+        out = _mood_fresh_picks(mood, n=min(2, n))
+        exclude = {(s['artist'].lower(), s['name'].lower()) for s in out}
+        live = [s for s in _mood_lastfm_tag_tracks(
+                    mood, limit=max(n * 2, 10))
+                if (s['artist'].lower(), s['name'].lower()) not in exclude]
+        out += live[:max(n - len(out), 0)]
         if len(out) < n:
             pool = MOOD_SONG_POOLS.get(mood) or []
             seen = {(s['artist'].lower(), s['name'].lower()) for s in out}

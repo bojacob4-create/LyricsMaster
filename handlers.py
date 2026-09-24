@@ -3699,15 +3699,22 @@ def _send_mood_mix(update, user_id: int, mood: str):
 
     lines = [f"🎧 *{label} Mix*"]
     reasons = [s.get('reason') or '' for s in songs]
-    all_live = reasons and all(r.startswith('🔥') for r in reasons)
-    if all_live:
-        # One shared note up top — the per-song line would just repeat 5×.
-        lines.append(f"🔥 Live: what Last.fm listeners reach for when feeling {mood}")
+    note_bits = []
+    if any(r.startswith('🆕') for r in reasons):
+        note_bits.append("🆕 fresh releases picked for your mood")
+    if any(r.startswith('🔥') for r in reasons):
+        note_bits.append(
+            f"🔥 what Last.fm listeners reach for when feeling {mood}")
+    if note_bits:
+        lines.append("Live mix: " + "  ·  ".join(note_bits))
     lines += ["━━━━━━━━━━━━━━━━━━━━━", ""]
     for i, s in enumerate(songs, 1):
         lines.append(f"*{i}.* {md(s['artist'])} — {md(s['name'])}")
-        if s.get('reason') and not all_live:
-            lines.append(f"   ↳ {s['reason']}")
+        r = s.get('reason') or ''
+        # Live/fresh songs are covered by the header note; pool fallbacks
+        # keep their unique per-song reasons.
+        if r and not r.startswith(('🔥', '🆕')):
+            lines.append(f"   ↳ {r}")
     lines += ["",
               "━━━━━━━━━━━━━━━━━━━━━",
               "🎧 /mood — another mood  •  🎲 /random — surprise me"]

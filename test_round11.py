@@ -15,7 +15,7 @@ def check(name, cond, note=''):
         failed += 1
         print(f"FAIL  {name} :: {note}")
 
-# ── 1. Live-first moods ───────────────────────────────────────────────────
+# ── 1. Live-first moods (blended: fresh releases + tag chart) ──────────
 from services import discovery_service as ds
 
 moods = [m for _, m in ds.MOOD_BUTTONS]
@@ -25,12 +25,25 @@ for mood in moods:
     ok = (isinstance(mix, list) and len(mix) == 5
           and all(s.get('artist') and s.get('name') and s.get('reason')
                   for s in mix))
-    live = sum(1 for s in mix if s['reason'].startswith('🔥'))
+    live = sum(1 for s in mix if s['reason'].startswith(('🔥', '🆕')))
     check(f"mood '{mood}': 5 songs, all fields", ok,
           f"got {len(mix) if isinstance(mix, list) else mix!r}")
-    check(f"mood '{mood}': live-primary ({live}/5)", live >= 3,
+    check(f"mood '{mood}': live sources ({live}/5)", live >= 3,
           f"only {live} live picks")
-print(f"   (7 moods fetched in {time.time()-t0:.1f}s — live first, pool fallback)")
+print(f"   (7 moods fetched in {time.time()-t0:.1f}s — fresh + tag chart, pool fallback)")
+
+# Fresh picks must have a REAL mood keyword in the title (no guessing)
+from services.recommendation_service import _MOOD_KEYWORDS
+import re as _re
+for mood in moods:
+    internal = ds._MOOD_INTERNAL.get(mood, 'happy')
+    kws = _MOOD_KEYWORDS.get(internal, set())
+    for s in ds.get_mood_mix(mood, 5):
+        if not s['reason'].startswith('🆕'):
+            continue
+        words = set(_re.sub(r"[^a-z\s]", "", s['name'].lower()).split())
+        check(f"mood '{mood}': fresh pick has keyword: {s['name'][:30]!r}",
+              bool(kws & words), f"title words={words}")
 
 # Dedupe: no repeated artist-title pairs in a mix
 for mood in moods:
@@ -61,6 +74,25 @@ check("mood pool fallback: 5 songs when live is empty",
 check("mood pool fallback: reasons present",
       all(s.get('reason') for s in mix))
 ds._MOOD_TAG_CACHE.clear()  # let the real API repopulate
+
+# Header render: blended mix shows one "Live mix" note, no repeated lines
+import handlers as _handlers
+class _FakeChat:
+    def send_action(self, action=None): pass
+class _FakeMsg:
+    chat = _FakeChat()
+    def reply_text(self, text, **kw): self.text = text
+class _FakeUpdate:
+    message = _FakeMsg()
+_upd = _FakeUpdate()
+_handlers._send_mood_mix(_upd, 123, 'happy')
+_txt = _upd.message.text
+check("mood render: single Live mix header",
+      _txt.count("Live mix:") == 1, _txt[:200])
+check("mood render: no per-song repeated note",
+      _txt.count("What Last.fm listeners reach for") <= 1)
+check("mood render: 5 numbered songs",
+      all(f"*{i}.*" in _txt for i in range(1, 6)))
 
 # ── 2. Audius provider ────────────────────────────────────────────────────
 from services.youtube_downloader_service import (
