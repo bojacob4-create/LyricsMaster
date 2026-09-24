@@ -59,6 +59,29 @@ def lyrics_buttons(query):
     ])
 
 
+def no_lyrics_card_buttons(artist, title):
+    """Buttons for the no-lyrics fallback card (round 21).
+
+    Everything here works without lyrics: video, audio, artist profile,
+    lyrics-free recommendations and wiki.  Lyrics/Analyze/Translate are
+    deliberately absent — there are no lyrics to show.
+    """
+    query = f"{artist} - {title}" if artist and title else (title or artist or "")
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("▶️ Watch Video", callback_data=_cb("youtube", query)),
+            InlineKeyboardButton("🎧 Get MP3", callback_data=_cb("mp3", query)),
+        ],
+        [
+            InlineKeyboardButton("👤 Artist Profile", callback_data=_cb("artist", artist or query)),
+            InlineKeyboardButton("🎧 Similar Songs", callback_data=_cb("similar_nl", query)),
+        ],
+        [
+            InlineKeyboardButton("📚 Wiki", callback_data=_cb("wiki", artist or query)),
+        ],
+    ])
+
+
 def song_dashboard_buttons(query):
     return InlineKeyboardMarkup([
         [
@@ -207,6 +230,30 @@ def recommend_results_buttons(source_query, recommendations):
             song_q = f"{rec['artist']} - {rec['name']}"
             rows.append([InlineKeyboardButton(f"🎵 {rec['name']} — {rec['artist']}", callback_data=_cb("song", song_q))])
     rows.append([InlineKeyboardButton("🔄 More like this", callback_data=_cb("more_recs", source_query))])
+    return InlineKeyboardMarkup(rows)
+
+
+def no_lyrics_similar_buttons(source_query, recommendations):
+    """Buttons for the no-lyrics Similar Songs view (round 21).
+
+    No Lyrics/Analyze buttons — the source track has no lyrics.  "More
+    like this" re-runs the lyrics-free pipeline via the similar_more
+    action instead of the lyrics-based more_recs.
+    """
+    rows = [
+        [
+            InlineKeyboardButton("▶️ Watch Video", callback_data=_cb("youtube", source_query)),
+            InlineKeyboardButton("🎧 Get MP3", callback_data=_cb("mp3", source_query)),
+        ],
+    ]
+    if recommendations:
+        rows.append([InlineKeyboardButton("── Recommended Songs ──", callback_data="noop:x")])
+        for rec in recommendations[:5]:
+            song_q = f"{rec['artist']} - {rec['name']}"
+            rows.append([InlineKeyboardButton(
+                f"🎵 {rec['name']} — {rec['artist']}",
+                callback_data=_cb("song", song_q))])
+    rows.append([InlineKeyboardButton("🔄 More like this", callback_data=_cb("similar_more_nl", source_query))])
     return InlineKeyboardMarkup(rows)
 
 

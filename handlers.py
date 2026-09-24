@@ -14,7 +14,8 @@ from buttons import (
     recommend_buttons, song_list_buttons, ambiguous_buttons,
     analyze_buttons, stats_buttons, artist_analyze_buttons, recommend_pick_buttons,
     daily_song_buttons, subscribe_count_buttons, emoji_exit_buttons,
-    recommend_results_buttons, daily_picker_buttons
+    recommend_results_buttons, daily_picker_buttons, no_lyrics_card_buttons,
+    no_lyrics_similar_buttons,
 )
 from services.lyrics_service import get_song_lyrics, canonicalize_track_names
 from services.translator_service import (
@@ -1612,6 +1613,8 @@ def callback_query_handler(update: Update, context: CallbackContext):
         'analyze': analyze_command,
         'stats': stats_command,
         'song': song_command,
+        'similar_nl': similar_nolyrics_command,
+        'similar_more_nl': similar_more_nolyrics_command,
         'top': top_command,
         'random': random_command,
         'wiki': wiki_command,
@@ -3501,6 +3504,242 @@ def _artist_summary_for_song(query: str, update, processing_msg):
     processing_msg.edit_text(response, disable_web_page_preview=True, reply_markup=markup)
 
 
+# ── Round 21: no-lyrics fallback card ──────────────────────────────────────
+# Some real tracks have no lyrics in any provider (instrumentals, house,
+# classical piano…).  When the lyrics search fails but the track itself
+# verifies via iTunes/YouTube, show a graceful card with everything that
+# works without lyrics instead of a dead end.
+
+_NO_LYRICS_CTX: dict = {}
+_NO_LYRICS_TTL = 15 * 60
+
+
+def _itunes_track_lookup(artist, title):
+    """Scored iTunes Search lookup for a lyrics-less track.
+
+    Returns {'artist','title','artwork','genre','album'} for the first hit
+    that genuinely matches the request, else None.  Never raises.
+    """
+    try:
+        from services.lyrics_service import _meets_relevance_floor
+        term = f"{artist or ''} {title or ''}".strip()
+        if not term:
+            return None
+        r = requests.get(
+            'https://itunes.apple.com/search',
+            params={'term': term, 'entity': 'song', 'limit': 10,
+                    'country': 'US'},
+            timeout=8,
+        )
+        for it in r.json().get('results', []):
+            fa = (it.get('artistName') or '').strip()
+            ft = (it.get('trackName') or '').strip()
+            if not fa or not ft:
+                continue
+            if _meets_relevance_floor(term, artist or '', fa, ft):
+                art = (it.get('artworkUrl100') or '').replace('100x100', '600x600')
+                return {
+                    'artist': fa, 'title': ft, 'artwork': art,
+                    'genre': (it.get('primaryGenreName') or '').strip(),
+                    'album': (it.get('collectionName') or '').strip(),
+                }
+    except Exception as e:
+        logger.debug(f"[no-lyrics] iTunes lookup failed: {e}")
+    return None
+
+
+def _verify_track_exists(artist, title):
+    """Confirm a lyrics-less track is real via iTunes and/or YouTube.
+
+    Returns {'meta': iTunes-dict-or-None, 'yt_url': watch-URL-or-None}, or
+    None when neither source can vouch for the track (garbage query — the
+    caller keeps the classic "couldn't find" reply).  Never raises.
+    """
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            it_fut = pool.submit(_itunes_track_lookup, artist, title)
+            yt_fut = pool.submit(get_youtube_link, artist or '', title or '')
+            meta = it_fut.result()
+            yt_url = yt_fut.result()
+        # get_youtube_link falls back to a search-results URL when nothing
+        # scores — only a real watch link counts as "this track exists".
+        yt_ok = bool(yt_url) and 'watch?v=' in yt_url
+        if not meta and not yt_ok:
+            return None
+        return {'meta': meta, 'yt_url': yt_url if yt_ok else None}
+    except Exception as e:
+        logger.debug(f"[no-lyrics] track verification failed: {e}")
+        return None
+
+
+def _pop_no_lyrics_ctx(user_id, query):
+    key = (user_id, (query or '').lower().strip())
+    item = _NO_LYRICS_CTX.pop(key, None)
+    if not item:
+        return None
+    if time.time() - item.get('ts', 0) > _NO_LYRICS_TTL:
+        return None
+    return item
+
+
+def _no_lyrics_card_text(disp_artist, disp_title, genre, album, ctx_mood):
+    """Pure text builder for the no-lyrics card (testable, no Telegram)."""
+    lines = [
+        f"🎵 *{md(disp_title)}*",
+        f"👤 {md(disp_artist)}",
+        "",
+        "🎼 No lyrics to show for this one — typical for instrumentals "
+        "and electronic tracks. Let the music do the talking 🎶",
+        "",
+    ]
+    if album:
+        lines.append(f"💿 Album: {md(album)}")
+    if genre:
+        lines.append(f"🎭 Genre: {md(genre)}")
+    if album or genre:
+        lines.append("")
+    if ctx_mood and ctx_mood in _MOOD_LABELS:
+        lines.append(f"✨ Spotted in your {_MOOD_LABELS[ctx_mood]} Mix")
+        lines.append("")
+    lines.append("━━━━━━━━━━━━━━━━━━━━━")
+    return "\n".join(lines)
+
+
+def _send_no_lyrics_card(update, context, artist, title, query, processing_msg):
+    """Show the no-lyrics fallback card.
+
+    Returns True when the card was shown, False when the track didn't
+    verify (caller keeps the classic not-found reply).
+    """
+    user_id = update.effective_user.id
+    # Round-13d: inherit the mix mood one-shot, like the lyrics card does.
+    ctx_mood = context.user_data.pop('_card_mood', None)
+
+    check = _verify_track_exists(artist, title)
+    if not check:
+        logger.info(f"[no-lyrics] unverified, keeping not-found for q={query!r}")
+        return False
+
+    meta = check['meta'] or {}
+    # Round-19 cleaning: iTunes returns the full noisy credit
+    # ("Chloe Flower, Academy of St Martin in the Fields & Jessica Cottis") —
+    # the card shows the primary artist, like the mix does.
+    disp_artist = _clean_mix_artist(meta.get('artist') or artist or 'Unknown artist')
+    disp_title = meta.get('title') or title or query
+    genre = meta.get('genre') or ''
+    album = meta.get('album') or ''
+    artwork = meta.get('artwork') or ''
+
+    text = _no_lyrics_card_text(disp_artist, disp_title, genre, album, ctx_mood)
+
+    btn_query = f"{disp_artist} - {disp_title}"
+    markup = no_lyrics_card_buttons(disp_artist, disp_title)
+
+    # Context for the lyrics-free Similar Songs button (one-shot + TTL,
+    # same pattern as the 13d mood context).
+    _NO_LYRICS_CTX[(user_id, btn_query.lower().strip())] = {
+        'artist': disp_artist, 'title': disp_title,
+        'mood': ctx_mood, 'genre': genre, 'ts': time.time(),
+    }
+    _last_song[user_id] = btn_query
+
+    try:
+        if artwork:
+            try:
+                processing_msg.delete()
+            except Exception:
+                pass
+            update.message.reply_photo(photo=artwork, caption=text,
+                                       parse_mode='Markdown',
+                                       reply_markup=markup)
+        else:
+            processing_msg.edit_text(text, parse_mode='Markdown',
+                                     disable_web_page_preview=True,
+                                     reply_markup=markup)
+    except Exception as e:
+        logger.warning(f"[no-lyrics] rich card failed, text fallback: {e}")
+        try:
+            processing_msg.edit_text(text, parse_mode='Markdown',
+                                     disable_web_page_preview=True,
+                                     reply_markup=markup)
+        except Exception:
+            update.message.reply_text(text, parse_mode='Markdown',
+                                      disable_web_page_preview=True,
+                                      reply_markup=markup)
+    logger.info(f"[no-lyrics] card shown for '{btn_query}' (user {user_id})")
+    return True
+
+
+def _similar_nolyrics_core(update, context, fresh):
+    """Shared core for the no-lyrics 'Similar Songs' / 'More like this'.
+
+    Lyrics-free: recommendations come from artist/title/genre/mood only,
+    never the lyrics pipeline.
+    """
+    user_id = update.effective_user.id
+    query = " ".join(context.args).strip()
+    ctx = _pop_no_lyrics_ctx(user_id, query) or {}
+    artist = ctx.get('artist')
+    title = ctx.get('title')
+    if not artist or not title:
+        parts = parse_song_query(query)
+        if parts:
+            artist, title = parts[0]
+    if not title:
+        update.message.reply_text(
+            "😕 I lost track of the original song — try again from the card! 🎵"
+        )
+        return
+    artist = artist or title
+
+    update.message.chat.send_action(action="typing")
+    from services.recommendation_service import _infer_mood_from_title
+    mood = _infer_mood_from_title(title, ctx.get('genre') or '',
+                                  ctx.get('mood') or '')
+    display_title = f"{artist} - {title}"
+    if fresh:
+        recs = get_similar_songs_fresh(artist, title, mood,
+                                       exclude_artists=tuple(ctx.get('shown') or ()))
+    else:
+        recs = get_similar_songs(artist, title, mood, limit=5)
+
+    shown = [r.get('artist', '').lower() for r in (recs or [])]
+    # Re-stash so "🔄 More like this" keeps working (13e chaining pattern).
+    _NO_LYRICS_CTX[(user_id, display_title.lower().strip())] = {
+        'artist': artist, 'title': title,
+        'mood': ctx.get('mood'), 'genre': ctx.get('genre'),
+        'shown': (ctx.get('shown') or []) + shown,
+        'ts': time.time(),
+    }
+
+    formatted = format_recommendations(recs, display_title)
+    markup = no_lyrics_similar_buttons(display_title, recs)
+    update.message.reply_text(formatted, reply_markup=markup)
+    logger.info(f"[no-lyrics] similar songs (fresh={fresh}) for '{display_title}'")
+
+
+def similar_nolyrics_command(update: Update, context: CallbackContext):
+    """Handle '🎧 Similar Songs' on the no-lyrics card."""
+    try:
+        _similar_nolyrics_core(update, context, fresh=False)
+    except Exception as e:
+        logger.error(f"Error in no-lyrics similar: {e}")
+        update.message.reply_text(
+            "😓 Something went wrong.\nPlease try again! 🔄"
+        )
+
+
+def similar_more_nolyrics_command(update: Update, context: CallbackContext):
+    """Handle '🔄 More like this' on the no-lyrics similar view."""
+    try:
+        _similar_nolyrics_core(update, context, fresh=True)
+    except Exception as e:
+        logger.error(f"Error in no-lyrics similar-more: {e}")
+        update.message.reply_text(
+            "😓 Something went wrong.\nPlease try again! 🔄"
+        )
+
+
 def song_command(update: Update, context: CallbackContext):
     """Handle the /song command — full song dashboard."""
     user_id = update.effective_user.id
@@ -3544,6 +3783,15 @@ def song_command(update: Update, context: CallbackContext):
         if not lyrics:
             logger.info("[song_timing] artist_check=%.0fms  lyrics_fetch=%.0fms [%s] -> not found",
                         (_ta1 - _ta0) * 1000, (_tl1 - _ta1) * 1000, status)
+            # Round-21: a lyrics-less track (instrumental, house, …) gets a
+            # graceful card instead of a dead end — when the track verifies
+            # as real via iTunes/YouTube.  Garbage queries keep the classic
+            # not-found reply.
+            _nl_parts = parse_song_query(query)
+            _nl_artist, _nl_title = _nl_parts[0] if _nl_parts else (None, query)
+            if _send_no_lyrics_card(update, context, _nl_artist, _nl_title,
+                                    query, processing_msg):
+                return
             processing_msg.edit_text(
                 "😕 Couldn't find that song.\n\n"
                 "Try:\n"
