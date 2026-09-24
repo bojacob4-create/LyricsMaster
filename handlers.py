@@ -368,6 +368,31 @@ _rec_limit: dict = {}
 _pending_disambig: dict = {}
 _DISAMBIG_TTL = 300
 
+# Mood context for song cards opened FROM a mood mix (round-13d).
+# The mix builder (chart/genre/title signals) and the card's lyric-based
+# mood analyzer can honestly disagree — e.g. an upbeat Pop track with
+# romantic lyrics lands in the Happy Mix via genre, but detect_song_mood
+# reads the lyrics as Romantic.  When a song button is tapped from a mix,
+# the card inherits the mix's mood so the bot never contradicts itself.
+# Direct searches / /random carry no context and keep the lyric analysis.
+# Structure: {(user_id, query_lower): (mood, ts)} — one-shot (popped on tap).
+# TTL: 15 minutes — a later direct search for the same song gets a fresh read.
+_mood_card_context: dict = {}
+_MOOD_CTX_TTL = 900
+
+
+def _pop_card_mood(user_id: int, query: str):
+    """One-shot lookup of a stashed mix mood for a song-button tap.
+
+    Returns the mood when a mix recently recommended this exact song to
+    this user, else None.  Popped either way so a later direct search
+    for the same song gets a fresh lyric-based read.
+    """
+    hit = _mood_card_context.pop((user_id, (query or '').lower().strip()), None)
+    if hit and time.time() - hit[1] < _MOOD_CTX_TTL:
+        return hit[0]
+    return None
+
 # Pending "Translate to…" answers.  Two flows share it:
 #   (a) user tapped 🌐 Translate to… on a song card → query set, lang None
 #       → the next message is the LANGUAGE name.
@@ -1535,6 +1560,15 @@ def callback_query_handler(update: Update, context: CallbackContext):
         return
 
     context.args = param.split() if param else []
+
+    # Round-13d: a tap on a mood-mix song button carries the mix's mood
+    # (stashed when the mix was sent) into the song card, so the card's
+    # Quick Stats never contradict the mix that recommended the song.
+    # One-shot + TTL: a later direct search re-runs the lyric analysis.
+    if action == 'song':
+        _cm = _pop_card_mood(user_id, param)
+        if _cm:
+            context.user_data['_card_mood'] = _cm
 
     handler_map = {
         'lyrics': lyrics_command,
@@ -3384,7 +3418,10 @@ def song_command(update: Update, context: CallbackContext):
         display_title = f"{artist} - {song}" if artist and song else (artist or song)
 
         _tan0 = time.time()
-        mood = detect_song_mood(lyrics)
+        # Round-13d: a song opened from a mood mix inherits the mix's mood
+        # (stashed in user_data by the callback handler); every other entry
+        # point keeps the lyric-based analysis.
+        mood = context.user_data.pop('_card_mood', None) or detect_song_mood(lyrics)
         stats = get_song_statistics(lyrics)
         _tan1 = time.time()
 
@@ -3706,6 +3743,15 @@ def _send_mood_mix(update, user_id: int, mood: str):
             "Please try again! 🔄"
         )
         return
+
+    # Round-13d: remember the mix mood per song so a tap on one of the
+    # mix buttons opens a card that agrees with the mix (the card's own
+    # lyric-based mood analysis can otherwise contradict the mix that
+    # recommended the song). Key must match the button callback query.
+    _now = time.time()
+    for _s in songs:
+        _q = f"{_s['artist']} - {_s['name']}".lower().strip()
+        _mood_card_context[(user_id, _q)] = (mood, _now)
 
     lines = [f"🎧 *{label} Mix*"]
     sources = {s.get('source') for s in songs}
