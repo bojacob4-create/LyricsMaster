@@ -81,9 +81,11 @@ finally:
     os.chdir(old_cwd)
 
 # ── 3. 50MB safety net still present in the downloader ───────────────────
+# (Round 30 moved the download body into _download_video_with_client; the
+# checks follow the code, not the old function name.)
 import inspect
 from services import youtube_downloader_service as yds
-src = inspect.getsource(yds.download_youtube_video)
+src = inspect.getsource(yds._download_video_with_client)
 check("downloader: 50MB post-download guard retained",
       "50 * 1024 * 1024" in src)
 check("downloader: uses _pick_downloaded_file (not matches[0])",

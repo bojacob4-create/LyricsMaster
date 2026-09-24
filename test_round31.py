@@ -128,10 +128,10 @@ check("format refusal still NOT permanent",
 # android got the format list and started downloading (so the video EXISTS);
 # web/ios refused the format.  Must NOT say "not available".
 reset({'android': conn_reset_err(), 'web': format_err(),
-       'ios': format_err()})
+       'ios': format_err(), 'mweb': format_err()})
 ok, notice = run()
 check("prod case: download fails", ok is False)
-check("prod case: tried all three clients",
+check("prod case: tried all four clients",
       clients_used() == list(_YT_CLIENT_ATTEMPTS), str(clients_used()))
 check("prod case: never claims 'not available'",
       "not available" not in notice.lower()
@@ -144,7 +144,7 @@ check("prod case: single-client block does not queue",
 # ── 3. Block error preferred over the last client's format refusal ──────────
 reset({'android': yt_dlp.utils.DownloadError(
            "Sign in to confirm you're not a bot"),
-       'web': format_err(), 'ios': format_err()})
+       'web': format_err(), 'ios': format_err(), 'mweb': format_err()})
 ok, notice = run()
 check("mixed: block error wins the reason",
       "bot check" in notice, notice[:150])
@@ -165,14 +165,15 @@ check("permanent wins: no breaker, no wave",
 
 # ── 5. All clients connection-killed -> wave verdict + breaker trips ─────────
 reset({'android': conn_reset_err(), 'web': conn_reset_err(),
-       'ios': conn_reset_err()})
+       'ios': conn_reset_err(), 'mweb': conn_reset_err()})
 ok, notice = run()
 check("all killed: download fails", ok is False)
 check("all killed: wave verdict set", download_hit_block_wave())
 check("all killed: breaker tripped", yds._yt_breaker_open())
 
 # ── 6. Format refusal on ALL clients -> capability reason, not "gone" ───────
-reset({'android': format_err(), 'web': format_err(), 'ios': format_err()})
+reset({'android': format_err(), 'web': format_err(), 'ios': format_err(),
+       'mweb': format_err()})
 ok, notice = run()
 check("all-format: honest capability reason",
       "No compatible format available" in notice, notice[:150])
@@ -195,7 +196,8 @@ check("genuine: no breaker, no wave",
 def bot_err():
     return yt_dlp.utils.DownloadError("Sign in to confirm you're not a bot")
 
-reset({'android': bot_err(), 'web': bot_err(), 'ios': bot_err()})
+reset({'android': bot_err(), 'web': bot_err(), 'ios': bot_err(),
+       'mweb': bot_err()})
 ok, notice = run()
 check("wave: verdict set for queueing", download_hit_block_wave())
 check("wave: breaker tripped", yds._yt_breaker_open())

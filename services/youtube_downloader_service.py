@@ -44,6 +44,23 @@ _DOWNLOAD_FORMAT = (
 )
 
 
+def _client_extractor_args(client: str) -> dict:
+    """Extractor args for one YouTube player-client attempt.
+
+    Round 32: 'mweb' is the official PO-token escalation client — force
+    token minting (fetch_pot=always), because the default 'auto' only
+    mints when the client's policy marks a token as required and misses
+    some player requests. Needs the bgutil PO-token provider installed
+    (pip) and its HTTP server on 127.0.0.1:4416; when the server is down
+    the provider just reports unavailable and yt-dlp carries on without
+    tokens, exactly like before.
+    """
+    args = {'player_client': [client]}
+    if client == 'mweb':
+        args['fetch_pot'] = ['always']
+    return {'youtube': args}
+
+
 def _pick_downloaded_file(video_id: str) -> Optional[str]:
     """Return the finished download for a video id, or None.
 
@@ -98,7 +115,17 @@ def _download_video_with_client(url: str, video_id: str,
         'restrictfilenames': True,
         'socket_timeout': 30,
         'retries': 3,
-        'extractor_args': {'youtube': {'player_client': [client]}},
+        'extractor_args': _client_extractor_args(client),
+        # Round 32: YouTube tarpits connections whose TLS fingerprint is
+        # not a browser's — without this, extractions stall for 100s+
+        # with zero output; with it they proceed immediately (verified
+        # on this machine, Sep 2026). Needs curl_cffi in the venv.
+        'impersonate': 'chrome',
+        # Round 32: only deno is enabled by default, and it is not
+        # installed here — node is. Without a JS runtime the n/sig
+        # challenge solving fails and formats go missing ("requested
+        # format is not available" for a video that HAS formats).
+        'js_runtimes': ['node'],
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         },
@@ -962,7 +989,11 @@ def is_cached_mp3_path(path: str) -> bool:
 # Rotating single clients keeps the chosen format on the client that
 # produced it. Permanent failures (DRM, private, age-gated, copyright,
 # deleted) abort the rotation immediately.
-_YT_CLIENT_ATTEMPTS = ('android', 'web', 'ios')
+#
+# Round 32: 'mweb' added as the final escalation — it is the officially
+# recommended PO-token client (bgutil provider mints its tokens), so it
+# gets its best shot after android/web/ios have all been challenged.
+_YT_CLIENT_ATTEMPTS = ('android', 'web', 'ios', 'mweb')
 # Permanent failures abort the client rotation immediately. NOTE: YouTube's
 # bot-check ("sign in to confirm you're not a bot") is TRANSIENT — it flaps
 # per client — so only the age-gate phrasing ("confirm your age") is listed.
@@ -1001,6 +1032,14 @@ def _download_url_to_mp3(download_url: str, file_prefix: str, label: str) -> str
             'restrictfilenames': True,
             'socket_timeout': 20,
             'retries': 2,
+            # Round 32: same as the video path — browser TLS fingerprint
+            # (fixes tarpitted extractions) and PO-token escalation via
+            # the mweb client when the others are challenged.
+            'impersonate': 'chrome',
+            # Round 32: enable the system node runtime for YouTube's
+            # n/sig challenge solving (deno, the default, is not
+            # installed). Missing runtimes = missing formats.
+            'js_runtimes': ['node'],
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -1008,7 +1047,7 @@ def _download_url_to_mp3(download_url: str, file_prefix: str, label: str) -> str
             }],
         }
         if client:
-            dl_opts['extractor_args'] = {'youtube': {'player_client': [client]}}
+            dl_opts['extractor_args'] = _client_extractor_args(client)
         try:
             with yt_dlp.YoutubeDL(dl_opts) as ydl:
                 ret = ydl.download([download_url])

@@ -122,7 +122,8 @@ check("single challenged client does NOT trip the breaker",
       not yds._yt_breaker_open() and not download_hit_block_wave())
 
 # ── 3. All clients blocked -> wave verdict + breaker trips ──────────────────
-reset({'android': bot_err(), 'web': bot_err(), 'ios': bot_err()})
+reset({'android': bot_err(), 'web': bot_err(), 'ios': bot_err(),
+       'mweb': bot_err()})
 ok, notice = run()
 check("all blocked: download fails", ok is False)
 check("all blocked: wave verdict set", download_hit_block_wave())
