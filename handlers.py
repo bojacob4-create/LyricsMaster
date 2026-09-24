@@ -2979,7 +2979,8 @@ def worker_channel_post(update: Update, context: CallbackContext):
         if not want or post.chat.id != want:
             return  # not our worker channel — ignore
         from services.home_worker_service import (
-            parse_channel_signal, build_copy_params, note_done, note_failed)
+            parse_channel_signal, build_copy_params, note_done, note_failed,
+            get_job_entry)
         sig = parse_channel_signal(post.text)
         if not sig:
             return  # JOB echo / human chatter / video post — ignore
@@ -2988,10 +2989,12 @@ def worker_channel_post(update: Update, context: CallbackContext):
             params = build_copy_params(job_id, message_id)
             if not params:
                 return  # unknown job or already handled — ignore
+            entry = get_job_entry(job_id) or {}
+            is_audio = entry.get("kind") == "audio"
             try:
                 # PTB 13.7: Bot.copy_message(chat_id, from_chat_id,
-                # message_id, caption=None)
-                context.bot.copy_message(
+                # message_id, caption=None) — returns the sent Message.
+                sent = context.bot.copy_message(
                     chat_id=params["chat_id"],
                     from_chat_id=params["from_chat_id"],
                     message_id=params["message_id"],
@@ -2999,21 +3002,46 @@ def worker_channel_post(update: Update, context: CallbackContext):
             except Exception as e:
                 logger.warning("[WORKER][COPYFAIL] job %s: copyMessage "
                                "failed (%s) — local fallback", job_id, e)
-                entry = note_failed(job_id)
-                if entry:
+                entry = note_failed(job_id) or {}
+                if is_audio:
+                    _deliver_mp3_after_worker_fail(context.bot, entry,
+                                                   fail_code=None)
+                elif entry:
                     _deliver_video_local(context.bot, entry["chat_id"],
                                          entry["user_id"], entry["video_url"])
                 return
+            if is_audio:
+                # Remember Telegram's file_id so the next request for this
+                # song is instant (Tier-0 cache).
+                try:
+                    fid = (sent.audio.file_id
+                           if sent is not None and sent.audio else None)
+                    if fid and entry.get("artist"):
+                        from services.youtube_downloader_service import (
+                            note_mp3_file_id)
+                        note_mp3_file_id(entry["artist"], entry.get("song", ""),
+                                         fid)
+                except Exception:
+                    pass
+                logger.info("[MP3][WORKER][DELIVERED] audio job %s → chat %s",
+                            job_id, params["chat_id"])
             note_done(job_id)  # logs [WORKER][DELIVERED]
         elif sig[0] == "fail":
             _, job_id, code = sig
-            entry = note_failed(job_id)
-            logger.info("[WORKER][FAILED] job %s code=%s — local fallback",
-                        job_id, code)
-            if entry:
-                _deliver_video_local(context.bot, entry["chat_id"],
-                                     entry["user_id"], entry["video_url"],
-                                     fail_code=code)
+            entry = note_failed(job_id) or {}
+            is_audio = entry.get("kind") == "audio"
+            if is_audio:
+                logger.info("[WORKER][FAILED] audio job %s code=%s — "
+                            "mp3 fallback", job_id, code)
+                _deliver_mp3_after_worker_fail(context.bot, entry,
+                                               fail_code=code)
+            else:
+                logger.info("[WORKER][FAILED] job %s code=%s — local fallback",
+                            job_id, code)
+                if entry:
+                    _deliver_video_local(context.bot, entry["chat_id"],
+                                         entry["user_id"], entry["video_url"],
+                                         fail_code=code)
     except Exception as e:
         logger.warning("worker_channel_post failed: %s", e)
 
@@ -3028,6 +3056,11 @@ def worker_timeout_tick(bot):
         for entry in pending_expired():
             job_id = entry.get("job_id", "")
             mark_expired(job_id)
+            if entry.get("kind") == "audio":
+                logger.info("[WORKER][TIMEOUT] audio job %s: no signal in "
+                            "4 min — mp3 fallback", job_id)
+                _deliver_mp3_after_worker_fail(bot, entry, fail_code="timeout")
+                continue
             logger.info("[WORKER][TIMEOUT] job %s: no signal in 4 min — "
                         "local fallback", job_id)
             _deliver_video_local(bot, entry.get("chat_id"),
@@ -3187,10 +3220,144 @@ def _mp3_background_job(bot, chat_id, user_id,
     Never blocks the bot's update handling: the user gets an
     acknowledgement up front (sent by mp3_command) and the finished
     audio — or a failure notice — arrives as a new message.
+
+    Round-35: instant caches first, then the home worker (streamer
+    downloads over the home IP), then the local download path.
     """
     try:
-        success, result = download_audio_for_song(artist_q, song_q)
+        from services import youtube_downloader_service as yds
+        cached = yds.mp3_cached_lookup(artist_q, song_q)
+        if cached is not None:
+            success, result = cached
+        elif _mp3_try_worker(bot, chat_id, user_id, artist_q, song_q, raw):
+            # Posted to the home worker — DONE/FAIL/timeout handlers
+            # deliver from here.
+            return
+        else:
+            success, result = yds.download_audio_for_song(artist_q, song_q)
 
+        _deliver_mp3_result(bot, chat_id, user_id, artist_q, song_q, raw,
+                            success, result)
+
+    except Exception as e:
+        logger.error(f"Background MP3 job failed for user {user_id} '{raw}': {e}")
+        try:
+            bot.send_message(
+                chat_id=chat_id,
+                text="😓 Something went wrong with the MP3 conversion.\n"
+                     "Please try again later! 🔄",
+            )
+        except Exception:
+            pass
+    finally:
+        _mp3_in_progress.discard(job_key)
+
+
+def _mp3_try_worker(bot, chat_id, user_id, artist_q, song_q, raw):
+    """Round-35: post an audio job to the home worker.
+
+    Returns True when the job was posted — delivery then happens via the
+    worker channel's DONE/FAIL/timeout handlers. Returns False when the
+    worker path isn't available, so the caller uses the local path.
+    Never raises.
+    """
+    try:
+        from services.home_worker_service import worker_enabled, post_job
+        from services import youtube_downloader_service as yds
+        if not worker_enabled():
+            return False
+        url = yds.resolve_mp3_youtube_url(artist_q, song_q)
+        if not url:
+            return False
+        job_id = post_job(chat_id, user_id, url, title=raw, kind="audio",
+                          artist=artist_q, song=song_q)
+        if not job_id:
+            return False
+        logger.info("[MP3][WORKER] audio job %s → chat %s: %s",
+                    job_id, chat_id, url)
+        bot.send_message(
+            chat_id=chat_id,
+            text="🏠 Home downloader is on it…\n"
+                 "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                 "Your streamer is fetching this over your home internet — "
+                 "the MP3 will land here in a moment. 🎧\n\n"
+                 "If the streamer is offline, I'll fetch it myself instead. 📥",
+        )
+        return True
+    except Exception as e:
+        logger.warning("[MP3][WORKER] worker path failed: %s",
+                       type(e).__name__)
+        return False
+
+
+def _deliver_mp3_after_worker_fail(bot, entry, fail_code):
+    """Local fallback for a failed/timed-out home-worker audio job.
+
+    Permanent worker failures (audio_too_long/audio_too_large) get the
+    honest notice immediately; anything else runs the normal local MP3
+    download + queue flow in a background thread (it can take minutes).
+    Never raises.
+    """
+    try:
+        entry = entry or {}
+        chat_id = entry.get("chat_id")
+        user_id = entry.get("user_id")
+        artist = entry.get("artist", "") or ""
+        song = entry.get("song", "") or ""
+        if not chat_id:
+            return
+        if fail_code in ("audio_too_long", "audio_too_large"):
+            from services.home_worker_service import HONEST_FAIL_MSGS
+            bot.send_message(chat_id=chat_id,
+                             text=HONEST_FAIL_MSGS[fail_code])
+            logger.info("[MP3][WORKER][FALLBACK] permanent-fail (%s) → "
+                        "honest notice → chat %s", fail_code, chat_id)
+            return
+        bot.send_message(
+            chat_id=chat_id,
+            text="🏠 The home downloader hit a snag — fetching it here instead…\n"
+                 "I'll send the MP3 when it's ready. 🎧",
+        )
+        t = threading.Thread(
+            target=_mp3_local_fallback_thread,
+            args=(bot, chat_id, user_id, artist, song),
+            daemon=True, name=f"mp3-fallback-{chat_id}")
+        t.start()
+    except Exception as e:
+        logger.warning("[MP3][WORKER][FALLBACK] failed: %s", e)
+
+
+def _mp3_local_fallback_thread(bot, chat_id, user_id, artist, song):
+    """Run the normal local MP3 download + delivery (worker failed).
+
+    Runs on its own thread — never blocks update handling. Never raises.
+    """
+    try:
+        from services import youtube_downloader_service as yds
+        raw = f"{artist} - {song}" if song else artist
+        success, result = yds.download_audio_for_song(artist, song)
+        _deliver_mp3_result(bot, chat_id, user_id, artist, song, raw,
+                            success, result)
+    except Exception as e:
+        logger.warning("[MP3][WORKER][FALLBACK] thread failed: %s", e)
+        try:
+            bot.send_message(
+                chat_id=chat_id,
+                text="😓 Something went wrong with the MP3 conversion.\n"
+                     "Please try again later! 🔄",
+            )
+        except Exception:
+            pass
+
+
+def _deliver_mp3_result(bot, chat_id, user_id, artist_q, song_q, raw,
+                        success, result):
+    """Deliver one MP3 result: queue-or-honest on failure, send on success.
+
+    Shared by the normal background job and the worker-fallback thread.
+    Never raises.
+    """
+    try:
         if not success:
             # Block wave (YouTube throttling this server)? Queue it — the
             # scheduler retries automatically when the wave clears and the
@@ -3249,19 +3416,8 @@ def _mp3_background_job(bot, chat_id, user_id,
             return
 
         _deliver_fresh_mp3(bot, chat_id, artist_q, song_q, result)
-
     except Exception as e:
-        logger.error(f"Background MP3 job failed for user {user_id} '{raw}': {e}")
-        try:
-            bot.send_message(
-                chat_id=chat_id,
-                text="😓 Something went wrong with the MP3 conversion.\n"
-                     "Please try again later! 🔄",
-            )
-        except Exception:
-            pass
-    finally:
-        _mp3_in_progress.discard(job_key)
+        logger.warning(f"_deliver_mp3_result failed for '{raw}': {e}")
 
 
 def mp3_retry_tick(bot):

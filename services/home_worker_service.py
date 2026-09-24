@@ -63,6 +63,19 @@ HONEST_FAIL_MSGS = {
         "The video is over Telegram's 50MB limit.\n"
         "Try a shorter video."
     ),
+    # Round-35: audio jobs get track wording, never the video notices.
+    "audio_too_long": (
+        "😕 Track Too Long\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Max duration: 10 minutes.\n"
+        "Try a shorter track."
+    ),
+    "audio_too_large": (
+        "😕 File Too Large\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "The audio is over Telegram's 50MB limit.\n"
+        "Try a shorter track."
+    ),
 }
 
 
@@ -135,21 +148,27 @@ def _api_send_message(token, chat_id, text):
         return False
 
 
-def post_job(chat_id, user_id, url, title=""):
-    """Hand a /download to the home worker.
+def post_job(chat_id, user_id, url, title="", kind="video",
+             artist="", song=""):
+    """Hand a /download (video) or /mp3 (audio, round-35) to the home worker.
 
     Posts 'JOB {...}' to the worker channel with the MAIN token (the worker
     polls the WORKER token, so it receives this as another bot's post) and
-    records the job as pending. Returns the job_id, or None when the bridge
-    is disabled/unreachable — the caller then uses the local path. Never
-    raises.
+    records the job as pending. artist/song ride along for audio jobs so
+    the DONE handler can cache the delivered file_id. Returns the job_id,
+    or None when the bridge is disabled/unreachable — the caller then uses
+    the local path. Never raises.
     """
     try:
         if not worker_enabled():
             return None
+        if kind not in ("video", "audio"):
+            kind = "video"
         job_id = uuid.uuid4().hex[:12]
         payload = {"job_id": job_id, "chat_id": chat_id, "user_id": user_id,
                    "video_url": url, "title": (title or "")[:200],
+                   "kind": kind,
+                   "artist": (artist or "")[:200], "song": (song or "")[:200],
                    "requested_at": time.time()}
         text = "JOB " + json.dumps(payload, separators=(",", ":"))
         if not _api_send_message(_env("TELEGRAM_TOKEN"), _worker_channel_id(),
@@ -201,6 +220,17 @@ def parse_channel_signal(text):
 # Caption the user sees on the delivered video (same wording the local
 # download path uses).
 COPY_CAPTION = "🎉 Here's your video!"
+
+
+def get_job_entry(job_id):
+    """Return the stored job entry dict (any status), or None. Round-35:
+    the DONE handler reads artist/song/kind for audio jobs. Never raises.
+    """
+    try:
+        entry = _load_jobs().get(job_id)
+        return dict(entry) if isinstance(entry, dict) else None
+    except Exception:
+        return None
 
 
 def build_copy_params(job_id, message_id):

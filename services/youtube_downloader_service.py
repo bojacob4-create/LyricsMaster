@@ -1244,6 +1244,99 @@ def _build_success_msg(title: str, uploader: str, duration: int, file_size_mb: f
 
 
 # ── Main entry point ───────────────────────────────────────────────────────
+def mp3_cached_lookup(artist: str, song: str):
+    """Round-35: Tier 0/1/1.5 cache lookup only (file_id, disk, failure memory).
+
+    Returns (success, result) exactly like download_audio_for_song, or None
+    when nothing is cached. Lets the home-worker path skip straight past
+    the instant tiers. Never raises.
+    """
+    try:
+        artist = (artist or '').strip()
+        song = (song or '').strip()
+        query = f"{artist} - {song}" if song else artist
+        key = _mp3_cache_key(artist, song)
+        os.makedirs(MP3_CACHE_DIR, exist_ok=True)
+
+        # ── Tier 0: Telegram file_id cache — instant, no download, no upload ──
+        fid = _fileid_get(key)
+        if fid:
+            logger.info(f"[MP3][HIT] file_id cache for '{query}'")
+            return True, ('file_id', fid, query, artist)
+
+        # ── Tier 1: disk cache ────────────────────────────────────────────
+        cached = _disk_cache_get(key)
+        if cached:
+            size_mb = round(os.path.getsize(cached) / 1024 / 1024, 1)
+            logger.info(f"[MP3][HIT] disk cache for '{query}' ({size_mb}MB)")
+            return True, (cached,
+                          _build_success_msg(query, artist, 0, size_mb) + "\n⚡ Served from cache",
+                          query, artist)
+
+        # ── Tier 1.5: recent-failure memory — a repeat tap fails instantly ─
+        recent_fail = _failure_get(key)
+        if recent_fail:
+            msg, age = recent_fail
+            logger.info(f"[MP3][HIT] failure memory for '{query}' ({age:.0f}s old)")
+            return False, msg + "\n\n(Last tried moments ago — retry in a few minutes.)"
+        return None
+    except Exception as e:
+        logger.debug(f"[MP3] cache lookup failed: {type(e).__name__}")
+        return None
+
+
+def resolve_mp3_youtube_url(artist: str, song: str) -> Optional[str]:
+    """Round-35: best YouTube watch URL for an MP3 request (home-worker path).
+
+    Reuses the Tier-2 YouTube search + _score_candidate so the worker
+    downloads the same track the local path would have picked. Returns None
+    when the breaker is open (block wave — the local path will queue
+    instead), when search yields nothing usable, or on any error.
+    Never raises.
+    """
+    try:
+        if _yt_breaker_open():
+            logger.info("[MP3][WORKER] YouTube skipped — breaker open (block wave)")
+            return None
+        artist = (artist or '').strip()
+        song = (song or '').strip()
+        query = f"{artist} - {song}" if song else artist
+        if not query:
+            return None
+        queries = ([f"{artist} {song} official audio", query] if song
+                   else [query])
+        entries = []
+        for q in queries:
+            entries.extend(_yt_search_entries(q, n=5))
+            if _yt_breaker_open():
+                # Search tripped the breaker mid-way — bail to the queue path.
+                return None
+        expected_dur = _expected_duration(artist, song) if song else None
+        best, best_score = None, -1e8
+        for e in entries:
+            raw = e.get('webpage_url') or e.get('url') or ''
+            if raw.startswith('http'):
+                url = raw
+            elif raw:
+                url = f"https://www.youtube.com/watch?v={raw}"
+            else:
+                continue
+            s = _score_candidate(e.get('title', ''), e.get('uploader', ''),
+                                 int(e.get('duration', 0) or 0),
+                                 artist, song, expected_dur)
+            if s > best_score:
+                best, best_score = url, s
+        if best is not None:
+            logger.info(f"[MP3][WORKER] resolved '{query}' → {best} "
+                        f"(score={best_score:.1f})")
+            return best
+        logger.info(f"[MP3][WORKER] no YouTube candidate for '{query}'")
+        return None
+    except Exception as e:
+        logger.warning(f"[MP3][WORKER] resolve failed: {type(e).__name__}")
+        return None
+
+
 def download_audio_for_song(artist: str, song: str,
                             on_stage=None) -> Tuple[bool, any]:
     """
@@ -1268,28 +1361,10 @@ def download_audio_for_song(artist: str, song: str,
     os.makedirs(MP3_CACHE_DIR, exist_ok=True)
     logger.info(f"[MP3][START] artist='{artist}' | song='{song}'")
 
-    # ── Tier 0: Telegram file_id cache — instant, no download, no upload ──
-    fid = _fileid_get(key)
-    if fid:
-        logger.info(f"[MP3][HIT] file_id cache for '{query}'")
-        return True, ('file_id', fid, query, artist)
-
-    # ── Tier 1: disk cache ────────────────────────────────────────────────
-    cached = _disk_cache_get(key)
-    if cached:
-        size_mb = round(os.path.getsize(cached) / 1024 / 1024, 1)
-        logger.info(f"[MP3][HIT] disk cache for '{query}' ({size_mb}MB)")
-        return True, (cached,
-                      _build_success_msg(query, artist, 0, size_mb) + "\n⚡ Served from cache",
-                      query, artist)
-
-    # ── Tier 1.5: recent-failure memory — a repeat tap fails instantly ────
-    # instead of burning another minute on a hopeless song.
-    recent_fail = _failure_get(key)
-    if recent_fail:
-        msg, age = recent_fail
-        logger.info(f"[MP3][HIT] failure memory for '{query}' ({age:.0f}s old)")
-        return False, msg + "\n\n(Last tried moments ago — retry in a few minutes.)"
+    # ── Tiers 0/1/1.5: instant caches (shared with the home-worker path) ───
+    hit = mp3_cached_lookup(artist, song)
+    if hit is not None:
+        return hit
 
     # ── Tier 2: fresh resolve (providers run in parallel) ──────────────────
     # SoundCloud + YouTube + Audius searches and the lrclib duration lookup
