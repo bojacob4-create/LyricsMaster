@@ -3687,9 +3687,10 @@ def _get_similar_songs_uncached(artist: str, song: str, mood: str,
 
 
 @lru_cache(maxsize=512)
-def get_similar_songs(artist: str, song: str, mood: str) -> List[Dict]:
+def get_similar_songs(artist: str, song: str, mood: str,
+                      limit: int = 5) -> List[Dict]:
     """
-    Return 5 recommended songs similar in vibe to the source.
+    Return `limit` recommended songs similar in vibe to the source.
 
     Candidate discovery (all three sources are live — no static pools):
       1. Last.fm track.getSimilar — live, listener-overlap similarity graph.
@@ -3702,7 +3703,7 @@ def get_similar_songs(artist: str, song: str, mood: str) -> List[Dict]:
     The three sources are interleaved (round-robin, artist-deduplicated) so
     results mix proven listener favorites with fresh chart picks.
     """
-    return _get_similar_songs_uncached(artist, song, mood)
+    return _get_similar_songs_uncached(artist, song, mood, limit=limit)
 
 
 def get_similar_songs_fresh(artist: str, song: str, mood: str,

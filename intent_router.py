@@ -84,9 +84,25 @@ LYRICS_KEYWORDS = [
 
 RECOMMEND_KEYWORDS = [
     'similar to', 'songs like', 'music like', 'recommend', 'suggestion',
-    'what should i listen', 'something like', 'more like', 'like this',
-    'what else', 'similar songs', 'similar music',
+    'suggest', 'what should i listen', 'something like', 'more like',
+    'like this', 'what else', 'similar songs', 'similar music',
 ]
+
+# "recommend something new" → fresh releases, not a song literally called
+# "something new".  Checked against the cleaned remainder (see below).
+_FRESH_WORDS = frozenset({'new', 'fresh', 'latest', 'recent'})
+
+# Bare genre words: "recommend me 5 afrobeats songs" is really a genre
+# request, not a song search.  Deliberately conservative — only words that
+# are unambiguously genres (never song titles) redirect to a genre pick.
+_GENRE_WORDS = frozenset({
+    'pop', 'rap', 'hip hop', 'hip-hop', 'hiphop', 'rnb', 'r&b', 'soul',
+    'rock', 'country', 'jazz', 'latin', 'reggaeton', 'kpop', 'k-pop',
+    'dance', 'electronic', 'edm', 'house', 'techno', 'afrobeats',
+    'afrobeat', 'amapiano', 'dancehall', 'reggae', 'gospel', 'classical',
+    'metal', 'punk', 'indie', 'folk', 'blues', 'funk', 'disco',
+    'lofi', 'lo-fi', 'acoustic',
+})
 
 WIKI_KEYWORDS = [
     'wiki', 'wikipedia',
@@ -374,6 +390,9 @@ def _normalize_song_query(raw: str) -> str:
     if by_match:
         song_part = by_match.group(1).strip()
         artist_part = by_match.group(2).strip()
+        # A leading count is not part of the title: "10 hello by adele"
+        # must reorder to "adele - hello", not "adele - 10 hello".
+        song_part = re.sub(r'^\d{1,2}\s+', '', song_part).strip()
         # Guards: pronouns can never be artists ("stand by me" is not
         # "me - stand"), questions stay with the NLP layer, and generic
         # phrasing is never a song title ("songs to hello by adele" must
@@ -523,6 +542,35 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
     if _is_mood_phrase(text):
         return 'mood', _extract_mood_word(text)
 
+    # "recommend something new" / "suggest fresh music" → fresh releases.
+    # Must run BEFORE the random scan: "anything" is a random keyword and
+    # would otherwise misroute "recommend anything new" into a broken
+    # random query ("recommend new").  Only fires when the cleaned
+    # remainder is purely freshness words — "recommend new songs by
+    # adele" keeps its artist meaning via the __fresh__ artist: form.
+    # (Keyword-stripped manually here, NOT via _clean_query, so the
+    # "X by Y" reorder can't mangle "new by adele" first.)
+    if _match_keywords(text, RECOMMEND_KEYWORDS):
+        _fq = text
+        for _fkw in (RECOMMEND_KEYWORDS
+                     + ['something', 'anything', 'some', 'me', 'please',
+                        'songs', 'song', 'music', 'tracks', 'track',
+                        'tunes', 'tune']):
+            _fq = re.sub(r'\b' + _fkw + r'\b', '', _fq, flags=re.IGNORECASE)
+        _fq = re.sub(r'\s+', ' ', _fq).strip()
+        _bfm = re.match(r'^(new|fresh|latest|recent)\s+by\s+(.+)$',
+                        _fq, re.IGNORECASE)
+        if _bfm and _bfm.group(2).strip():
+            return 'recommend', f"__fresh__ artist:{_bfm.group(2).strip()}"
+        # "suggest fresh afrobeats" → fresh releases in that genre.
+        _fgm = re.match(r'^(new|fresh|latest|recent)\s+(.+)$',
+                        _fq, re.IGNORECASE)
+        if _fgm and _fgm.group(2).strip().lower() in _GENRE_WORDS:
+            return 'recommend', \
+                f"__fresh__ genre:{_fgm.group(2).strip().lower()}"
+        if _fq and set(_fq.lower().split()) <= _FRESH_WORDS:
+            return 'recommend', '__fresh__'
+
     if _match_keywords(text, RANDOM_KEYWORDS):
         # "random rap", "surprise me with some soul" — keep the trailing
         # genre so natural-language requests stay genre-aware, exactly
@@ -581,15 +629,44 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
         return 'stats', query
 
     if _match_keywords(text, RECOMMEND_KEYWORDS):
-        query = _clean_query(text, ['similar', 'songs like', 'music like', 'recommend', 'recommendation',
-                                     'suggestion', 'something like', 'more like', 'like this',
-                                     'what else', 'similar songs', 'similar music', 'like',
-                                     # Generic phrasing must go too, otherwise the
-                                     # "X by Y" reorder mangles it: "songs similar
-                                     # to hello by adele" → "adele - hello", not
-                                     # "adele - songs to hello".
-                                     'songs', 'song', 'music', 'tracks', 'track',
-                                     'tunes', 'tune'])
+        _rec_clean = ['similar', 'songs like', 'music like', 'recommend',
+                      'recommendation', 'suggestion', 'suggest',
+                      'something like', 'more like', 'like this',
+                      'what else', 'similar songs', 'similar music', 'like',
+                      # Generic phrasing must go too, otherwise the
+                      # "X by Y" reorder mangles it: "songs similar
+                      # to hello by adele" → "adele - hello", not
+                      # "adele - songs to hello".
+                      'songs', 'song', 'music', 'tracks', 'track',
+                      'tunes', 'tune']
+        # Count FIRST: "recommend 10 songs like hello by adele" must parse
+        # the 10 before the "X by Y" reorder runs, or the reorder swallows
+        # it ("adele - 10 hello").  Filler goes first so "give me 3 ..."
+        # exposes its leading count.
+        _bare = text
+        for _kw in _rec_clean:
+            _bare = re.sub(r'\b' + _kw + r'\b', '', _bare,
+                           flags=re.IGNORECASE)
+        _bare = re.sub(r'\s+', ' ', _bare).strip()
+        _bare = _strip_filler_prefix(_bare)
+        _rec_n = 5
+        _cm = re.match(r'^(\d{1,2})\s+(.+)$', _bare)
+        if _cm:
+            _rec_n = max(1, min(int(_cm.group(1)), 10))
+            _bare = _cm.group(2).strip()
+        query = _clean_query(_bare, [])
+        # "3 by taylor swift" → artist mode (the "artist:" prefix forces it
+        # in recommend_command, skipping the artist-vs-song question).
+        _bym = re.match(r'^by\s+(.+)$', query, re.IGNORECASE)
+        if _bym and _bym.group(1).strip():
+            _aq = f"artist:{_bym.group(1).strip()}"
+            return 'recommend', f"__n{_rec_n}__ {_aq}" if _rec_n != 5 else _aq
+        # Bare genre ("recommend me 5 afrobeats songs") is a genre request,
+        # not a song search → live genre pick, like /random <genre>.
+        if query.lower() in _GENRE_WORDS:
+            return 'random', query.lower()
+        if _rec_n != 5:
+            return 'recommend', f"__n{_rec_n}__ {query}".rstrip()
         return 'recommend', query
 
     if _match_keywords(text, WIKI_KEYWORDS):

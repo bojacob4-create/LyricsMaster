@@ -351,6 +351,14 @@ _shown_recs = {}
 # Structure: {user_id: {'artist': str, 'song': str, 'intent_cmd': str}}
 _pending_confirmation: dict = {}
 
+# Stores a requested recommendation count ("recommend 3 songs ...") parsed
+# by the intent router (query carries a "__n3__" token).  Popped by
+# recommend_command; cleared on any message that isn't a recommend intent
+# or a pending yes/no confirmation, so a stale count can never leak into
+# an unrelated request.
+# Structure: {user_id: int}
+_rec_limit: dict = {}
+
 # Stores a just-sent multi-candidate disambiguation ("Which one did you
 # mean?") so the user's NEXT message can be understood as a SELECTION:
 # typing one of the artists (or a number 1-3) picks that candidate instead
@@ -799,6 +807,14 @@ def natural_language_handler(update: Update, context: CallbackContext):
     except Exception:
         intent, query = None, None
 
+    # A stale recommendation count only survives for the two flows that
+    # legitimately consume it later: a recommend intent (parsed fresh in
+    # Step 1 below) or a pending yes/no confirmation that will call
+    # recommend_command.  Everything else clears it so a count can never
+    # leak into an unrelated request.
+    if intent != 'recommend' and user_id not in _pending_confirmation:
+        _rec_limit.pop(user_id, None)
+
     if intent:
         # Structured regex match — discard stale pending state and handle.
         _pending_recommend_artist.pop(user_id, None)
@@ -806,6 +822,23 @@ def natural_language_handler(update: Update, context: CallbackContext):
             f"NL intent for user {user_id}: intent='{intent}', "
             f"query='{query}', raw='{text}'"
         )
+
+        # ── Recommend preprocessing: count / fresh / artist-mode ─────────
+        # The router encodes these in the query; resolve them here before
+        # the disambiguation block below.
+        if intent == 'recommend' and query:
+            _rm = re.match(r'^__n(\d{1,2})__\s*', query)
+            if _rm:
+                _rec_limit[user_id] = max(1, min(int(_rm.group(1)), 10))
+                query = query[_rm.end():].strip()
+            if query == '__fresh__' or query.startswith('__fresh__ '):
+                _send_fresh_picks(update, user_id, query)
+                return
+            if query.startswith('artist:'):
+                # Explicit artist mode — skip the artist-vs-song question.
+                context.args = query.split()
+                recommend_command(update, context)
+                return
 
         # ── Recommend without explicit artist → disambiguation first ─────────
         # The regex router strips keywords and returns, e.g., query='nightcall'
@@ -1721,6 +1754,68 @@ def stats_command(update: Update, context: CallbackContext):
             pass
 
 
+def _send_fresh_picks(update, user_id: int, query: str):
+    """'Recommend something new' — fresh releases from the live charts.
+
+    Query forms from the intent router: '__fresh__',
+    '__fresh__ artist:<name>', '__fresh__ genre:<genre>'.  Songs get
+    tappable buttons; when the filtered pool is empty the general fresh
+    pool is served with an honest note instead of silence.  Never raises.
+    """
+    try:
+        from services.live_charts import get_fresh_songs, get_top_songs
+        from buttons import daily_picker_buttons
+
+        artist = genre = None
+        _fm = re.match(r'^__fresh__\s+(artist|genre):(.+)$', query.strip())
+        if _fm:
+            if _fm.group(1) == 'artist':
+                artist = _fm.group(2).strip()
+            else:
+                genre = _fm.group(2).strip().lower()
+
+        fresh = get_fresh_songs(limit=50, genre=genre) if genre \
+            else get_fresh_songs(limit=50)
+        note = ""
+        if artist:
+            _af = [s for s in fresh if artist.lower() in s['artist'].lower()]
+            if _af:
+                fresh = _af
+            else:
+                note = (f"\n\n📡 No brand-new {artist} tracks on the "
+                        "charts right now — here's what's new overall "
+                        "instead.")
+        picks = fresh[:5]
+        if not picks:
+            picks = [{'artist': s['artist'], 'song': s['song']}
+                     for s in (get_top_songs(limit=5) or [])]
+            if not note:
+                note = ("\n\n📡 The new-release feed is quiet right now — "
+                        "here's what's charting instead.")
+        if not picks:
+            update.message.reply_text(
+                "😓 I couldn't reach the charts right now.\n"
+                "Try again in a moment! 🔄"
+            )
+            return
+        lines = ["🆕 *Fresh picks for you:*", "━━━━━━━━━━━━━━━━━━━━━", ""]
+        for i, s in enumerate(picks, 1):
+            lines.append(f"{i}. {s['artist']} — {s['song']}")
+        lines += ["", "━━━━━━━━━━━━━━━━━━━━━" + note]
+        update.message.reply_text(
+            '\n'.join(lines), parse_mode='Markdown',
+            reply_markup=daily_picker_buttons(picks),
+        )
+        logger.info(f"Sent {len(picks)} fresh picks to user {user_id} "
+                    f"(artist={artist}, genre={genre})")
+    except Exception as e:
+        logger.error(f"Error sending fresh picks to user {user_id}: {e}")
+        update.message.reply_text(
+            "😓 Couldn't fetch new releases right now.\n"
+            "Please try again in a moment! 🔄"
+        )
+
+
 def recommend_command(update: Update, context: CallbackContext):
     """Handle the /recommend command."""
     user_id = update.effective_user.id
@@ -1832,7 +1927,11 @@ def recommend_command(update: Update, context: CallbackContext):
         mood = detect_song_mood(lyrics)
         use_artist = artist if artist else query
         use_song = song if song else query
-        recommendations = get_similar_songs(use_artist, use_song, mood)
+        # Requested count ("recommend 3 songs ...") parsed by the Step-1
+        # router; defaults to 5 for /recommend and button flows.
+        _rec_n = _rec_limit.pop(user_id, 5)
+        recommendations = get_similar_songs(use_artist, use_song, mood,
+                                            limit=_rec_n)
         formatted_recommendations = format_recommendations(recommendations, display_title)
 
         btn_query = display_title if display_title else query
