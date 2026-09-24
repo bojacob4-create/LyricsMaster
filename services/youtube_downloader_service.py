@@ -31,6 +31,33 @@ def extract_video_id(url: str) -> Optional[str]:
 def validate_youtube_url(url: str) -> bool:
     return extract_video_id(url) is not None
 
+
+# Round 16: quality adapts to Telegram's 50MB cap instead of a hard 720p
+# ceiling. yt-dlp picks the BEST quality whose streams fit under ~45MB —
+# short videos get 1080p when it fits, long ones drop to whatever fits.
+# The 50MB post-download check in download_youtube_video stays as a
+# safety net for the rare unrestricted-fallback case.
+_DOWNLOAD_FORMAT = (
+    'bestvideo[filesize<40M]+bestaudio[filesize<5M]/'
+    'best[filesize<45M]/'
+    'bestvideo+bestaudio/best'
+)
+
+
+def _pick_downloaded_file(video_id: str) -> Optional[str]:
+    """Return the finished download for a video id, or None.
+
+    Round 16: picks the largest non-temp match instead of matches[0], so a
+    leftover file from an earlier failed run can't shadow the new download.
+    """
+    matches = globmod.glob(os.path.join(os.getcwd(), f'youtube_{video_id}.*'))
+    matches = [m for m in matches
+               if not m.endswith(('.part', '.ytdl', '.temp', '.tmp'))
+               and os.path.isfile(m)]
+    if not matches:
+        return None
+    return max(matches, key=os.path.getsize)
+
 def download_youtube_video(url: str) -> Tuple[bool, str]:
     try:
         logger.info(f"Starting download process for URL: {url}")
@@ -49,7 +76,7 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
         output_template = f'youtube_{video_id}.%(ext)s'
 
         ydl_opts = {
-            'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/bestvideo+bestaudio/best',
+            'format': _DOWNLOAD_FORMAT,
             'merge_output_format': 'mp4',
             'noplaylist': True,
             'quiet': True,
@@ -84,9 +111,8 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
 
                 ydl.download([url])
 
-                matches = globmod.glob(os.path.join(os.getcwd(), f'youtube_{video_id}.*'))
-                matches = [m for m in matches if not m.endswith('.part')]
-                if not matches:
+                file_path = _pick_downloaded_file(video_id)
+                if not file_path:
                     logger.error(f"No downloaded file found for video_id: {video_id}")
                     return False, (
                         "❌ Download Failed\n"
@@ -95,7 +121,6 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
                         "Try a different video."
                     )
 
-                file_path = matches[0]
                 file_size = os.path.getsize(file_path)
                 file_size_mb = round(file_size / (1024 * 1024), 1)
 
