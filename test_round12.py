@@ -67,8 +67,14 @@ def _canned_entries():
 
 def _install_mocks(download_behavior):
     """Replace network/download pieces. download_behavior(url, call_no)
-    either raises or returns a real temp mp3-sized file path."""
-    calls = {"n": 0}
+    either raises or returns a real temp mp3-sized file path.
+
+    NOTE (round-13): downloads now run in a forked child process, so the
+    attempt counter must live in shared memory — a plain dict increment
+    in the fake would be lost across the fork.
+    """
+    from multiprocessing import Value
+    counter = Value('i', 0)
     orig = {}
     for name in ("_sc_search_entries", "_yt_search_entries",
                  "_audius_search_entries", "_expected_duration",
@@ -82,15 +88,17 @@ def _install_mocks(download_behavior):
     yds._expected_duration = lambda a, s: 200
 
     def fake_dl(url, prefix, label=None):
-        calls["n"] += 1
-        return download_behavior(url, calls["n"])
+        with counter.get_lock():
+            counter.value += 1
+            n = counter.value
+        return download_behavior(url, n)
 
     yds._download_url_to_mp3 = fake_dl
     yds._disk_cache_put = lambda key, path: path
     yds._winurl_note = lambda *a: None
     yds._failure_note = lambda *a: None
     yds._YT_BLOCKED_UNTIL = 0.0  # breaker reset
-    return orig, calls
+    return orig, counter
 
 
 def _restore(orig):
@@ -110,14 +118,14 @@ def _big_temp_file():
 def always_stall(url, call_no):
     raise TimeoutError("download stalled (45s budget)")
 
-orig, calls = _install_mocks(always_stall)
+orig, counter = _install_mocks(always_stall)
 try:
     ok, result = yds.download_audio_for_song("SZA", "Saturn")
     check("wave: returns failure (not hang)", ok is False)
     check("wave: breaker tripped", yds._yt_breaker_open(),
           "breaker should be open after 2 soft failures")
     check("wave: fail-fast stopped at 2 attempts (not 3+)",
-          calls["n"] == 2, f"attempts={calls['n']}")
+          counter.value == 2, f"attempts={counter.value}")
     check("wave: user gets the 'blocked' message (queues auto-retry)",
           isinstance(result, str) and "blocking downloads" in result,
           str(result)[:80])
@@ -130,14 +138,14 @@ def stall_then_ok(url, call_no):
         raise TimeoutError("download stalled (45s budget)")
     return _big_temp_file()
 
-orig, calls = _install_mocks(stall_then_ok)
+orig, counter = _install_mocks(stall_then_ok)
 try:
     ok, result = yds.download_audio_for_song("SZA", "Saturn")
     check("recover: delivers after one stall", ok is True, str(ok))
     check("recover: breaker NOT tripped by a single stall",
           not yds._yt_breaker_open())
-    check("recover: tried exactly 2 candidates", calls["n"] == 2,
-          f"attempts={calls['n']}")
+    check("recover: tried exactly 2 candidates", counter.value == 2,
+          f"attempts={counter.value}")
 finally:
     _restore(orig)
 
@@ -145,7 +153,7 @@ finally:
 def hard_block(url, call_no):
     raise Exception("sign in to confirm you're not a bot")
 
-orig, calls = _install_mocks(hard_block)
+orig, counter = _install_mocks(hard_block)
 try:
     ok, result = yds.download_audio_for_song("SZA", "Saturn")
     check("block: returns failure", ok is False)
@@ -154,8 +162,8 @@ try:
     # Old behavior preserved: hard-block errors raise immediately (no
     # 45s stall), so the loop still walks the remaining candidates —
     # a SoundCloud/Audius entry later in the list can still win.
-    check("block: remaining candidates still tried", calls["n"] == 3,
-          f"attempts={calls['n']}")
+    check("block: remaining candidates still tried", counter.value == 3,
+          f"attempts={counter.value}")
 finally:
     _restore(orig)
 

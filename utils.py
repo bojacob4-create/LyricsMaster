@@ -502,7 +502,7 @@ def format_detailed_analysis(analysis: Dict) -> str:
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📝 Structure\n"
         f"  {stats['total_lines']} lines  •  {stats['total_words']} words\n"
-        f"  {stats['unique_words']} unique words ({stats['vocabulary_richness']}%)\n"
+        f"  {stats['unique_words']} unique meaningful words ({stats['vocabulary_richness']}% of meaningful)\n"
         f"  → {vocab_note}\n"
     )
 

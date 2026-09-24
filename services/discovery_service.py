@@ -122,37 +122,38 @@ _MOOD_INTERNAL = {
     'relaxed': 'chill',
     'sad': 'sad',
     'romantic': 'romantic',
-    'party': 'energetic',
-    'focus': 'chill',
+    'party': 'party',  # own keyword set — sharing 'energetic' made the two
+    'focus': 'chill',  # mixes byte-identical (round-13 wild-test finding).
 }
 
 
 # Apple genre tags (from the live chart feeds) that honestly signal a mood.
 # Conservative on purpose: a genre is listed only when it genuinely fits.
+# Round-13: energetic/party and relaxed/focus each get DISJOINT slices —
+# sharing genre sets made party==energetic and relaxed≈focus in the wild.
 _MOOD_APPLE_GENRES = {
     'happy': {'Pop', 'Dance', 'Reggae'},
-    'energetic': {'Dance', 'House', 'Electronic', 'Latin Urban',
-                  'Hip-Hop/Rap', 'K-Pop', 'Afrobeats'},
-    'relaxed': {'Jazz', 'Classical', 'New Age', 'Ambient', 'Acoustic',
-                'Reggae', 'Singer/Songwriter'},
+    'energetic': {'Electronic', 'Hip-Hop/Rap', 'K-Pop'},
+    'relaxed': {'Jazz', 'Reggae', 'Acoustic', 'Singer/Songwriter'},
     'sad': set(),
     'romantic': {'R&B/Soul', 'Singer/Songwriter'},
-    'party': {'Dance', 'House', 'Latin Urban', 'Electronic',
-              'Hip-Hop/Rap', 'Afrobeats'},
-    'focus': {'Classical', 'Jazz', 'New Age', 'Ambient', 'Acoustic',
-              'Singer/Songwriter'},
+    'party': {'Dance', 'House', 'Latin Urban', 'Afrobeats'},
+    'focus': {'Classical', 'New Age', 'Ambient'},
 }
 
 # Tier-3 shortfall sources per mood: (iTunes RSS genre feeds, search terms).
 # Only used when tiers 1+2 leave the mix short — calm moods especially,
 # since this week's all-genres chart carries almost no calm music.
+# Round-13: party/energetic get their own genre feeds too, now that their
+# tier-2 slices are disjoint (a hip-hop-heavy chart starves party, a
+# dance-heavy chart starves energetic).
 _MOOD_TIER3 = {
     'relaxed': ([(11, 'Jazz'), (5, 'Classical')], ['chill', 'calm']),
     'focus': ([(5, 'Classical'), (11, 'Jazz')], []),
     'sad': ([], ['lonely', 'goodbye', 'heartbreak']),
     'happy': ([], ['happy']),
-    'energetic': ([], ['hype']),
-    'party': ([], ['party']),
+    'energetic': ([(18, 'Hip-Hop/Rap')], ['hype']),
+    'party': ([(17, 'Dance')], ['party']),
     'romantic': ([], ['love']),
 }
 
@@ -177,17 +178,50 @@ def _apple_genre_fits_mood(genres, mood: str) -> bool:
         return False
 
 
+# Title fragments that mark karaoke/AI-farm/sleep-aid junk — checked in
+# _claim_pick so EVERY mix tier (chart keywords, genre feeds, iTunes
+# search, Last.fm tags) rejects them. The user wants real artists only.
+_JUNK_TITLE_BITS = ('karaoke', 'tribute', '8d audio', 'slowed + reverb',
+                    'slowed', 'sped up', 'nightcore', '1 hour', '10 hours',
+                    'sing along', 'sax solos', 'beats to relax/study to',
+                    'lofi hip hop radio')
+
+
+def _norm_title(t: str) -> str:
+    """Normalize a song title for dedup: lowercase, drop bracketed extras
+    ("(Remix)", "[Live]"), collapse whitespace."""
+    t = re.sub(r'\s*[\(\[].*?[\)\]]', '', str(t or ''))
+    return re.sub(r'\s+', ' ', t).strip().lower()
+
+
 def _claim_pick(out: List[Dict], seen_keys: set, seen_artists: set,
-                artist: str, name: str, source: str, why: str = '') -> bool:
-    """Append a pick if unseen; True when added."""
+                artist: str, name: str, source: str, why: str = '',
+                seen_titles: Optional[set] = None) -> bool:
+    """Append a pick if unseen; True when added.
+
+    Dedupes on (artist, title) AND on title alone — the same song must not
+    appear twice under slightly different artist credits ("Babydoll" by
+    'Jamie Miller' vs 'Jamie Miller & Antonio Cipriano', round-13 finding).
+    Also rejects karaoke/AI-farm/junk titles at this single choke point.
+    """
     try:
         a = str(artist or '').strip()
         t = str(name or '').strip()
         if not a or not t:
             return False
+        tl = t.lower()
+        if any(j in a.lower() for j in _JUNK_ARTIST_BITS):
+            return False
+        if any(j in tl for j in _JUNK_TITLE_BITS):
+            return False
         key = (a.lower(), t.lower())
         if key in seen_keys or a.lower() in seen_artists:
             return False
+        if seen_titles is not None:
+            nt = _norm_title(t)
+            if nt and nt in seen_titles:
+                return False
+            seen_titles.add(nt)
         seen_keys.add(key)
         seen_artists.add(a.lower())
         out.append({'artist': a, 'name': t, 'source': source, 'why': why})
@@ -197,7 +231,8 @@ def _claim_pick(out: List[Dict], seen_keys: set, seen_artists: set,
 
 
 def _tier12_picks(entries: List[Dict], mood: str, internal: str, want: int,
-                  seen_keys: set, seen_artists: set) -> List[Dict]:
+                  seen_keys: set, seen_artists: set,
+                  seen_titles: Optional[set] = None) -> List[Dict]:
     """Tier 1 (title keyword) then tier 2 (Apple genre) from fresh entries."""
     out: List[Dict] = []
     try:
@@ -209,7 +244,8 @@ def _tier12_picks(entries: List[Dict], mood: str, internal: str, want: int,
                 continue
             if _title_has_mood_word(e.get('song', ''), internal):
                 _claim_pick(out, seen_keys, seen_artists,
-                            e.get('artist'), e.get('song'), 'fresh', 'keyword')
+                            e.get('artist'), e.get('song'), 'fresh', 'keyword',
+                            seen_titles)
         for e in entries:  # tier 2 — Apple's own genre tag fits the mood
             if len(out) >= want:
                 break
@@ -217,7 +253,8 @@ def _tier12_picks(entries: List[Dict], mood: str, internal: str, want: int,
                 continue
             if _apple_genre_fits_mood(e.get('genres'), mood):
                 _claim_pick(out, seen_keys, seen_artists,
-                            e.get('artist'), e.get('song'), 'fresh', 'genre')
+                            e.get('artist'), e.get('song'), 'fresh', 'genre',
+                            seen_titles)
     except Exception:
         pass
     return out
@@ -233,7 +270,8 @@ def _too_fast_for_calm(title: str) -> bool:
 
 
 def _tier3_picks(mood: str, internal: str, want: int,
-                 seen_keys: set, seen_artists: set) -> List[Dict]:
+                 seen_keys: set, seen_artists: set,
+                 seen_titles: Optional[set] = None) -> List[Dict]:
     """Shortfall tier: genre feeds + iTunes term search, still fresh-only.
 
     Genre RSS feeds are curated charts (no AI farms); search results get
@@ -248,7 +286,7 @@ def _tier3_picks(mood: str, internal: str, want: int,
                 break
             feed = _tier12_picks(get_fresh_genre_feed(gid, gname),
                                  mood, internal, want - len(out),
-                                 seen_keys, seen_artists)
+                                 seen_keys, seen_artists, seen_titles)
             out += feed
         for term in terms:
             if len(out) >= want:
@@ -270,7 +308,7 @@ def _tier3_picks(mood: str, internal: str, want: int,
                     continue  # term must be a real word in the title
                 if _title_has_mood_word(t, internal):
                     _claim_pick(out, seen_keys, seen_artists, a, t,
-                                'fresh', 'search')
+                                'fresh', 'search', seen_titles)
     except Exception:
         pass
     return out
@@ -643,17 +681,19 @@ def get_mood_mix(mood: str, n: int = 5) -> List[Dict]:
         n = max(1, min(int(n or 5), 10))
         seen_keys: set = set()
         seen_artists: set = set()
+        seen_titles: set = set()
         out = _tier12_picks(get_fresh_entries(), mood, internal, n,
-                            seen_keys, seen_artists)
+                            seen_keys, seen_artists, seen_titles)
         if len(out) < n:
             out += _tier3_picks(mood, internal, n - len(out),
-                               seen_keys, seen_artists)
+                               seen_keys, seen_artists, seen_titles)
         if len(out) < n:
             for s in _mood_lastfm_tag_tracks(mood, limit=max(n * 2, 10)):
                 if len(out) >= n:
                     break
                 if _claim_pick(out, seen_keys, seen_artists,
-                               s.get('artist'), s.get('name'), 'tag', 'tag'):
+                               s.get('artist'), s.get('name'), 'tag', 'tag',
+                               seen_titles):
                     pass
         if len(out) < n:
             pool = MOOD_SONG_POOLS.get(mood) or []

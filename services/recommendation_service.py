@@ -574,7 +574,16 @@ _MOOD_KEYWORDS: Dict[str, set] = {
     'energetic': {
         'fire', 'lit', 'run', 'move', 'jump', 'fight', 'rise', 'power', 'beast',
         'boss', 'flex', 'wild', 'crazy', 'rush', 'bang', 'hard', 'loud',
-        'grind', 'hustle', 'win', 'king', 'god', 'savage', 'hit', 'hype',
+        'grind', 'hustle', 'win', 'king', 'savage', 'hit', 'hype',
+        'banger', 'bass', 'drop', 'mosh', 'rage', 'amped',
+        # NOTE: 'god' deliberately excluded — it matches gospel/worship
+        # titles ("God Didn't Let Me Break") and polluted energetic mixes.
+    },
+    'party': {
+        'party', 'dance', 'dancing', 'club', 'clubbing', 'tonight', 'weekend',
+        'shots', 'bottles', 'bottle', 'dj', 'anthem', 'celebrate', 'celebration',
+        'fiesta', 'perreo', 'dembow', 'whine', 'soca', 'drunk', 'pregame',
+        'afterparty', 'turnt',
     },
     'happy': {
         'happy', 'joy', 'smile', 'laugh', 'fun', 'good', 'bright', 'sunshine',

@@ -2907,6 +2907,11 @@ def _mp3_background_job(bot, chat_id, user_id,
                 mp3_block_wave_active, mp3_retry_enqueue)
             if mp3_block_wave_active() and mp3_retry_enqueue(
                     chat_id, user_id, artist_q, song_q):
+                # Round-13 watch marker: greppable proof of queueing; the
+                # matching [MP3][AUTO-DELIVERED] line in the retry tick
+                # closes the loop when the wave clears.
+                logger.info(f"[MP3][QUEUED] '{artist_q} - {song_q}' → chat "
+                            f"{chat_id}: block wave, will auto-retry")
                 bot.send_message(
                     chat_id=chat_id,
                     text="⏳ YouTube is blocking downloads from this server right now.\n\n"
@@ -3009,6 +3014,11 @@ def mp3_retry_tick(bot):
                             title=title, performer=uploader)
                     else:
                         _deliver_fresh_mp3(bot, chat_id, artist, song, result)
+                    # Round-13 watch marker: the loop-closer for [MP3][QUEUED].
+                    # Grep for AUTO-DELIVERED to prove end-to-end auto-delivery
+                    # after a genuine block wave (never independently confirmed).
+                    logger.info(f"[MP3][AUTO-DELIVERED] '{artist} - {song}' → "
+                                f"chat {chat_id} (attempt {attempt_no}, wave cleared)")
                 except Exception as e:
                     logger.warning(f"[MP3][RETRY] delivery failed: {e}")
                 continue

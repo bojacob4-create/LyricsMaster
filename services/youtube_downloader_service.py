@@ -970,20 +970,49 @@ def download_audio_for_song(artist: str, song: str,
     def _try_download(url: str, rank_label: str):
         """Download one candidate with a hard time budget. Returns the mp3
         path, or raises on failure/timeout. Unique prefix per attempt so an
-        abandoned (timed-out) thread can't clobber the next attempt."""
-        from concurrent.futures import ThreadPoolExecutor, TimeoutError as _TE
+        abandoned (timed-out) download can't clobber the next attempt.
+
+        Runs the download in a FORKED CHILD PROCESS, not a thread: threads
+        can't be killed, so the old ThreadPoolExecutor approach could keep
+        a stalled worker alive past the budget (round-13: a 45s cap that
+        still waited). Here the child is terminate()d at the deadline —
+        a stall can never hold a slot past _CANDIDATE_TIMEOUT_SECS.
+        """
+        import multiprocessing as _mp
         prefix = f'audio_{key[:10]}_{rank_label}'
-        with ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(_download_url_to_mp3, url, prefix,
-                            label=rank_label)
+
+        def _child(q, durl, pfx, label):
             try:
-                return fut.result(timeout=_CANDIDATE_TIMEOUT_SECS)
-            except _TE:
-                logger.warning(
-                    f"[MP3] {rank_label} timed out after "
-                    f"{_CANDIDATE_TIMEOUT_SECS}s — abandoning")
-                raise TimeoutError(
-                    f"download stalled ({_CANDIDATE_TIMEOUT_SECS}s budget)")
+                q.put(('ok', _download_url_to_mp3(durl, pfx, label=label)))
+            except Exception as e:
+                q.put(('err', f"{type(e).__name__}: {e}"))
+
+        ctx = _mp.get_context('fork')
+        q = ctx.Queue()
+        p = ctx.Process(target=_child, args=(q, url, prefix, rank_label),
+                        daemon=True)
+        p.start()
+        p.join(_CANDIDATE_TIMEOUT_SECS)
+        if p.is_alive():
+            p.terminate()
+            p.join(5)
+            # Tidy partials the killed child may have left behind.
+            for m in globmod.glob(os.path.join(os.getcwd(), f'{prefix}.*')):
+                try:
+                    os.remove(m)
+                except OSError:
+                    pass
+            logger.warning(
+                f"[MP3] {rank_label} hard-killed after "
+                f"{_CANDIDATE_TIMEOUT_SECS}s stall — no lingering worker")
+            raise TimeoutError(
+                f"download stalled ({_CANDIDATE_TIMEOUT_SECS}s budget)")
+        if not q.empty():
+            status, payload = q.get()
+            if status == 'ok':
+                return payload
+            raise RuntimeError(payload)
+        raise RuntimeError("download child exited without a result")
 
     # Build the attempt list. During a YouTube block wave, a URL that
     # downloaded fine before is worth one direct shot (search is usually
