@@ -432,6 +432,97 @@ def mp3_retry_remove(key: str) -> None:
     except Exception:
         pass
 
+
+# Round 17: /download gets the same no-re-tap treatment as /mp3. Video has
+# no alternative source (YouTube is the only video provider, unlike MP3's
+# three audio sources), so a block wave can't be routed around — but the
+# request can be queued and auto-delivered once the wave clears. Shares the
+# same breaker, TTL and attempt budget as the MP3 queue.
+_VIDEO_RETRY_JSON = os.path.join(MP3_CACHE_DIR, 'video_retry_queue.json')
+
+
+def _video_retry_key(user_id: int, video_id: str) -> str:
+    return f"{user_id}:{video_id}"
+
+
+def video_retry_enqueue(chat_id: int, user_id: int, url: str) -> bool:
+    """Queue a block-wave-failed /download for automatic retry. Never raises."""
+    try:
+        from utils import locked_json_update
+        video_id = extract_video_id(url) or url
+        key = _video_retry_key(user_id, video_id)
+        os.makedirs(MP3_CACHE_DIR, exist_ok=True)
+
+        def _update(data):
+            data[key] = {'chat_id': chat_id, 'user_id': user_id,
+                         'url': url, 'video_id': video_id,
+                         'ts': _time.time(), 'attempts': 0}
+            # keep the queue small — drop expired entries on insert
+            now = _time.time()
+            for k in [k for k, v in data.items()
+                      if now - v.get('ts', 0) > _RETRY_TTL_SECS]:
+                data.pop(k, None)
+            return data
+
+        locked_json_update(_VIDEO_RETRY_JSON, _update)
+        logger.info(f"[VIDEO][RETRY] queued '{video_id}' for user {user_id}")
+        return True
+    except Exception:
+        return False
+
+
+def video_retry_due() -> list:
+    """Queued video entries ready for a retry: breaker closed, not expired."""
+    try:
+        if _yt_breaker_open():
+            return []
+        with open(_VIDEO_RETRY_JSON, 'r', encoding='utf-8') as f:
+            data = _json.load(f)
+    except Exception:
+        return []
+    now = _time.time()
+    out = []
+    for key, e in data.items():
+        if not isinstance(e, dict):
+            continue
+        if now - e.get('ts', 0) > _RETRY_TTL_SECS:
+            continue
+        if e.get('attempts', 0) >= _RETRY_MAX_ATTEMPTS:
+            continue
+        entry = dict(e)
+        entry['key'] = key
+        out.append(entry)
+    return out
+
+
+def video_retry_note_attempt(key: str) -> None:
+    """Increment the attempt counter for a queued video entry. Never raises."""
+    try:
+        from utils import locked_json_update
+
+        def _update(data):
+            if key in data:
+                data[key]['attempts'] = data[key].get('attempts', 0) + 1
+            return data
+
+        locked_json_update(_VIDEO_RETRY_JSON, _update)
+    except Exception:
+        pass
+
+
+def video_retry_remove(key: str) -> None:
+    """Drop a queued video entry (delivered or given up). Never raises."""
+    try:
+        from utils import locked_json_update
+
+        def _update(data):
+            data.pop(key, None)
+            return data
+
+        locked_json_update(_VIDEO_RETRY_JSON, _update)
+    except Exception:
+        pass
+
 # Title markers that (almost) always mean "not the original". Penalized
 # unless the requested song title itself contains the marker.
 _REMIX_MARKERS = (

@@ -2822,7 +2822,27 @@ def download_command(update: Update, context: CallbackContext):
             cleanup_video(file_path)
 
         else:
-            processing_message.edit_text(result)
+            # Round 17: block wave? Queue it — the scheduler retries
+            # automatically when the wave clears and the video arrives on
+            # its own. Genuine failures (unavailable, too large, bad URL)
+            # still get the honest notice immediately.
+            from services.youtube_downloader_service import (
+                mp3_block_wave_active, video_retry_enqueue)
+            chat_id = update.effective_chat.id
+            if mp3_block_wave_active() and video_retry_enqueue(
+                    chat_id, user_id, url):
+                # Greppable proof of queueing; the matching
+                # [VIDEO][AUTO-DELIVERED] line in the retry tick closes the
+                # loop when the wave clears.
+                logger.info(f"[VIDEO][QUEUED] '{url}' → chat {chat_id}: "
+                            f"block wave, will auto-retry")
+                processing_message.edit_text(
+                    "⏳ YouTube is blocking downloads from this server right now.\n\n"
+                    "I've queued your download — I'll retry automatically and send "
+                    "the video here as soon as the block clears. No need to tap again. 📥"
+                )
+            else:
+                processing_message.edit_text(result)
 
     except Exception as e:
         logger.error(f"Error in download command for user {user_id}: {str(e)}")
@@ -3122,6 +3142,70 @@ def mp3_retry_tick(bot):
                 pass
     except Exception as e:
         logger.warning(f"mp3_retry_tick failed: {e}")
+
+
+def video_retry_tick(bot):
+    """Scheduler tick (every 5 min): retry queued /downloads once the wave cleared.
+
+    Runs on the scheduler's background thread — never blocks update handling.
+    Each queued video gets a real download attempt; successes are delivered,
+    genuine failures get the final honest notice, and block-wave failures
+    stay queued for the next tick (up to _RETRY_MAX_ATTEMPTS).  Never raises.
+    """
+    try:
+        from services.youtube_downloader_service import (
+            mp3_block_wave_active, video_retry_due,
+            video_retry_note_attempt, video_retry_remove)
+        due = video_retry_due()
+        if not due:
+            return
+        for entry in due[:3]:  # max 3 per tick — don't hammer a recovering API
+            key = entry.get('key')
+            url = entry.get('url', '') or ''
+            video_id = entry.get('video_id', '') or ''
+            chat_id = entry.get('chat_id')
+            if not key or not chat_id or not url:
+                video_retry_remove(key or '')
+                continue
+            attempt_no = (entry.get('attempts', 0) or 0) + 1
+            logger.info(f"[VIDEO][RETRY] attempt {attempt_no} for '{video_id}'")
+            video_retry_note_attempt(key)
+            try:
+                success, result = download_youtube_video(url)
+            except Exception as e:
+                logger.warning(f"[VIDEO][RETRY] error for '{video_id}': {e}")
+                continue
+            if success:
+                video_retry_remove(key)
+                file_path, info_message = result
+                try:
+                    with open(file_path, 'rb') as video_file:
+                        bot.send_video(
+                            chat_id=chat_id, video=video_file,
+                            caption=f"🎉 Here's your video!\n✅ Ready — your queued download",
+                            supports_streaming=True)
+                    # Round-17 watch marker: the loop-closer for [VIDEO][QUEUED].
+                    # Grep for AUTO-DELIVERED to prove end-to-end auto-delivery
+                    # after a genuine block wave.
+                    logger.info(f"[VIDEO][AUTO-DELIVERED] '{video_id}' → "
+                                f"chat {chat_id} (attempt {attempt_no}, wave cleared)")
+                except Exception as e:
+                    logger.warning(f"[VIDEO][RETRY] delivery failed: {e}")
+                finally:
+                    cleanup_video(file_path)
+                continue
+            # Failed again: block wave still on → stay queued; real
+            # failure → drop and send the final notice once.
+            if mp3_block_wave_active():
+                logger.info(f"[VIDEO][RETRY] '{video_id}' still blocked — stays queued")
+                continue
+            video_retry_remove(key)
+            try:
+                bot.send_message(chat_id=chat_id, text=result)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"video_retry_tick failed: {e}")
 
 
 def _deliver_fresh_mp3(bot, chat_id, artist_q, song_q, result):

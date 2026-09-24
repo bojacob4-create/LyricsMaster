@@ -35,7 +35,7 @@ from handlers import (
     mood_command, extend_command, about_command, throwback_command,
     newmusic_command, duel_command, daily_command, emoji_command,
     mystats_command, badges_command,
-    mp3_retry_tick,
+    mp3_retry_tick, video_retry_tick,
     # Round 15: /mp3 and /download are real slash commands now
     # (previously callback/NL-only, so "/mp3" looped "Did you mean /mp3?").
     mp3_command, download_command,
@@ -290,6 +290,18 @@ class TelegramBotWorker:
                 coalesce=True,
                 misfire_grace_time=300
             )
+            # Video retry queue (round 17): every 5 min, retry queued
+            # /download block-wave failures.
+            self.scheduler.add_job(
+                self._video_retry_wrapper,
+                'interval',
+                minutes=5,
+                id='video_retry',
+                replace_existing=True,
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=300
+            )
             _write_heartbeat()
             self.scheduler.start()
             logger.info("Daily song scheduler started (09:00 UTC)")
@@ -312,6 +324,13 @@ class TelegramBotWorker:
                 mp3_retry_tick(self.updater.bot)
         except Exception as e:
             logger.error(f"Error in MP3 retry tick: {e}")
+
+    def _video_retry_wrapper(self):
+        try:
+            if self.updater and self.updater.bot:
+                video_retry_tick(self.updater.bot)
+        except Exception as e:
+            logger.error(f"Error in video retry tick: {e}")
 
     def initialize(self):
         """Initialize the bot with handlers."""
