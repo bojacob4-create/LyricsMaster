@@ -59,6 +59,8 @@ def _pick_downloaded_file(video_id: str) -> Optional[str]:
     return max(matches, key=os.path.getsize)
 
 def download_youtube_video(url: str) -> Tuple[bool, str]:
+    global _LAST_DOWNLOAD_WAVE
+    _LAST_DOWNLOAD_WAVE = False
     try:
         logger.info(f"Starting download process for URL: {url}")
 
@@ -160,6 +162,7 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
                 # age-restricted, unavailable...) leave the breaker alone.
                 if _is_block_error(e):
                     _yt_trip_breaker(f"download: {type(e).__name__}")
+                    _LAST_DOWNLOAD_WAVE = True
 
                 if "private video" in error_msg or "private" in error_msg:
                     reason = "This video is private."
@@ -268,6 +271,20 @@ def _is_soft_wave_error(exc: BaseException) -> bool:
 
 def _yt_breaker_open() -> bool:
     return _time.time() < _YT_BLOCKED_UNTIL
+
+
+# Whether the most recent download_youtube_video() call failed because of a
+# YouTube block wave (as opposed to a genuine failure like a private video
+# or a bad URL). Lets callers queue ONLY wave-caused failures for auto-retry:
+# gating on "breaker is open" alone also queues garbage that failed for
+# unrelated reasons mid-wave.
+_LAST_DOWNLOAD_WAVE = False
+
+
+def download_hit_block_wave() -> bool:
+    """True if the latest download_youtube_video() call failed on a YouTube
+    block wave. Never raises."""
+    return _LAST_DOWNLOAD_WAVE
 
 
 def _yt_trip_breaker(reason: str) -> None:

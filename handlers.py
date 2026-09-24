@@ -2838,10 +2838,14 @@ def download_command(update: Update, context: CallbackContext):
             # its own. Genuine failures (unavailable, too large, bad URL)
             # still get the honest notice immediately.
             from services.youtube_downloader_service import (
-                mp3_block_wave_active, video_retry_enqueue)
+                mp3_block_wave_active, video_retry_enqueue,
+                download_hit_block_wave)
             chat_id = update.effective_chat.id
-            if mp3_block_wave_active() and video_retry_enqueue(
-                    chat_id, user_id, url):
+            # Queue ONLY when this download failed because of the wave.
+            # Gating on the breaker alone would also queue genuine failures
+            # (bad URL, private video, ...) that merely happened mid-wave.
+            if (download_hit_block_wave() and mp3_block_wave_active()
+                    and video_retry_enqueue(chat_id, user_id, url)):
                 # Greppable proof of queueing; the matching
                 # [VIDEO][AUTO-DELIVERED] line in the retry tick closes the
                 # loop when the wave clears.
