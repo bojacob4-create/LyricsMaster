@@ -212,6 +212,45 @@ def _search_best(artist: str, song: str, queries: List[str],
     return None, best_score, seen
 
 
+def _clean_song_title(song: str) -> str:
+    """Strip recording qualifiers from a song title for the alt search.
+
+    The song string reaching the video pipeline often carries the
+    recording's qualifier ('Uninvited - Live at Newport Folk' — the
+    lyrics-resolved title of the live recording the user tapped).  Feeding
+    that whole string to the alt search poisons it: the full qualifier
+    never appears in any official video's title, so no candidate can ever
+    match and the alternative is never found.
+
+    'Uninvited - Live at Newport Folk' → 'Uninvited'
+    'Hello (Live at the BRITs)'       → 'Hello'
+    'Water'                           → 'Water'  (untouched)
+
+    Only segments carrying live markers are stripped, so genuine titles
+    ('Song - Studio Version') pass through unchanged.  The primary search
+    keeps the full title — it is what finds the live video itself.
+    """
+    s = song or ''
+    # A trailing ' - <live qualifier>' segment (the most common leak).
+    parts = s.split(' - ')
+    if len(parts) > 1:
+        tail_n = _normalize(' - '.join(parts[1:]))
+        if any(re.search(p, tail_n) for p in _LIVE_MARKERS):
+            s = parts[0]
+    # Parenthetical/bracket segments that carry live markers.
+    def _strip_live_seg(m):
+        seg = m.group(0)
+        if any(re.search(p, _normalize(seg)) for p in _LIVE_MARKERS):
+            return ' '
+        return seg
+    s = re.sub(r'\([^)]*\)', _strip_live_seg, s)
+    s = re.sub(r'\[[^\]]*\]', _strip_live_seg, s)
+    # Standalone live-marker phrases anywhere else.
+    for pat in _LIVE_MARKERS:
+        s = re.sub(pat, ' ', s, flags=re.IGNORECASE)
+    return ' '.join(s.split()).strip()
+
+
 def _find_official_alt(song: str, artist: str) -> Optional[Dict]:
     """Cover case: title-only search for an official video by another artist.
 
@@ -259,6 +298,7 @@ def get_youtube_link_info(artist: str, song: str) -> Dict:
     a search-results URL, same as get_youtube_link always did).
     """
     try:
+        clean_song = _clean_song_title(song)
         queries = []
         if artist and song:
             queries.append(f"{artist} {song} official music video")
@@ -269,7 +309,8 @@ def get_youtube_link_info(artist: str, song: str) -> Dict:
             queries.append(f"{song} official music video")
         else:
             return {'url': None, 'title': '', 'kind': 'none',
-                    'is_live': False, 'is_official': False, 'alt': None}
+                    'is_live': False, 'is_official': False, 'alt': None,
+                    'clean_song': clean_song}
 
         best, best_score, _ = _search_best(artist, song, queries)
 
@@ -281,22 +322,25 @@ def get_youtube_link_info(artist: str, song: str) -> Dict:
                         f"kind={cls['kind']}")
             alt = None
             if cls['is_live'] and not cls['is_official']:
-                alt = _find_official_alt(song, artist)
+                alt = _find_official_alt(clean_song, artist)
             return {'url': url, 'title': best['title'], 'kind': cls['kind'],
                     'is_live': cls['is_live'],
-                    'is_official': cls['is_official'], 'alt': alt}
+                    'is_official': cls['is_official'], 'alt': alt,
+                    'clean_song': clean_song}
 
         fallback = (f"https://www.youtube.com/results?search_query="
                     f"{quote(f'{artist} {song}'.strip())}")
         return {'url': fallback, 'title': '', 'kind': 'none',
-                'is_live': False, 'is_official': False, 'alt': None}
+                'is_live': False, 'is_official': False, 'alt': None,
+                'clean_song': clean_song}
 
     except Exception as e:
         logger.error(f"Error getting YouTube link: {e}")
         return {'url': f"https://www.youtube.com/results?search_query="
                        f"{quote(f'{artist} {song}')}",
                 'title': '', 'kind': 'none',
-                'is_live': False, 'is_official': False, 'alt': None}
+                'is_live': False, 'is_official': False, 'alt': None,
+                'clean_song': _clean_song_title(song)}
 
 
 def get_youtube_link(artist: str, song: str) -> Optional[str]:
@@ -315,18 +359,23 @@ def format_youtube_response(artist: str, song: str, url: str,
     # instead of passing it off silently as the video.
     if is_direct and info.get('is_live') and not info.get('is_official'):
         alt = info.get('alt') or {}
+        # The resolved song title may carry the live recording's qualifier
+        # ("Uninvited - Live at Newport Folk"); show the clean song title.
+        clean = info.get('clean_song') or song
+        live_title = f"{artist} — {clean}" if clean else artist
+        live_ref = f"{artist} - {clean}" if clean else artist
         alt_block = ""
         if alt.get('url'):
             alt_block = (f"\n🎬 Also: {alt.get('artist', 'another artist')}'s "
                          f"official video:\n{alt['url']}\n")
         return (
-            f"🎬 {title}\n"
+            f"🎬 {live_title}\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"🎥 Live version — no official video found:\n"
             f"▶️ Watch now:\n{url}\n"
             f"{alt_block}\n"
-            f"🎤 /lyrics {query_ref}\n"
-            f"📊 /analyze {query_ref}"
+            f"🎤 /lyrics {live_ref}\n"
+            f"📊 /analyze {live_ref}"
         )
 
     if is_direct and info.get('is_live'):
