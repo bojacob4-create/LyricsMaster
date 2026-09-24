@@ -44,7 +44,10 @@ def lyrics_buttons(query):
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("📊 Analyze", callback_data=_cb("analyze", query)),
-            InlineKeyboardButton("🌍 Translate", callback_data=_cb("translate", query)),
+            InlineKeyboardButton("🌍 Arabic", callback_data=_cb("translate", query)),
+        ],
+        [
+            InlineKeyboardButton("🌐 Translate to…", callback_data=_cb("translate_to", query)),
         ],
         [
             InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", query)),
@@ -63,11 +66,14 @@ def song_dashboard_buttons(query):
             InlineKeyboardButton("📊 Analyze", callback_data=_cb("analyze", query)),
         ],
         [
-            InlineKeyboardButton("🌍 Translate", callback_data=_cb("translate", query)),
-            InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", query)),
+            InlineKeyboardButton("🌍 Arabic", callback_data=_cb("translate", query)),
+            InlineKeyboardButton("🌐 Translate to…", callback_data=_cb("translate_to", query)),
         ],
         [
+            InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", query)),
             InlineKeyboardButton("🎧 Similar", callback_data=_cb("recommend", query)),
+        ],
+        [
             InlineKeyboardButton("🎧 MP3", callback_data=_cb("mp3", query)),
         ],
     ])

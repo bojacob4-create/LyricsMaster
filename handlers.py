@@ -360,6 +360,20 @@ _pending_confirmation: dict = {}
 _pending_disambig: dict = {}
 _DISAMBIG_TTL = 300
 
+# Pending "Translate to…" answers.  Two flows share it:
+#   (a) user tapped 🌐 Translate to… on a song card → query set, lang None
+#       → the next message is the LANGUAGE name.
+#   (b) user typed "Translate to Spanish" with no song named → lang set,
+#       query None → the next message is the SONG ("Artist - Song").
+# An explicit new request (translate/lyrics/random/…) clears the pending
+# answer and routes normally instead.  TTL: 5 minutes.
+_pending_translate_lang: dict = {}
+_TRANSLATE_TTL = 300
+
+# Last song dashboard/lyrics shown per user — lets "Translate to Spanish"
+# (no song named) apply to the song the user is currently viewing.
+_last_song: dict = {}
+
 
 def _names_match(a: str, b: str) -> bool:
     """Fuzzy artist-name equality: containment either way, case-insensitive."""
@@ -639,6 +653,67 @@ def natural_language_handler(update: Update, context: CallbackContext):
             else:
                 _handle_emoji_guess(update, user_id, text)
                 return
+
+    # ── Pending "Translate to…" answer ───────────────────────────────────────
+    # 🌐 Translate to… asked for a language; "Translate to Spanish" (no song)
+    # asked for a song.  Resolve the missing piece from this message.
+    # Runs before disambiguation + the regex router.  An explicit new
+    # request (lyrics/random/…) clears the pending answer and routes
+    # normally instead.
+    _tp = _pending_translate_lang.get(user_id)
+    if _tp:
+        if time.time() - _tp.get('ts', 0) > _TRANSLATE_TTL:
+            _pending_translate_lang.pop(user_id, None)
+            _tp = None
+        elif _tp.get('query') and not _tp.get('lang_code'):
+            # Flow (a): the button asked for a LANGUAGE name.
+            # Check for a language BEFORE the intent probe — language names
+            # themselves ('spanish') trigger the translate intent.
+            _t_lang_code, _t_lang_word = _extract_language_name(text)
+            if _t_lang_code:
+                _pending_translate_lang.pop(user_id, None)
+                logger.info(
+                    f"Translate-to follow-up for user {user_id}: "
+                    f"'{text}' → {_t_lang_code} for '{_tp['query']}'"
+                )
+                context.args = f"{_tp['query']} to {_t_lang_word}".split()
+                translate_lyrics_command(update, context)
+                return
+            _t_intent, _ = detect_intent(text)
+            if _t_intent:
+                # A new structured request — drop the pending answer and
+                # route it normally.
+                _pending_translate_lang.pop(user_id, None)
+                _tp = None
+            else:
+                _pending_translate_lang.pop(user_id, None)
+                supported = get_supported_languages_text()
+                update.message.reply_text(
+                    f"😕 I don't support \"{text}\" as a language.\n\n"
+                    f"Supported languages: {supported}\n\n"
+                    "Tap 🌐 Translate to… on a song card to try again! 🔄"
+                )
+                return
+        elif _tp.get('lang_code') and not _tp.get('query'):
+            # Flow (b): "Translate to Spanish" asked for a SONG.
+            # A 'song'-looking reply ("Adele - Hello") IS the answer —
+            # only a different explicit request reroutes.
+            _t_intent, _ = detect_intent(text)
+            if _t_intent and _t_intent != 'song':
+                _pending_translate_lang.pop(user_id, None)
+                _tp = None
+            else:
+                _pending_translate_lang.pop(user_id, None)
+                logger.info(
+                    f"Translate-song follow-up for user {user_id}: "
+                    f"'{text}' → {_tp['lang_code']}"
+                )
+                context.args = f"{text} to {_tp['lang_name']}".split()
+                translate_lyrics_command(update, context)
+                return
+        else:
+            _pending_translate_lang.pop(user_id, None)
+            _tp = None
 
     # ── Pending disambiguation follow-up ───────────────────────────────────
     # The bot just asked "Which one did you mean?" with tappable options.
@@ -1339,6 +1414,7 @@ def callback_query_handler(update: Update, context: CallbackContext):
         'mp3': mp3_command,
         'trending': trending_command,
         'translate': translate_lyrics_command,
+        'translate_to': translate_to_prompt,
         'analyze': analyze_command,
         'stats': stats_command,
         'song': song_command,
@@ -1474,6 +1550,9 @@ def lyrics_command(update: Update, context: CallbackContext):
                 update.message.reply_text(continuation_header + chunk)
 
         logger.info(f"Successfully sent lyrics to user {user_id}")
+        if display_title:
+            _last_song[user_id] = display_title
+
 
     except Exception as e:
         logger.error(f"Error processing lyrics command for user {user_id}: {str(e)}")
@@ -1747,13 +1826,75 @@ def more_recs_command(update: Update, context: CallbackContext):
 
 
 def _parse_translate_language(query: str):
-    match = re.search(r'\s+(?:to|into|in)\s+(\w+)\s*$', query, re.IGNORECASE)
+    """Split '<song> to <language>' — also handles a bare 'to <language>'.
+
+    The trailing word is only treated as a language when it is actually
+    supported: that keeps song titles like "Ariana Grande - Into You" (or a
+    bare "Into You") from being misread as a language suffix.  A trailing
+    unknown word after a real song ("X to Klingon") keeps the old
+    unsupported-language error path.
+    """
+    match = re.search(r'(?:^|\s+)(?:to|into|in)\s+(\w+)\s*$', query, re.IGNORECASE)
     if match:
         lang_name = match.group(1).strip()
         lang_code = get_language_code(lang_name)
         song_query = query[:match.start()].strip()
-        return song_query, lang_code, lang_name
+        if lang_code:
+            return song_query, lang_code, lang_name
+        if song_query and not song_query.rstrip().endswith('-'):
+            # "Adele - Hello to Klingon" → unsupported-language error path.
+            return song_query, None, lang_name
+        # Bare "Into You", or "Artist - Into You" — a song title, not a suffix.
+        return query, None, None
     return query, None, None
+
+
+def _extract_language_name(text: str):
+    """Find a supported language name inside free text.
+
+    Returns (lang_code, matched_word) or (None, None).  Lets answers like
+    "Spanish" — or a full sentence such as "spanish please" — resolve to
+    a language when the bot asked "which language?".
+    """
+    code = get_language_code(text)
+    if code:
+        return code, text.strip()
+    for word in re.findall(r'[A-Za-zÀ-ÿ]+', text or ''):
+        code = get_language_code(word)
+        if code:
+            return code, word
+    return None, None
+
+
+def translate_to_prompt(update: Update, context: CallbackContext):
+    """Callback for the '🌐 Translate to…' song-card button.
+
+    Asks the user which language they want; their next message (a bare
+    language name) is resolved by natural_language_handler against the
+    stored song query.  The 🌍 Arabic button path is untouched.
+    """
+    user_id = update.effective_user.id
+    try:
+        query = " ".join(context.args)
+        logger.info(f"User {user_id} tapped Translate-to for: '{query}'")
+        if not query:
+            update.message.reply_text(
+                "😕 I lost track of which song you meant.\n"
+                "Tap 🌐 Translate to… on a song card and I'll ask for the language! 🎵"
+            )
+            return
+        _pending_translate_lang[user_id] = {
+            'query': query, 'lang_code': None, 'lang_name': None,
+            'ts': time.time(),
+        }
+        update.message.reply_text(
+            "🌐 Which language should I translate the lyrics to?\n\n"
+            "Just type it — e.g. *Spanish*, *French*, *Turkish*…",
+            parse_mode='Markdown',
+        )
+    except Exception as e:
+        logger.error(f"Error in translate_to prompt for user {user_id}: {e}")
+        update.message.reply_text("😓 Something went wrong. Please try again!")
 
 
 def translate_lyrics_command(update: Update, context: CallbackContext):
@@ -1788,6 +1929,27 @@ def translate_lyrics_command(update: Update, context: CallbackContext):
                 "• /translate Coldplay - Yellow to spanish"
             )
             return
+
+        if not song_query and lang_code:
+            # "Translate to Spanish" with no song named — apply it to the
+            # song the user is currently viewing; otherwise ask which song.
+            song_query = _last_song.get(user_id)
+            if song_query:
+                logger.info(
+                    f"User {user_id} translate-to-{lang_code} with no song: "
+                    f"using last viewed song '{song_query}'"
+                )
+            else:
+                _pending_translate_lang[user_id] = {
+                    'query': None, 'lang_code': lang_code,
+                    'lang_name': lang_name, 'ts': time.time(),
+                }
+                update.message.reply_text(
+                    f"🌐 Which song should I translate to *{lang_name}*?\n\n"
+                    "Type `Artist - Song` — e.g. `Adele - Hello`.",
+                    parse_mode='Markdown',
+                )
+                return
 
         if not lang_code:
             lang_code = 'ar'
@@ -2968,6 +3130,7 @@ def song_command(update: Update, context: CallbackContext):
 
         btn_query = display_title if display_title else query
         processing_msg.edit_text(response, disable_web_page_preview=True, reply_markup=song_dashboard_buttons(btn_query))
+        _last_song[user_id] = btn_query
         logger.info(f"Successfully sent song dashboard to user {user_id}")
 
     except Exception as e:
