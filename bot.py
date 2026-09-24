@@ -36,6 +36,7 @@ from handlers import (
     newmusic_command, duel_command, daily_command, emoji_command,
     mystats_command, badges_command,
     mp3_retry_tick, video_retry_tick,
+    worker_channel_post, worker_timeout_tick,
     # Round 15: /mp3 and /download are real slash commands now
     # (previously callback/NL-only, so "/mp3" looped "Did you mean /mp3?").
     mp3_command, download_command,
@@ -302,6 +303,19 @@ class TelegramBotWorker:
                 coalesce=True,
                 misfire_grace_time=300
             )
+            # Home-worker timeout (round 34): every 2 min, fall back
+            # locally for jobs the streamer never answered (offline /
+            # crashed / asleep).
+            self.scheduler.add_job(
+                self._worker_timeout_wrapper,
+                'interval',
+                minutes=2,
+                id='worker_timeout',
+                replace_existing=True,
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=120
+            )
             _write_heartbeat()
             self.scheduler.start()
             logger.info("Daily song scheduler started (09:00 UTC)")
@@ -331,6 +345,13 @@ class TelegramBotWorker:
                 video_retry_tick(self.updater.bot)
         except Exception as e:
             logger.error(f"Error in video retry tick: {e}")
+
+    def _worker_timeout_wrapper(self):
+        try:
+            if self.updater and self.updater.bot:
+                worker_timeout_tick(self.updater.bot)
+        except Exception as e:
+            logger.error(f"Error in worker timeout tick: {e}")
 
     def initialize(self):
         """Initialize the bot with handlers."""
@@ -383,6 +404,10 @@ class TelegramBotWorker:
             dp.add_handler(CommandHandler("cancel",      cancel_command))
 
             dp.add_handler(CallbackQueryHandler(callback_query_handler))
+            # Home worker DONE/FAIL signals arrive as channel posts from
+            # the private worker channel (round 34).
+            dp.add_handler(MessageHandler(
+                Filters.update.channel_post, worker_channel_post))
             dp.add_handler(MessageHandler(
                 Filters.text & ~Filters.command, natural_language_handler
             ))
@@ -466,7 +491,7 @@ class TelegramBotWorker:
                     drop_pending_updates=True,
                     timeout=30,
                     read_latency=1.0,
-                    allowed_updates=['message', 'callback_query']
+                    allowed_updates=['message', 'callback_query', 'channel_post']
                 )
 
                 logger.info("Bot is running successfully")

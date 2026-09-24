@@ -2816,6 +2816,28 @@ def download_command(update: Update, context: CallbackContext):
             "it here automatically. 📥"
         )
 
+        chat_id = update.effective_chat.id
+
+        # Home worker first: the user's streamer downloads over the home
+        # IP (which YouTube doesn't block), uploads the video to the
+        # private worker channel, and this server copyMessages it into this
+        # chat. If the worker is offline or unreachable, fall through to
+        # the local path below — nothing is lost.
+        from services.home_worker_service import worker_enabled, post_job
+        if worker_enabled():
+            job_id = post_job(chat_id, user_id, url)
+            if job_id:
+                processing_message.edit_text(
+                    "🏠 Home downloader is on it…\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "Your streamer is downloading this over your home "
+                    "internet — the video will land here in a moment. 🎬\n\n"
+                    "If the streamer is offline, I'll download it myself "
+                    "instead — nothing for you to do. 📥"
+                )
+                return
+            logger.info("[WORKER] post_job failed — using local download path")
+
         success, result = download_youtube_video(url)
 
         if success:
@@ -2846,7 +2868,6 @@ def download_command(update: Update, context: CallbackContext):
             from services.youtube_downloader_service import (
                 mp3_block_wave_active, video_retry_enqueue,
                 download_hit_block_wave)
-            chat_id = update.effective_chat.id
             # Queue ONLY when this download failed because of the wave.
             # Gating on the breaker alone would also queue genuine failures
             # (bad URL, private video, ...) that merely happened mid-wave.
@@ -2871,6 +2892,132 @@ def download_command(update: Update, context: CallbackContext):
             "😓 Something went wrong with the download.\n"
             "Please try again later! 🔄"
         )
+
+
+def _deliver_video_local(bot, chat_id, user_id, url, fail_code=None):
+    """Local fallback for a home-worker job: today's download path.
+
+    Used when the worker reports FAIL or goes silent past the timeout.
+    Permanent worker failures (too_long/too_large) get the honest notice
+    immediately; anything else runs the normal local download + queue flow.
+    Never raises.
+    """
+    try:
+        if fail_code in ("too_long", "too_large"):
+            from services.home_worker_service import HONEST_FAIL_MSGS
+            bot.send_message(chat_id=chat_id, text=HONEST_FAIL_MSGS[fail_code])
+            logger.info("[WORKER][FALLBACK] permanent-fail (%s) → honest "
+                        "notice → chat %s", fail_code, chat_id)
+            return
+        success, result = download_youtube_video(url)
+        if success:
+            file_path, _info = result
+            try:
+                with open(file_path, "rb") as f:
+                    bot.send_video(
+                        chat_id=chat_id, video=f,
+                        caption="🎉 Here's your video!\n"
+                                "🏠 (home downloader was offline — "
+                                "downloaded here instead)",
+                        supports_streaming=True)
+                logger.info("[WORKER][FALLBACK] local download delivered "
+                            "→ chat %s", chat_id)
+            except Exception as e:
+                logger.warning("[WORKER][FALLBACK] send failed: %s", e)
+            finally:
+                cleanup_video(file_path)
+        else:
+            from services.youtube_downloader_service import (
+                mp3_block_wave_active, video_retry_enqueue,
+                download_hit_block_wave)
+            if (download_hit_block_wave() and mp3_block_wave_active()
+                    and video_retry_enqueue(chat_id, user_id, url)):
+                logger.info("[WORKER][FALLBACK] local also wave-blocked → "
+                            "queued '%s'", url)
+                bot.send_message(
+                    chat_id=chat_id,
+                    text="⏳ YouTube is blocking downloads from this server right now.\n\n"
+                         "I've queued your download — I'll retry automatically and send "
+                         "the video here as soon as the block clears. No need to tap again. 📥")
+            else:
+                bot.send_message(chat_id=chat_id, text=result)
+    except Exception as e:
+        logger.warning("[WORKER][FALLBACK] failed: %s", e)
+
+
+def worker_channel_post(update: Update, context: CallbackContext):
+    """DONE/FAIL signals the home worker posts in the worker channel.
+
+    On DONE the worker has already uploaded the video to the channel —
+    deliver it to the user with copyMessage (MAIN token). On copyMessage
+    failure, fall back to the local download path. Never raises.
+    """
+    try:
+        post = getattr(update, "channel_post", None)
+        if not post or not post.text:
+            return
+        try:
+            want = int(os.environ.get("WORKER_CHANNEL_ID", "0") or 0)
+        except (ValueError, TypeError):
+            return
+        if not want or post.chat.id != want:
+            return  # not our worker channel — ignore
+        from services.home_worker_service import (
+            parse_channel_signal, build_copy_params, note_done, note_failed)
+        sig = parse_channel_signal(post.text)
+        if not sig:
+            return  # JOB echo / human chatter / video post — ignore
+        if sig[0] == "done":
+            _, job_id, message_id = sig
+            params = build_copy_params(job_id, message_id)
+            if not params:
+                return  # unknown job or already handled — ignore
+            try:
+                # PTB 13.7: Bot.copy_message(chat_id, from_chat_id,
+                # message_id, caption=None)
+                context.bot.copy_message(
+                    chat_id=params["chat_id"],
+                    from_chat_id=params["from_chat_id"],
+                    message_id=params["message_id"],
+                    caption=params["caption"])
+            except Exception as e:
+                logger.warning("[WORKER][COPYFAIL] job %s: copyMessage "
+                               "failed (%s) — local fallback", job_id, e)
+                entry = note_failed(job_id)
+                if entry:
+                    _deliver_video_local(context.bot, entry["chat_id"],
+                                         entry["user_id"], entry["url"])
+                return
+            note_done(job_id)  # logs [WORKER][DELIVERED]
+        elif sig[0] == "fail":
+            _, job_id, code = sig
+            entry = note_failed(job_id)
+            logger.info("[WORKER][FAILED] job %s code=%s — local fallback",
+                        job_id, code)
+            if entry:
+                _deliver_video_local(context.bot, entry["chat_id"],
+                                     entry["user_id"], entry["url"],
+                                     fail_code=code)
+    except Exception as e:
+        logger.warning("worker_channel_post failed: %s", e)
+
+
+def worker_timeout_tick(bot):
+    """Every 2 min: jobs with no DONE/FAIL after 4 min → local fallback."""
+    try:
+        from services.home_worker_service import (
+            worker_enabled, pending_expired, mark_expired)
+        if not worker_enabled():
+            return
+        for entry in pending_expired():
+            job_id = entry.get("job_id", "")
+            mark_expired(job_id)
+            logger.info("[WORKER][TIMEOUT] job %s: no signal in 4 min — "
+                        "local fallback", job_id)
+            _deliver_video_local(bot, entry.get("chat_id"),
+                                 entry.get("user_id"), entry.get("url", ""))
+    except Exception as e:
+        logger.warning("worker_timeout_tick failed: %s", e)
 
 
 def wiki_command(update: Update, context: CallbackContext) -> None:
