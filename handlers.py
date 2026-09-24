@@ -42,6 +42,8 @@ from utils import (
     get_detailed_song_analysis,
     format_detailed_analysis,
     detect_themes,
+    vocabulary_label,
+    is_section_marker_line,
     escape_markdown as md,
 )
 from services.youtube_service import get_youtube_link, format_youtube_response
@@ -3457,7 +3459,8 @@ def song_command(update: Update, context: CallbackContext):
             'energetic': '⚡', 'relaxed': '😌'
         }.get(mood, '🎵')
 
-        lyrics_lines = [l.strip() for l in lyrics.strip().split('\n') if l.strip()]
+        lyrics_lines = [l.strip() for l in lyrics.strip().split('\n')
+                        if l.strip() and not is_section_marker_line(l)]
         preview_lines = lyrics_lines[:4]
         lyrics_preview = '\n'.join(f"  {l}" for l in preview_lines)
         if len(lyrics_lines) > 4:
@@ -3495,12 +3498,10 @@ def song_command(update: Update, context: CallbackContext):
         recs_text = '\n'.join(recs_lines) if recs_lines else "  No recommendations available"
 
         vocab_pct = stats.get('vocabulary_richness', 0)
-        if vocab_pct >= 70:
-            vocab_label = "Rich"
-        elif vocab_pct >= 50:
-            vocab_label = "Moderate"
-        else:
-            vocab_label = "Repetitive"
+        # Round 14: one shared label scheme (utils.vocabulary_label) — the
+        # card, /stats and /analyze must not describe the same number
+        # with different words.
+        vocab_label = vocabulary_label(vocab_pct)
 
         themes = detect_themes(lyrics)
         themes_text = ', '.join(t.title() for t in themes[:3]) if themes else 'General'
@@ -3638,7 +3639,8 @@ def random_command(update: Update, context: CallbackContext):
 
         lyrics_preview = ""
         if lyrics:
-            lyrics_lines = [l.strip() for l in lyrics.strip().split('\n') if l.strip()]
+            lyrics_lines = [l.strip() for l in lyrics.strip().split('\n')
+                            if l.strip() and not is_section_marker_line(l)]
             preview = lyrics_lines[:4]
             lyrics_preview = '\n'.join(f"  {l}" for l in preview)
             if len(lyrics_lines) > 4:

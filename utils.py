@@ -89,6 +89,34 @@ def escape_markdown(text: str) -> str:
     return re.sub(r'([_*`\[\]])', r'\\\1', str(text))
 
 
+# ── Lyric section markers (round 14) ─────────────────────────────────────────
+# Providers ship structural tags like [Verse 1], [Chorus], [Bridge] inside the
+# lyric text. They are metadata, not lyric lines: word counting already strips
+# them, so every other per-line/per-word computation must ignore them too —
+# otherwise "Lines" disagrees with "Words", previews show "[Verse 1]" as a
+# lyric, and rhyme analysis counts "[Chorus]" as a line rhyming with "[Chorus]".
+_SECTION_MARKER_RE = re.compile(r'^\s*\[[^\]]*\]\s*$')
+
+
+def is_section_marker_line(line: str) -> bool:
+    """True if the line is only a bracketed section tag like [Verse 2]."""
+    return bool(line and _SECTION_MARKER_RE.match(line))
+
+
+def vocabulary_label(richness: float) -> str:
+    """Single label scheme for vocabulary richness.
+
+    Shared by the song card, /stats and /analyze so the same number never
+    gets different words in different views (round-14 Quick Stats audit).
+    Bands: >=70 Rich, >=50 Moderate, <50 Repetitive.
+    """
+    if richness >= 70:
+        return "Rich"
+    if richness >= 50:
+        return "Moderate"
+    return "Repetitive"
+
+
 def get_song_statistics(lyrics: str) -> Dict:
     """
     Analyze song lyrics and return interesting statistics.
@@ -131,8 +159,12 @@ def get_song_statistics(lyrics: str) -> Dict:
                 'dont', 'cant', 'wont', 'aint', 'youre', 'youve', 'youll',
                 'thats', 'wasnt', 'hadnt', 'hasnt', 'havent', 'didnt', 'isnt'}
 
-    # First, get the line count from the original lyrics
-    lines = [line.strip() for line in lyrics.split('\n') if line.strip()]
+    # First, get the line count from the original lyrics.
+    # Round 14: section markers ([Verse 1], [Chorus], …) are metadata, not
+    # lyric lines — words already exclude them, so lines must too, or the
+    # two counts disagree with each other.
+    lines = [line.strip() for line in lyrics.split('\n')
+             if line.strip() and not is_section_marker_line(line)]
     line_count = len(lines)
 
     # Then process the lyrics for word analysis
@@ -149,7 +181,9 @@ def get_song_statistics(lyrics: str) -> Dict:
     # Get all words, keeping contractions intact.
     # Unicode-aware: accented letters (é, ñ, …) count as part of the word
     # instead of silently dropping the whole word from the count.
-    words = re.findall(r"[^\W\d_]+(?:'[^\W\d_]+)*", lyrics_clean)
+    # Round 14: digits count too — a token like "1999" is a word to anyone
+    # reading the lyrics, and dropping it undercounts "Words".
+    words = re.findall(r"[^\W_]+(?:'[^\W_]+)*", lyrics_clean)
     word_count = len(words)
 
     # Filter out stop words and get meaningful words
@@ -182,14 +216,9 @@ def get_song_statistics(lyrics: str) -> Dict:
 def format_statistics(stats: Dict) -> str:
     """Format song statistics into a readable message."""
     richness = stats['vocabulary_richness']
-    if richness >= 80:
-        richness_label = "Very diverse"
-    elif richness >= 60:
-        richness_label = "Diverse"
-    elif richness >= 40:
-        richness_label = "Moderate"
-    else:
-        richness_label = "Repetitive"
+    # Round 14: one shared label scheme — the card, /stats and /analyze must
+    # not describe the same number with different words.
+    richness_label = vocabulary_label(richness)
 
     top_words_formatted = "\n".join(
         f"  {word} ({count}x)"
@@ -333,8 +362,11 @@ def analyze_rhyme_pattern(lyrics: str) -> Dict:
             'rhyme_groups': {},
         }
 
-    # Split into lines and clean up
-    lines = [line.strip().lower() for line in lyrics.split('\n') if line.strip()]
+    # Split into lines and clean up.
+    # Round 14: section markers are metadata, not lyric lines — without this,
+    # two "[Chorus]" tags count as rhyming lines and inflate the density.
+    lines = [line.strip().lower() for line in lyrics.split('\n')
+             if line.strip() and not is_section_marker_line(line)]
 
     # Extract last word of each line
     last_words = []
@@ -437,7 +469,9 @@ def detect_themes(lyrics: str) -> List[str]:
         if overlap:
             score = 0
             for kw in overlap:
-                score += len(re.findall(r'\b' + kw + r'\b', lyrics_lower))
+                # Round 14: escape the keyword — plain words today, but an
+                # unescaped pattern is one special character away from a bug.
+                score += len(re.findall(r'\b' + re.escape(kw) + r'\b', lyrics_lower))
             theme_scores[theme] = score
 
     if not theme_scores:
@@ -466,14 +500,14 @@ def format_detailed_analysis(analysis: Dict, context_note: str = None) -> str:
     structure = analysis['structure']
 
     richness = stats['vocabulary_richness']
-    if richness >= 80:
-        vocab_note = "Highly diverse vocabulary — poetic or storytelling style"
-    elif richness >= 60:
-        vocab_note = "Good word variety — balanced between hooks and narrative"
-    elif richness >= 40:
-        vocab_note = "Moderate repetition — typical pop/chorus-heavy structure"
+    # Round 14: descriptive notes keyed to the SAME bands as vocabulary_label
+    # so /analyze never contradicts the song card's one-word label.
+    if richness >= 70:
+        vocab_note = "Rich vocabulary — poetic or storytelling style"
+    elif richness >= 50:
+        vocab_note = "Moderate word variety — balanced between hooks and narrative"
     else:
-        vocab_note = "Very repetitive — hook-driven or chant-style lyrics"
+        vocab_note = "Repetitive — hook-driven or chant-style lyrics"
 
     rhyme_density = rhyme['rhyme_density']
     if rhyme_density >= 60:
