@@ -258,6 +258,25 @@ def t_score_rejects_inspired_by():
     check("official upload still scores well", s4 > 50)
 
 
+def t_build_copy_params_audio_caption():
+    print("-- build_copy_params: audio gets the MP3 caption --")
+    _fresh_stores()
+    restore = _with_env(WORKER_CHANNEL_ID="-1001", TELEGRAM_TOKEN="main")
+    try:
+        jobs = {"ja": {"chat_id": 42, "kind": "audio", "status": "pending"},
+                "jv": {"chat_id": 42, "kind": "video", "status": "pending"}}
+        with open(svc._JOB_STORE, "w") as f:
+            json.dump(jobs, f)
+        pa = svc.build_copy_params("ja", 111)
+        pv = svc.build_copy_params("jv", 222)
+        check("audio delivery captioned as MP3",
+              pa is not None and pa.get("caption") == "🎧 Here's your MP3!")
+        check("video caption untouched",
+              pv is not None and pv.get("caption") == svc.COPY_CAPTION)
+    finally:
+        restore()
+
+
 def t_mp3_expected_duration_wrapper():
     print("-- mp3_expected_duration wrapper --")
     orig = yds._expected_duration
@@ -288,6 +307,7 @@ TESTS = [
     t_mp3_try_worker_hint_used_when_available,
     t_score_rejects_inspired_by,
     t_mp3_expected_duration_wrapper,
+    t_build_copy_params_audio_caption,
 ]
 
 if __name__ == "__main__":

@@ -314,10 +314,14 @@ def build_copy_params(job_id, message_id):
         mid = int(message_id)
         if mid <= 0:
             return None
+        # Round-37b: audio deliveries get the MP3 caption — never the
+        # video one.
+        caption = ("🎧 Here's your MP3!"
+                   if entry.get("kind") == "audio" else COPY_CAPTION)
         return {"chat_id": chat_id,
                 "from_chat_id": _worker_channel_id(),
                 "message_id": mid,
-                "caption": COPY_CAPTION}
+                "caption": caption}
     except Exception:
         return None
 
