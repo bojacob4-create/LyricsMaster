@@ -125,7 +125,7 @@ def _download_video_with_client(url: str, video_id: str,
         # installed here — node is. Without a JS runtime the n/sig
         # challenge solving fails and formats go missing ("requested
         # format is not available" for a video that HAS formats).
-        'js_runtimes': ['node'],
+        'js_runtimes': {'node': {}},
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         },
@@ -1039,7 +1039,7 @@ def _download_url_to_mp3(download_url: str, file_prefix: str, label: str) -> str
             # Round 32: enable the system node runtime for YouTube's
             # n/sig challenge solving (deno, the default, is not
             # installed). Missing runtimes = missing formats.
-            'js_runtimes': ['node'],
+            'js_runtimes': {'node': {}},
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',

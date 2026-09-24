@@ -130,7 +130,7 @@ check("video ydl opts impersonate chrome",
       FakeYDL.instances[0].get('impersonate') == 'chrome',
       str(FakeYDL.instances[0].get('impersonate')))
 check("video ydl opts enable node JS runtime",
-      FakeYDL.instances[0].get('js_runtimes') == ['node'],
+      FakeYDL.instances[0].get('js_runtimes') == {'node': {}},
       str(FakeYDL.instances[0].get('js_runtimes')))
 
 # ── 3. Video path: android success never reaches mweb (no slowdown) ──────
@@ -177,7 +177,7 @@ try:
           opts.get('impersonate') == 'chrome',
           str(opts.get('impersonate')))
     check("mp3 ydl opts enable node JS runtime",
-          opts.get('js_runtimes') == ['node'],
+          opts.get('js_runtimes') == {'node': {}},
           str(opts.get('js_runtimes')))
     check("mp3 extractor args use helper (android, no fetch_pot)",
           opts['extractor_args'] == {'youtube': {'player_client': ['android']}},
