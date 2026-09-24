@@ -51,7 +51,7 @@ def lyrics_buttons(query):
         ],
         [
             InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", query)),
-            InlineKeyboardButton("🎧 Similar", callback_data=_cb("recommend", query)),
+            InlineKeyboardButton("🎧 Similar Songs", callback_data=_cb("recommend", query)),
         ],
         [
             InlineKeyboardButton("🎧 MP3", callback_data=_cb("mp3", query)),
@@ -62,7 +62,7 @@ def lyrics_buttons(query):
 def song_dashboard_buttons(query):
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🎵 Full Lyrics", callback_data=_cb("lyrics", query)),
+            InlineKeyboardButton("🎵 Lyrics", callback_data=_cb("lyrics", query)),
             InlineKeyboardButton("📊 Analyze", callback_data=_cb("analyze", query)),
         ],
         [
@@ -71,7 +71,7 @@ def song_dashboard_buttons(query):
         ],
         [
             InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", query)),
-            InlineKeyboardButton("🎧 Similar", callback_data=_cb("recommend", query)),
+            InlineKeyboardButton("🎧 Similar Songs", callback_data=_cb("recommend", query)),
         ],
         [
             InlineKeyboardButton("🎧 MP3", callback_data=_cb("mp3", query)),
@@ -87,7 +87,7 @@ def artist_buttons(artist_name, top_songs=None):
             rows.append([InlineKeyboardButton(f"🎵 {s}", callback_data=_cb("song", song_query))])
     rows.append([
         InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", artist_name)),
-        InlineKeyboardButton("🎧 Similar", callback_data=_cb("recommend", f"artist:{artist_name}")),
+        InlineKeyboardButton("🎧 Similar Songs", callback_data=_cb("recommend", f"artist:{artist_name}")),
     ])
     rows.append([
         InlineKeyboardButton("📚 Wiki", callback_data=_cb("wiki", artist_name)),
@@ -174,7 +174,7 @@ def ambiguous_buttons(query):
         ],
         [
             InlineKeyboardButton("🎵 Lyrics", callback_data=_cb("lyrics", query)),
-            InlineKeyboardButton("📺 YouTube", callback_data=_cb("youtube", query)),
+            InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", query)),
         ],
         [
             InlineKeyboardButton("🎧 Similar Songs", callback_data=_cb("recommend", query)),
@@ -226,7 +226,7 @@ def artist_analyze_buttons(artist_name):
             InlineKeyboardButton("🎵 Song Dashboard", callback_data=_cb("artistsongs", artist_name)),
         ],
         [
-            InlineKeyboardButton("📺 YouTube", callback_data=_cb("youtube", artist_name)),
+            InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", artist_name)),
             InlineKeyboardButton("🎧 Similar Songs", callback_data=_cb("recommend", f"artist:{artist_name}")),
         ],
     ])
@@ -235,7 +235,7 @@ def artist_analyze_buttons(artist_name):
 def daily_song_buttons(query):
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🎵 Full Lyrics", callback_data=_cb("lyrics", query)),
+            InlineKeyboardButton("🎵 Lyrics", callback_data=_cb("lyrics", query)),
             InlineKeyboardButton("📊 Analyze", callback_data=_cb("analyze", query)),
         ],
         [

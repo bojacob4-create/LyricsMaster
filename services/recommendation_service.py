@@ -3745,10 +3745,8 @@ def format_recommendations(recommendations: List[Dict], based_on: str = None) ->
         lines.append(f"{emoji} {song['artist']} — {song['name']}")
 
     body   = '\n'.join(lines)
-    footer = (
-        "\n\n━━━━━━━━━━━━━━━━━━━━━\n"
-        "🎤 /lyrics to see any song's lyrics\n"
-        "📊 /analyze for deeper insights"
-    )
+    # Round 15: no text-command hints here — the message already ships
+    # Lyrics / Analyze / Video / MP3 buttons for the source song.
+    footer = "\n\n━━━━━━━━━━━━━━━━━━━━━"
 
     return header + body + footer

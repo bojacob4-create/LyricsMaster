@@ -36,6 +36,9 @@ from handlers import (
     newmusic_command, duel_command, daily_command, emoji_command,
     mystats_command, badges_command,
     mp3_retry_tick,
+    # Round 15: /mp3 and /download are real slash commands now
+    # (previously callback/NL-only, so "/mp3" looped "Did you mean /mp3?").
+    mp3_command, download_command,
 )
 from services.daily_song_service import send_daily_song
 
@@ -146,6 +149,8 @@ class TelegramBotWorker:
                 BotCommand("top",         "🔝 Top songs by genre"),
                 BotCommand("random",      "🎲 Random song discovery"),
                 BotCommand("youtube",     "🎬 Find the music video"),
+                BotCommand("mp3",         "🎧 Get the song as an MP3"),
+                BotCommand("download",    "📥 Download a YouTube video"),
                 BotCommand("quiz",        "🎮 Lyrics guessing game"),
                 BotCommand("endquiz",     "End current quiz"),
                 BotCommand("mood",        "🎧 Mix for your mood"),
@@ -334,6 +339,8 @@ class TelegramBotWorker:
             dp.add_handler(CommandHandler("endquiz",     end_quiz_command))
             dp.add_handler(CommandHandler("translate",   translate_lyrics_command))
             dp.add_handler(CommandHandler("youtube",     youtube_command))
+            dp.add_handler(CommandHandler("mp3",         mp3_command))
+            dp.add_handler(CommandHandler("download",    download_command))
             dp.add_handler(CommandHandler("analyze",     analyze_command))
             dp.add_handler(CommandHandler("subscribe",   subscribe_daily_command))
             dp.add_handler(CommandHandler("unsubscribe", unsubscribe_daily_command))

@@ -127,30 +127,49 @@ def start_command(update: Update, context: CallbackContext):
     logger.info(f"User {update.effective_user.id} started the bot")
 
     user_first_name = update.effective_user.first_name
+    # Round 15: /start now covers every command (it used to hide half the
+    # bot — including MP3) and uses the same section + ▫️ style as /help
+    # so the two don't look like different bots.
     welcome_message = (
         f"🎵 *Welcome, {user_first_name}!* 🎸\n\n"
         "I'm Lyrics Master — your personal music companion.\n\n"
-        "*What I can do:*\n\n"
-        "🎵 */song* — Full song dashboard\n"
-        "🎤 */lyrics* — Song lyrics with mood\n"
-        "📊 */stats* — Word counts and patterns\n"
-        "🎵 */recommend* — Discover similar songs\n"
-        "🎧 */mood* — A mix for your mood\n"
-        "🎶 */extend* — Finish my playlist\n"
-        "🔍 */analyze* — Deep lyrical breakdown\n"
-        "🎤 */artist* — Quick artist profile\n"
-        "🔝 */top* — Top songs by genre\n"
-        "🎲 */random [genre]* — Random song discovery\n"
-        "🎬 */youtube* — Find the music video\n"
-        "🎮 */quiz* — Lyrics guessing game\n"
-        "⚔️ */duel* — Quiz duel with a friend\n"
-        "🎯 */daily* — Daily challenge\n"
-        "🔔 */subscribe* — Daily song picks\n\n"
+        "*🎵 All-in-One*\n"
+        "▫️ */song* — Full song dashboard\n"
+        "▫️ */random [genre]* — Random song discovery\n\n"
+        "*🎤 Lyrics & Analysis*\n"
+        "▫️ */lyrics* — Get song lyrics\n"
+        "▫️ */stats* — Word counts and patterns\n"
+        "▫️ */analyze* — Full lyrical breakdown\n"
+        "▫️ */translate* — Translate lyrics to any language\n\n"
+        "*🎧 Discovery & Audio*\n"
+        "▫️ */recommend* — Find similar songs\n"
+        "▫️ */mood* — A mix for your mood\n"
+        "▫️ */extend* — Finish my playlist (give me 3 songs)\n"
+        "▫️ */about* — Find songs by theme or meaning\n"
+        "▫️ */throwback* — 80s / 90s / 2000s / 2010s gems\n"
+        "▫️ */newmusic* — What's hot right now\n"
+        "▫️ */top* — Top songs by genre\n"
+        "▫️ */trending* — Trending songs now\n"
+        "▫️ */artist* — Quick artist profile\n"
+        "▫️ */wiki* — Artist Wikipedia info\n"
+        "▫️ */youtube* — Find the music video\n"
+        "▫️ */mp3* — Get the song as an MP3 🎧\n"
+        "▫️ */download* — Download a YouTube video\n\n"
+        "*🎮 Fun*\n"
+        "▫️ */quiz* — Lyrics guessing game\n"
+        "▫️ */duel* — Quiz duel with a friend\n"
+        "▫️ */daily* — Daily 5-question challenge\n"
+        "▫️ */emoji* — Guess the song from emojis\n"
+        "▫️ */mystats* — Your music personality\n"
+        "▫️ */badges* — Your achievements\n\n"
+        "*🔔 Daily Updates*\n"
+        "▫️ */subscribe* — Get daily song picks\n"
+        "▫️ */unsubscribe* — Stop daily updates\n\n"
         "*Try it now:*\n"
         "• /song OneRepublic - Counting Stars\n"
         "• /lyrics The Weeknd - Blinding Lights\n"
-        "• /top pop\n"
-        "• /random\n\n"
+        "• /mp3 Adele - Hello\n"
+        "• /top pop\n\n"
         "Type */help* for the full guide! 💫"
     )
 
@@ -195,6 +214,9 @@ def help_command(update: Update, context: CallbackContext):
         "▫️ */youtube* — Find the music video\n"
         "▫️ */wiki* — Artist Wikipedia info\n"
         "▫️ */trending* — Trending songs now\n\n"
+        "*🎧 Audio*\n"
+        "▫️ */mp3 [Artist - Song]* — Get the song as an MP3\n"
+        "▫️ */download [YouTube URL]* — Download a YouTube video\n\n"
         "*🎮 Fun*\n"
         "▫️ */quiz* — Lyrics guessing game (110+ songs, 3 game modes!)\n"
         "▫️ */endquiz* — End current quiz\n"
@@ -236,10 +258,14 @@ def help_command(update: Update, context: CallbackContext):
 _KNOWN_COMMANDS = [
     'start', 'help', 'song', 'lyrics', 'recommend', 'artist', 'youtube',
     'translate', 'analyze', 'stats', 'top', 'trending', 'random', 'quiz',
-    'endquiz', 'throwback', 'mood', 'decade', 'mp3', 'download',
+    'endquiz', 'throwback', 'mood', 'mp3', 'download',
     'subscribe', 'unsubscribe', 'daily', 'duel', 'emoji', 'mystats',
     'badges', 'wiki', 'about', 'newmusic', 'extend', 'cancel',
 ]
+# NOTE: 'decade' is intentionally absent — it is a callback-button action
+# (decade_buttons → throwback_command), not a slash command. Listing it
+# here made "/decade" suggest itself in a loop ("Did you mean /decade?")
+# for a command that can never run.
 
 
 def unknown_command_handler(update: Update, context: CallbackContext):
@@ -3517,9 +3543,7 @@ def song_command(update: Update, context: CallbackContext):
             f"  🧠 Vocabulary: {vocab_pct}% ({vocab_label})\n"
             f"  🎭 Themes: {themes_text}\n\n"
             f"🎵 Similar Songs:\n{recs_text}\n\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🎤 /lyrics {query} — full lyrics\n"
-            f"🔍 /analyze {query} — deep analysis"
+            "━━━━━━━━━━━━━━━━━━━━━"
         )
 
         btn_query = display_title if display_title else query
@@ -3800,7 +3824,7 @@ def _send_mood_mix(update, user_id: int, mood: str):
     _MARK = {'fresh': '🆕 ', 'tag': '🔥 ', 'pool': ''}
     for i, s in enumerate(songs, 1):
         mark = _MARK.get(s.get('source'), '')
-        lines.append(f"*{i}.* {mark}{md(s['artist'])} — {md(s['name'])}")
+        lines.append(f"{i}. {mark}{md(s['artist'])} — {md(s['name'])}")
         # Pool fallbacks keep their unique per-song reasons; live sources
         # are covered by the header + per-line markers.
         if s.get('source') == 'pool' and s.get('reason'):

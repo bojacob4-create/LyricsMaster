@@ -112,7 +112,9 @@ check("mood render: no bare Last.fm domain (link noise)",
 check("mood render: compact header line",
       "Fresh now" in _txt and _txt.count("Fresh now") == 1)
 check("mood render: 5 numbered songs",
-      all(f"*{i}.*" in _txt for i in range(1, 6)))
+      # Round 15: numbering is plain "1." (was "*1.*", bold "1." artifact).
+      all(f"\n{i}. " in _txt or _txt.startswith(f"{i}. ") for i in range(1, 6))
+      and "*1.*" not in _txt)
 check("mood render: per-line freshness markers",
       _txt.count("🆕") >= 3)  # header + fresh song lines
 
