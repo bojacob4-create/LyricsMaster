@@ -191,6 +191,7 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
         # longer queues the request.
         last_err: Optional[BaseException] = None
         block_hits = 0
+        client_errors: list = []  # (client, lowered message) in attempt order
         for client in _YT_CLIENT_ATTEMPTS:
             try:
                 return _download_video_with_client(
@@ -199,6 +200,7 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
                 last_err = e
                 error_msg = str(e).lower()
                 logger.error(f"yt-dlp DownloadError (client={client}): {e}")
+                client_errors.append((client, error_msg))
                 if _is_permanent_video_error(error_msg):
                     break
                 if _is_block_error(e):
@@ -217,7 +219,24 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
             _yt_trip_breaker("download: all player clients blocked")
             _LAST_DOWNLOAD_WAVE = True
 
-        error_msg = str(last_err).lower() if last_err else ""
+        # Pick the most informative client error for the user-facing reason:
+        # a permanent error describes the video itself, a block error says
+        # what is really happening, and a format refusal is the least
+        # informative (one client's refusal, not the video's absence).
+        # Blindly using the last client's error once blamed "not available"
+        # on a format refusal while another client had been mid-download.
+        error_msg = ""
+        if client_errors:
+            perm_msgs = [m for _, m in client_errors
+                         if _is_permanent_video_error(m)]
+            block_msgs = [m for _, m in client_errors
+                          if _is_block_error_msg(m)]
+            if perm_msgs:
+                error_msg = perm_msgs[0]
+            elif block_msgs:
+                error_msg = block_msgs[0]
+            else:
+                error_msg = client_errors[-1][1]
         if "private video" in error_msg or "private" in error_msg:
             reason = "This video is private."
         elif "not a bot" in error_msg:
@@ -228,14 +247,17 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
             reason = "This video is age-restricted."
         elif "copyright" in error_msg:
             reason = "Blocked due to copyright."
+        elif "requested format" in error_msg:
+            # Checked before "not available": "Requested format is not
+            # available" is a client capability refusal, not a missing
+            # video.
+            reason = "No compatible format available. This is a YouTube restriction."
         elif "not available" in error_msg or "unavailable" in error_msg:
             reason = "Video is not available (may be region-locked or deleted)."
         elif "sign in" in error_msg or "login" in error_msg:
             reason = "Requires authentication to access."
         elif "429" in error_msg or "too many" in error_msg:
             reason = "YouTube rate limit. Wait a few minutes."
-        elif "requested format" in error_msg:
-            reason = "No compatible format available. This is a YouTube restriction."
         else:
             reason = "YouTube blocked the download."
 
@@ -296,6 +318,13 @@ _BLOCK_ERROR_HINTS = (
     'not a bot', 'sign in to confirm', 'incompleteread',
     'unable to download api page', 'http error 403', 'http error 429',
     'too many requests',
+    # YouTube's other mask for the same IP block: instead of serving a
+    # bot-check page it kills the TCP connection mid-download ("Remote end
+    # closed connection without response", "Connection reset by peer").
+    # Seen in production on Tyla - Water (2026-09-24): the android client
+    # got the format list and started downloading, then the remote kept
+    # closing the connection — not a missing video.
+    'remote end closed', 'connection reset', 'connection aborted',
 )
 # Soft-wave hints: stalls and per-video format refusals that arrive
 # back-to-back across DIFFERENT candidates. One of these is bad luck;
@@ -315,7 +344,12 @@ _CANDIDATE_TIMEOUT_SECS = 45  # hard cap per download attempt
 
 
 def _is_block_error(exc: BaseException) -> bool:
-    msg = str(exc).lower()
+    return _is_block_error_msg(str(exc).lower())
+
+
+def _is_block_error_msg(msg: str) -> bool:
+    """Message-based variant: picks the most informative client error out of
+    a rotation without needing the original exception objects."""
     return any(h in msg for h in _BLOCK_ERROR_HINTS)
 
 
