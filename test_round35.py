@@ -224,6 +224,8 @@ def t_mp3_try_worker():
     _fresh_store()
     restore = _with_env(WORKER_CHANNEL_ID="-1001", TELEGRAM_TOKEN="main")
     orig_send, orig_resolve = svc._api_send_message, yds.resolve_mp3_youtube_url
+    orig_dur = yds.mp3_expected_duration
+    yds.mp3_expected_duration = lambda a, s: 200  # no network in tests
     posted = []
     svc._api_send_message = lambda token, chat_id, text: (
         posted.append(text) or True)
@@ -236,10 +238,11 @@ def t_mp3_try_worker():
         r2()
         check("no JOB when disabled", posted == [])
 
-        # no URL resolved
+        # no URL resolved (block wave) → round-37: still posts, the
+        # worker resolves the URL itself over the home connection.
         yds.resolve_mp3_youtube_url = lambda a, s: None
-        check("no URL → False",
-              handlers._mp3_try_worker(bot, 42, 7, "A", "S", "A - S") is False)
+        check("no URL → still posts (worker resolves)",
+              handlers._mp3_try_worker(bot, 42, 7, "A", "S", "A - S") is True)
 
         # happy path
         yds.resolve_mp3_youtube_url = lambda a, s: "https://youtu.be/abc123"
@@ -255,7 +258,8 @@ def t_mp3_try_worker():
               not any("🏠 Home downloader is on it" in t
                       for _, t in bot.sent))
     finally:
-        svc._api_send_message, yds.resolve_mp3_youtube_url = orig_send, orig_resolve
+        (svc._api_send_message, yds.resolve_mp3_youtube_url,
+         yds.mp3_expected_duration) = orig_send, orig_resolve, orig_dur
         restore()
 
 

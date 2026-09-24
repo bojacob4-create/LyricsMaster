@@ -2839,8 +2839,9 @@ def download_command(update: Update, context: CallbackContext):
         # private worker channel, and this server copyMessages it into this
         # chat. If the worker is offline or unreachable, fall through to
         # the local path below — nothing is lost.
-        from services.home_worker_service import worker_enabled, post_job
-        if worker_enabled():
+        from services.home_worker_service import (
+            worker_enabled, worker_alive, post_job)
+        if worker_enabled() and worker_alive():
             job_id = post_job(chat_id, user_id, url)
             if job_id:
                 # Silent handoff: the "📥 Downloading…" message above stays
@@ -2974,7 +2975,15 @@ def worker_channel_post(update: Update, context: CallbackContext):
             return  # not our worker channel — ignore
         from services.home_worker_service import (
             parse_channel_signal, build_copy_params, note_done, note_failed,
-            get_job_entry)
+            get_job_entry, note_heartbeat)
+        text = (post.text or "").strip()
+        if text.startswith("HB "):
+            # Round-37 worker heartbeat — record liveness, stay silent.
+            try:
+                note_heartbeat(float(text[3:].strip().split()[0]))
+            except Exception:
+                note_heartbeat()
+            return
         sig = parse_channel_signal(post.text)
         if not sig:
             return  # JOB echo / human chatter / video post — ignore
@@ -3248,7 +3257,13 @@ def _mp3_background_job(bot, chat_id, user_id,
 
 
 def _mp3_try_worker(bot, chat_id, user_id, artist_q, song_q, raw):
-    """Round-35: post an audio job to the home worker.
+    """Round-35/37: post an audio job to the home worker.
+
+    Round-37: the job goes out with artist/song plus a YouTube URL hint
+    when the server can resolve one. When it can't (block wave), the
+    worker resolves the URL itself over the home connection — MP3s keep
+    flowing from YouTube originals instead of falling back to Audius
+    imitations. expected_dur helps the worker pick the right upload.
 
     Returns True when the job was posted — delivery then happens via the
     worker channel's DONE/FAIL/timeout handlers. Returns False when the
@@ -3256,19 +3271,28 @@ def _mp3_try_worker(bot, chat_id, user_id, artist_q, song_q, raw):
     Never raises.
     """
     try:
-        from services.home_worker_service import worker_enabled, post_job
+        from services.home_worker_service import (
+            worker_enabled, worker_alive, post_job)
         from services import youtube_downloader_service as yds
-        if not worker_enabled():
+        if not worker_enabled() or not worker_alive():
             return False
-        url = yds.resolve_mp3_youtube_url(artist_q, song_q)
-        if not url:
-            return False
+        # Hint only — fast no-op while block-waved; the worker searches
+        # on its own when this comes back empty.
+        try:
+            url = yds.resolve_mp3_youtube_url(artist_q, song_q) or ""
+        except Exception:
+            url = ""
+        try:
+            expected = yds.mp3_expected_duration(artist_q, song_q) or 0
+        except Exception:
+            expected = 0
         job_id = post_job(chat_id, user_id, url, title=raw, kind="audio",
-                          artist=artist_q, song=song_q)
+                          artist=artist_q, song=song_q,
+                          expected_dur=expected)
         if not job_id:
             return False
-        logger.info("[MP3][WORKER] audio job %s → chat %s: %s",
-                    job_id, chat_id, url)
+        logger.info("[MP3][WORKER] audio job %s → chat %s (hint=%s)",
+                    job_id, chat_id, url or "none — worker resolves")
         # Silent handoff — no home-downloader chatter for the user.
         return True
     except Exception as e:

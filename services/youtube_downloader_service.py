@@ -849,6 +849,16 @@ def _expected_duration(artist: str, song: str) -> Optional[int]:
     return dur
 
 
+def mp3_expected_duration(artist: str, song: str) -> Optional[int]:
+    """Round-37 public wrapper: expected track length in seconds (lrclib),
+    or None. The home worker uses it to pick the original recording.
+    Never raises."""
+    try:
+        return _expected_duration(artist, song)
+    except Exception:
+        return None
+
+
 # ── Candidate scoring ──────────────────────────────────────────────────────
 def _score_candidate(title: str, uploader: str, duration: int,
                      artist: str, song: str,
@@ -909,6 +919,14 @@ def _score_candidate(title: str, uploader: str, duration: int,
         if (feat and feat not in s and feat not in a
                 and not (set(feat.split()) & (set(st) | set(at)))):
             score -= 40
+
+    # 3c. "Inspired by" / tribute tracks are NEVER the original recording
+    # (imitation artists, tribute bands) — reject outright. The guard
+    # mirrors section 3: a song that itself carries the marker (e.g.
+    # "Tribute" by Tenacious D) is untouched.
+    for m in ("inspired by", "tribute"):
+        if m in t and m not in s:
+            return -1e9
 
     # 4. Duration sanity vs the original recording
     dur = int(duration or 0)

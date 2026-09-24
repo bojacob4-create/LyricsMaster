@@ -32,3 +32,7 @@ mp3_cache/
 *.part
 
 live_charts_cache.json
+
+# Home-worker runtime state (live on the server, never commit)
+worker_jobs.json
+worker_heartbeat.json

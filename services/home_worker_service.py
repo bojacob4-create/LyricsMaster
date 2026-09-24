@@ -132,6 +132,61 @@ def _job_update(job_id, entry):
         pass
 
 
+# ------------------------------------------------------------- heartbeat ---
+# Round-37: the worker posts "HB <unix_ts>" every 60s. When heartbeats go
+# stale the streamer is offline/rebooting — the bot then skips the worker
+# instantly instead of burning the 4-minute timeout on every request.
+_HB_STORE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "worker_heartbeat.json",
+)
+_HEARTBEAT_MAX_AGE_SECS = 180
+
+
+def note_heartbeat(ts=None):
+    """Record a worker heartbeat. Never raises."""
+    try:
+        from utils import locked_json_update
+
+        def _update(data):
+            data["ts"] = ts or time.time()
+            return data
+
+        locked_json_update(_HB_STORE, _update)
+    except Exception:
+        pass
+
+
+def last_heartbeat():
+    """Unix timestamp of the last recorded heartbeat, or 0. Never raises."""
+    try:
+        with open(_HB_STORE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        ts = float(data.get("ts", 0)) if isinstance(data, dict) else 0
+        return ts if ts > 0 else 0
+    except Exception:
+        return 0
+
+
+def worker_alive():
+    """True when the streamer recently proved it's alive.
+
+    A streamer that never sent a heartbeat (fresh install, older worker)
+    counts as alive — the 4-minute timeout remains the safety net there.
+    Only a heartbeat gone stale marks it dead, so the bot skips the
+    worker instantly instead of stalling the user. Never raises.
+    """
+    try:
+        if not worker_enabled():
+            return False
+        ts = last_heartbeat()
+        if not ts:
+            return True
+        return (time.time() - ts) <= _HEARTBEAT_MAX_AGE_SECS
+    except Exception:
+        return True
+
+
 # ------------------------------------------------------------------- bus ---
 def _api_send_message(token, chat_id, text):
     """POST sendMessage. Returns True on ok. Never raises."""
@@ -149,13 +204,16 @@ def _api_send_message(token, chat_id, text):
 
 
 def post_job(chat_id, user_id, url, title="", kind="video",
-             artist="", song=""):
+             artist="", song="", expected_dur=0):
     """Hand a /download (video) or /mp3 (audio, round-35) to the home worker.
 
     Posts 'JOB {...}' to the worker channel with the MAIN token (the worker
     polls the WORKER token, so it receives this as another bot's post) and
     records the job as pending. artist/song ride along for audio jobs so
-    the DONE handler can cache the delivered file_id. Returns the job_id,
+    the DONE handler can cache the delivered file_id. Round-37: url may be
+    "" for audio jobs (server block wave) — the worker resolves the
+    YouTube URL itself over the home connection; expected_dur (seconds,
+    from lrclib) helps it pick the original recording. Returns the job_id,
     or None when the bridge is disabled/unreachable — the caller then uses
     the local path. Never raises.
     """
@@ -164,11 +222,16 @@ def post_job(chat_id, user_id, url, title="", kind="video",
             return None
         if kind not in ("video", "audio"):
             kind = "video"
+        try:
+            expected_dur = int(expected_dur or 0)
+        except Exception:
+            expected_dur = 0
         job_id = uuid.uuid4().hex[:12]
         payload = {"job_id": job_id, "chat_id": chat_id, "user_id": user_id,
-                   "video_url": url, "title": (title or "")[:200],
+                   "video_url": url or "", "title": (title or "")[:200],
                    "kind": kind,
                    "artist": (artist or "")[:200], "song": (song or "")[:200],
+                   "expected_dur": expected_dur,
                    "requested_at": time.time()}
         text = "JOB " + json.dumps(payload, separators=(",", ":"))
         if not _api_send_message(_env("TELEGRAM_TOKEN"), _worker_channel_id(),
@@ -176,7 +239,7 @@ def post_job(chat_id, user_id, url, title="", kind="video",
             return None
         _job_update(job_id, dict(payload, ts=time.time(), status="pending"))
         logger.info("[WORKER][QUEUED] job %s → chat %s: %s",
-                    job_id, chat_id, url)
+                    job_id, chat_id, url or "<worker resolves>")
         return job_id
     except Exception as e:
         logger.warning("[WORKER] post_job failed: %s", type(e).__name__)
