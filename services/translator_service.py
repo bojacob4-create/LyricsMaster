@@ -2,7 +2,6 @@ from googletrans import Translator
 from typing import Optional
 import logging
 import time
-from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +43,8 @@ def _get_translator():
     return translator
 
 
-@lru_cache(maxsize=100)
-def translate_chunk(text: str, dest_lang: str = 'ar') -> Optional[str]:
-    """Translate a single chunk of text with caching."""
+def _translate_chunk_uncached(text: str, dest_lang: str = 'ar') -> Optional[str]:
+    """Translate a single chunk of text (no caching — see translate_chunk)."""
     try:
         t = _get_translator()
         if not t:
@@ -56,12 +54,31 @@ def translate_chunk(text: str, dest_lang: str = 'ar') -> Optional[str]:
         if not text:
             return None
 
-        translation = translator.translate(text, dest=dest_lang)
+        translation = t.translate(text, dest=dest_lang)
         return translation.text if translation else None
 
     except Exception as e:
         logger.error(f"Error translating chunk: {e}")
         return None
+
+
+# Success-only cache: failed translations (None) are never cached, so a
+# transient outage doesn't permanently poison the result for that text.
+_chunk_cache = {}
+_CHUNK_CACHE_MAX = 100
+
+
+def translate_chunk(text: str, dest_lang: str = 'ar') -> Optional[str]:
+    """Translate a single chunk of text, caching only successful results."""
+    key = (text, dest_lang)
+    if key in _chunk_cache:
+        return _chunk_cache[key]
+    result = _translate_chunk_uncached(text, dest_lang)
+    if result is not None:
+        if len(_chunk_cache) >= _CHUNK_CACHE_MAX:
+            _chunk_cache.pop(next(iter(_chunk_cache)))
+        _chunk_cache[key] = result
+    return result
 
 SUPPORTED_LANGUAGES = {
     'arabic': 'ar', 'ar': 'ar',
@@ -133,7 +150,10 @@ def translate_to_arabic(text: str) -> Optional[str]:
 
 def translate_text(text: str, dest_lang: str = 'ar') -> Optional[str]:
     try:
-        if not translator:
+        # NOTE: the module-global `translator` stays None until first use —
+        # always go through _get_translator(), never check the global directly.
+        t = _get_translator()
+        if not t:
             logger.error("Translator not initialized")
             return None
 
