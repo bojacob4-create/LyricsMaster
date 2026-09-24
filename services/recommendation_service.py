@@ -3690,6 +3690,12 @@ def _get_similar_songs_uncached(artist: str, song: str, mood: str,
                 f"{len(chart_recs or [])} chart "
                 f"→ {len(merged)} for '{artist} - {song}'"
             )
+            # Round-26: log the actual picks — counts alone can't answer
+            # "what did the user see?" from the logs.
+            _picks = " | ".join(
+                f"{r.get('artist', '?')} - {r.get('name', '?')}"
+                for r in merged)
+            logger.info(f"[REC] Picks for '{artist} - {song}': {_picks}")
             return merged
 
         logger.info(f"[REC] All live sources empty for '{artist} - {song}'")
