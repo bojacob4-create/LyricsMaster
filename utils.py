@@ -453,8 +453,13 @@ def detect_themes(lyrics: str) -> List[str]:
 
     return result if result else ['general']
 
-def format_detailed_analysis(analysis: Dict) -> str:
-    """Format detailed song analysis into a readable message."""
+def format_detailed_analysis(analysis: Dict, context_note: str = None) -> str:
+    """Format detailed song analysis into a readable message.
+
+    context_note: optional one-liner shown under the mood section, e.g.
+    when the song was opened from a mood mix (round-13e) — the primary
+    mood then reflects the mix while the intensity bars stay lyric-based.
+    """
     stats = analysis['statistics']
     rhyme = analysis['rhyme_analysis']
     mood_data = analysis['mood']
@@ -513,6 +518,8 @@ def format_detailed_analysis(analysis: Dict) -> str:
         f"\n🎭 Mood: {mood_emoji} {mood_data['primary_mood'].title()}\n"
         + '\n'.join(mood_bars) + '\n'
     )
+    if context_note:
+        result += f"  {context_note}\n"
 
     themes = analysis.get('themes') or []
     if themes and themes != ['general']:

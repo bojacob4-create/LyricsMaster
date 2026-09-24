@@ -1561,11 +1561,12 @@ def callback_query_handler(update: Update, context: CallbackContext):
 
     context.args = param.split() if param else []
 
-    # Round-13d: a tap on a mood-mix song button carries the mix's mood
-    # (stashed when the mix was sent) into the song card, so the card's
-    # Quick Stats never contradict the mix that recommended the song.
-    # One-shot + TTL: a later direct search re-runs the lyric analysis.
-    if action == 'song':
+    # Round-13d/e: a tap on a mood-mix song button — or on a card sub-view
+    # button (Analyze, Full Lyrics) — carries the mix's mood into the next
+    # view, so Quick Stats / analysis never contradict the mix or card that
+    # recommended the song.  One-shot + TTL: a later direct search re-runs
+    # the lyric analysis.
+    if action in ('song', 'lyrics', 'analyze'):
         _cm = _pop_card_mood(user_id, param)
         if _cm:
             context.user_data['_card_mood'] = _cm
@@ -1678,7 +1679,10 @@ def lyrics_command(update: Update, context: CallbackContext):
         display_title = f"{artist} - {song}" if artist and song else (artist or song)
         logger.info(f"Found lyrics for user {user_id}: '{display_title}'")
 
-        mood = detect_song_mood(lyrics)
+        # Round-13e: inherit a mix/card mood when this view was opened from
+        # one; a direct /lyrics keeps the lyric-based analysis.
+        _ctx_mood = context.user_data.pop('_card_mood', None)
+        mood = _ctx_mood or detect_song_mood(lyrics)
         stats = get_song_statistics(lyrics)
 
         mood_emoji = {
@@ -1702,6 +1706,10 @@ def lyrics_command(update: Update, context: CallbackContext):
 
         first_message = header + chunks[0]
         btn_query = display_title if display_title else query
+        # Round-13e: chain the context — the lyrics view's own buttons
+        # (Analyze, …) inherit the same mood.
+        if _ctx_mood and btn_query:
+            _mood_card_context[(user_id, btn_query.lower().strip())] = (_ctx_mood, time.time())
         if len(chunks) == 1:
             update.message.reply_text(first_message, reply_markup=lyrics_buttons(btn_query))
         else:
@@ -2691,7 +2699,21 @@ def analyze_command(update: Update, context: CallbackContext):
         display_title = f"{artist} - {song}" if artist and song else (artist or song)
 
         analysis = get_detailed_song_analysis(lyrics)
-        formatted_analysis = format_detailed_analysis(analysis)
+        # Round-13e: when opened from a mix/card flow, the primary mood
+        # agrees with the card instead of flipping back to the lyric read.
+        # The intensity bars below stay honest (lyric-based) — the note
+        # explains why the song is here.
+        _ctx_mood = context.user_data.pop('_card_mood', None)
+        _ctx_note = None
+        if _ctx_mood:
+            analysis['mood']['primary_mood'] = _ctx_mood
+            _mood_emoji = {'happy': '😊', 'sad': '😢', 'romantic': '💖',
+                           'energetic': '⚡', 'relaxed': '😌',
+                           'party': '🎉', 'focus': '🎯'}.get(_ctx_mood, '🎵')
+            _ctx_note = (f"📌 Spotted in your {_mood_emoji} "
+                         f"{_ctx_mood.title()} Mix")
+        formatted_analysis = format_detailed_analysis(analysis,
+                                                     context_note=_ctx_note)
 
         response = (
             f"🎵 Detailed Analysis: {display_title}\n\n"
@@ -2704,6 +2726,10 @@ def analyze_command(update: Update, context: CallbackContext):
             markup = analyze_buttons(btn_query, artist_name=primary_artist)
         except Exception:
             markup = None
+        # Round-13e: chain the context — re-tapping Analyze/Full Lyrics from
+        # this view keeps the same mood instead of flipping back.
+        if _ctx_mood and btn_query:
+            _mood_card_context[(user_id, btn_query.lower().strip())] = (_ctx_mood, time.time())
         update.message.reply_text(response, reply_markup=markup)
         logger.info(f"Successfully sent analysis to user {user_id}")
 
@@ -3418,10 +3444,11 @@ def song_command(update: Update, context: CallbackContext):
         display_title = f"{artist} - {song}" if artist and song else (artist or song)
 
         _tan0 = time.time()
-        # Round-13d: a song opened from a mood mix inherits the mix's mood
+        # Round-13d/e: a song opened from a mood mix inherits the mix's mood
         # (stashed in user_data by the callback handler); every other entry
         # point keeps the lyric-based analysis.
-        mood = context.user_data.pop('_card_mood', None) or detect_song_mood(lyrics)
+        _ctx_mood = context.user_data.pop('_card_mood', None)
+        mood = _ctx_mood or detect_song_mood(lyrics)
         stats = get_song_statistics(lyrics)
         _tan1 = time.time()
 
@@ -3497,6 +3524,12 @@ def song_command(update: Update, context: CallbackContext):
         btn_query = display_title if display_title else query
         processing_msg.edit_text(response, disable_web_page_preview=True, reply_markup=song_dashboard_buttons(btn_query))
         _last_song[user_id] = btn_query
+        # Round-13e: chain the context — the card's own buttons (Analyze,
+        # Full Lyrics) inherit the same mood, so sub-views never contradict
+        # the card that spawned them.  Keyed on btn_query: exactly what the
+        # buttons carry.
+        if _ctx_mood and btn_query:
+            _mood_card_context[(user_id, btn_query.lower().strip())] = (_ctx_mood, time.time())
         logger.info(f"Successfully sent song dashboard to user {user_id}")
 
     except Exception as e:
