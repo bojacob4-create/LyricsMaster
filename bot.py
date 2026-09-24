@@ -20,6 +20,7 @@ from telegram.error import (
     TimedOut,
     RetryAfter
 )
+from log_redaction import install_secret_redaction
 from handlers import (
     start_command, help_command, lyrics_command, stats_command,
     recommend_command, quiz_command, quiz_answer, end_quiz_command,
@@ -46,6 +47,9 @@ logging.basicConfig(
         logging.FileHandler('bot_monitor.log')
     ]
 )
+# Never let secrets (bot token, API keys) reach the logs — redacts rendered
+# records, tracebacks, and uncaught-exception output.
+install_secret_redaction()
 logger = logging.getLogger(__name__)
 
 IS_PRODUCTION = os.environ.get('REPLIT_DEPLOYMENT') == '1'
@@ -71,6 +75,23 @@ def _write_conflict_time(t: float):
     try:
         with open(_CONFLICT_STATE_FILE, 'w') as f:
             f.write(str(t))
+    except Exception:
+        pass
+
+
+# Liveness file the watchdog checks. The worker rewrites it every minute via
+# the scheduler below; a missing or stale file means the worker vanished
+# silently or is frozen (process-name checks alone can't see that).
+_HEARTBEAT_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    '.heartbeat')
+
+
+def _write_heartbeat():
+    """Rewrite the liveness file; failures must never disturb the bot."""
+    try:
+        with open(_HEARTBEAT_FILE, 'w') as f:
+            f.write(str(time.time()))
     except Exception:
         pass
 
@@ -241,6 +262,18 @@ class TelegramBotWorker:
                 replace_existing=True,
                 misfire_grace_time=3600
             )
+            # Liveness heartbeat for the watchdog (see _HEARTBEAT_FILE).
+            self.scheduler.add_job(
+                _write_heartbeat,
+                'interval',
+                minutes=1,
+                id='heartbeat',
+                replace_existing=True,
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=120
+            )
+            _write_heartbeat()
             self.scheduler.start()
             logger.info("Daily song scheduler started (09:00 UTC)")
         except Exception as e:
