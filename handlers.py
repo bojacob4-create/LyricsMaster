@@ -1538,6 +1538,29 @@ def natural_language_handler(update: Update, context: CallbackContext):
         logger.warning(f"[NLP] Fallback error for user {user_id}: {nlp_err}")
 
 
+class _CallbackFakeMessage:
+    """Wraps query.message so callback handlers can use update.message-style
+    reply_* calls. Must proxy every reply_* the handlers use (text, video,
+    audio, photo) — a missing proxy crashes the handler with AttributeError
+    (this is how the no-lyrics photo card silently fell back to text)."""
+    def __init__(self, real_message, chat):
+        self._msg = real_message
+        self.chat = chat
+        self.message_id = real_message.message_id
+
+    def reply_text(self, *args, **kwargs):
+        return self._msg.reply_text(*args, **kwargs)
+
+    def reply_video(self, *args, **kwargs):
+        return self._msg.reply_video(*args, **kwargs)
+
+    def reply_audio(self, *args, **kwargs):
+        return self._msg.reply_audio(*args, **kwargs)
+
+    def reply_photo(self, *args, **kwargs):
+        return self._msg.reply_photo(*args, **kwargs)
+
+
 def callback_query_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     # Stale/tapped-twice callbacks raise here — never let that kill the tap.
@@ -1626,25 +1649,10 @@ def callback_query_handler(update: Update, context: CallbackContext):
 
     handler = handler_map.get(action)
     if handler:
-        class FakeMessage:
-            def __init__(self, real_message, chat):
-                self._msg = real_message
-                self.chat = chat
-                self.message_id = real_message.message_id
-
-            def reply_text(self, *args, **kwargs):
-                return self._msg.reply_text(*args, **kwargs)
-
-            def reply_video(self, *args, **kwargs):
-                return self._msg.reply_video(*args, **kwargs)
-
-            def reply_audio(self, *args, **kwargs):
-                return self._msg.reply_audio(*args, **kwargs)
-
         fake_update = type('FakeUpdate', (), {
             'effective_user': update.effective_user,
             'effective_chat': update.effective_chat,
-            'message': FakeMessage(query.message, query.message.chat),
+            'message': _CallbackFakeMessage(query.message, query.message.chat),
             'effective_message': query.message,
         })()
 
@@ -2818,7 +2826,7 @@ def download_command(update: Update, context: CallbackContext):
             except Exception as send_err:
                 logger.error(f"Failed to send video: {send_err}")
                 processing_message.edit_text(
-                    "❌ The video downloaded but was too large to send via Telegram.\n"
+                    "😕 The video downloaded but was too large to send via Telegram.\n"
                     "Telegram limit is 50MB. Try a shorter video."
                 )
 
@@ -3588,8 +3596,7 @@ def _no_lyrics_card_text(disp_artist, disp_title, genre, album, ctx_mood):
         f"🎵 *{md(disp_title)}*",
         f"👤 {md(disp_artist)}",
         "",
-        "🎼 No lyrics to show for this one — typical for instrumentals "
-        "and electronic tracks. Let the music do the talking 🎶",
+        "🎼 No lyrics — instrumental track 🎶",
         "",
     ]
     if album:

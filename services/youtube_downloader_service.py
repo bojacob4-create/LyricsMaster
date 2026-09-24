@@ -64,7 +64,7 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
 
         if not validate_youtube_url(url):
             return False, (
-                "❌ Invalid YouTube URL\n"
+                "😕 Invalid YouTube URL\n"
                 "━━━━━━━━━━━━━━━━━━━━━\n\n"
                 "Please provide a valid YouTube link:\n"
                 "• youtube.com/watch?v=...\n"
@@ -102,7 +102,7 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
 
                 if duration > 600:
                     return False, (
-                        "❌ Video Too Long\n"
+                        "😕 Video Too Long\n"
                         "━━━━━━━━━━━━━━━━━━━━━\n\n"
                         "Max duration: 10 minutes.\n"
                         "This video is {0}:{1:02d}.\n"
@@ -115,7 +115,7 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
                 if not file_path:
                     logger.error(f"No downloaded file found for video_id: {video_id}")
                     return False, (
-                        "❌ Download Failed\n"
+                        "😕 Download Failed\n"
                         "━━━━━━━━━━━━━━━━━━━━━\n\n"
                         "The file couldn't be saved.\n"
                         "Try a different video."
@@ -127,7 +127,7 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
                 if file_size > 50 * 1024 * 1024:
                     cleanup_video(file_path)
                     return False, (
-                        "❌ File Too Large\n"
+                        "😕 File Too Large\n"
                         "━━━━━━━━━━━━━━━━━━━━━\n\n"
                         f"Downloaded file is {file_size_mb}MB.\n"
                         "Telegram limit is 50MB.\n"
@@ -152,6 +152,15 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
                 error_msg = str(e).lower()
                 logger.error(f"yt-dlp DownloadError: {str(e)}")
 
+                # A /download that hits a hard YouTube block is itself proof
+                # of a wave — register it on the shared breaker so
+                # download_command queues this request for auto-retry
+                # (instead of showing a failure) and the MP3 path also
+                # treats YouTube as blocked. Genuine failures (private,
+                # age-restricted, unavailable...) leave the breaker alone.
+                if _is_block_error(e):
+                    _yt_trip_breaker(f"download: {type(e).__name__}")
+
                 if "private video" in error_msg or "private" in error_msg:
                     reason = "This video is private."
                 elif "not a bot" in error_msg:
@@ -174,7 +183,7 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
                     reason = "YouTube blocked the download."
 
                 return False, (
-                    f"❌ Download Failed\n"
+                    f"😕 Download Failed\n"
                     f"━━━━━━━━━━━━━━━━━━━━━\n\n"
                     f"Reason: {reason}\n\n"
                     f"💡 Tips:\n"
@@ -186,7 +195,7 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
     except Exception as e:
         logger.error(f"Error downloading YouTube video: {str(e)}")
         return False, (
-            "❌ Download Failed\n"
+            "😕 Download Failed\n"
             "━━━━━━━━━━━━━━━━━━━━━\n\n"
             "An unexpected error occurred.\n\n"
             "💡 Tips:\n"
