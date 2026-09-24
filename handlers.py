@@ -3527,7 +3527,7 @@ _NO_LYRICS_TTL = 15 * 60
 
 
 def _itunes_track_lookup(artist, title):
-    """Scored iTunes Search lookup for a lyrics-less track.
+    """Scored iTunes Search lookup for a track.
 
     Returns {'artist','title','artwork','genre','album'} for the first hit
     that genuinely matches the request, else None.  Never raises.
@@ -3838,18 +3838,24 @@ def song_command(update: Update, context: CallbackContext):
         use_artist = artist if artist else query
         use_song = song if song else query
 
-        # Run YouTube + recommendations in parallel — both are independent HTTP calls
+        # Run YouTube + recommendations + artwork in parallel — all independent HTTP calls
         _tpar0 = time.time()
-        with ThreadPoolExecutor(max_workers=2) as _pool:
+        with ThreadPoolExecutor(max_workers=3) as _pool:
             _yt_fut  = _pool.submit(get_youtube_link, use_artist, use_song)
             _rec_fut = _pool.submit(get_similar_songs, use_artist, use_song, mood)
+            _art_fut = _pool.submit(_itunes_track_lookup, use_artist, use_song)
             yt_url = _yt_fut.result()
             recs   = _rec_fut.result()
+            try:
+                _art_meta = _art_fut.result()
+            except Exception as e:
+                logger.debug(f"[song] artwork lookup failed: {e}")
+                _art_meta = None
         _tpar1 = time.time()
 
         logger.info(
             "[song_timing] q=%r  artist_check=%.0fms  lyrics[%s]=%.0fms  analysis=%.0fms  "
-            "parallel(yt+recs)=%.0fms  TOTAL=%.0fms",
+            "parallel(yt+recs+art)=%.0fms  TOTAL=%.0fms",
             query,
             (_ta1 - _ta0) * 1000,
             status, (_tl1 - _ta1) * 1000,
@@ -3890,7 +3896,27 @@ def song_command(update: Update, context: CallbackContext):
         )
 
         btn_query = display_title if display_title else query
-        processing_msg.edit_text(response, disable_web_page_preview=True, reply_markup=song_dashboard_buttons(btn_query))
+        markup = song_dashboard_buttons(btn_query)
+        # Round-25: photo header like the no-lyrics card — but only when
+        # iTunes genuinely matched this song (the relevance floor inside
+        # _itunes_track_lookup already rejected wrong-song artwork), and
+        # only when the card fits in a photo caption (1024 chars).  Any
+        # doubt -> the classic text card, silently.
+        artwork = (_art_meta or {}).get('artwork') or ''
+        if artwork and len(response) <= 1000:
+            try:
+                try:
+                    processing_msg.delete()
+                except Exception:
+                    pass
+                update.message.reply_photo(photo=artwork, caption=response,
+                                           reply_markup=markup)
+            except Exception as e:
+                logger.warning(f"[song] photo card failed, text fallback: {e}")
+                processing_msg.edit_text(response, disable_web_page_preview=True,
+                                         reply_markup=markup)
+        else:
+            processing_msg.edit_text(response, disable_web_page_preview=True, reply_markup=markup)
         _last_song[user_id] = btn_query
         # Round-13e: chain the context — the card's own buttons (Analyze,
         # Full Lyrics) inherit the same mood, so sub-views never contradict
