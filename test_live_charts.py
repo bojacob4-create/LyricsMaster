@@ -307,6 +307,71 @@ fb = lc._parse_itunes_rss({'feed': {'entry': [
 check("fallback parser captures im:releaseDate",
       fb and fb[0]['release_date'] == '2026-01-15T00:00:00-07:00', repr(fb))
 
+# ── 9. Artist top songs are live-first (no fixed 5) ──────────────────────────
+
+print("== artist top songs live-first ==")
+import handlers as _h
+
+class _FakeResp:
+    def __init__(self, payload, status=200):
+        self._p = payload; self.status_code = status
+    def json(self):
+        return self._p
+
+_real_get = _h.requests.get
+_h._top_songs_cache.clear()
+os.environ['LASTFM_API_KEY'] = 'test-key'
+
+def _fake_lastfm(url, params=None, timeout=None):
+    assert params.get('method') == 'artist.getTopTracks'
+    return _FakeResp({'toptracks': {'track': [
+        {'name': 'New Hit A'}, {'name': 'New Hit B'}, {'name': 'New Hit A'},
+        {'name': 'New Hit C'}, {'name': 'Old Classic'}, {'name': 'New Hit D'},
+        {'name': 'New Hit E'}]}})
+
+_h.requests.get = _fake_lastfm
+try:
+    live = _h._fetch_artist_top_songs('Tyla')  # in static DB, must still go live first
+    check("known artist uses live top tracks, not static list",
+          live == ['New Hit A', 'New Hit B', 'New Hit C', 'Old Classic', 'New Hit D'],
+          repr(live))
+    check("live top songs are cached",
+          _h._fetch_artist_top_songs('Tyla') == live)
+finally:
+    _h.requests.get = _real_get
+    _h._top_songs_cache.clear()
+
+# live miss -> iTunes fallback
+def _fake_itunes(url, params=None, timeout=None):
+    if 'audioscrobbler' in url:
+        return _FakeResp({}, status=500)
+    return _FakeResp({'results': [
+        {'artistName': 'Tyla', 'trackName': 'iTunes Song 1'},
+        {'artistName': 'Tyla', 'trackName': 'iTunes Song 2'}]})
+_h.requests.get = _fake_itunes
+try:
+    fb = _h._fetch_artist_top_songs('Tyla')
+    check("Last.fm miss falls back to live iTunes search",
+          fb == ['iTunes Song 1', 'iTunes Song 2'], repr(fb))
+finally:
+    _h.requests.get = _real_get
+    _h._top_songs_cache.clear()
+
+# everything misses -> static DB as last resort (never [])
+def _fake_dead(url, params=None, timeout=None):
+    return _FakeResp({}, status=500)
+_h.requests.get = _fake_dead
+try:
+    static = _h._fetch_artist_top_songs('Tyla')
+    check("total live miss falls back to static list, never empty",
+          static == ['Water', 'Truth or Dare', 'Jump', 'ART', 'Getting Late'],
+          repr(static))
+    check("unknown artist with dead sources -> []",
+          _h._fetch_artist_top_songs('Some Unknown Artist XYZ') == [])
+finally:
+    _h.requests.get = _real_get
+    _h._top_songs_cache.clear()
+
 _reset_mem()
 
 print(f"\n{PASS} passed, {FAIL} failed")

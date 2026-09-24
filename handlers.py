@@ -1877,62 +1877,90 @@ def youtube_command(update: Update, context: CallbackContext):
         )
 
 
+# Live-first artist top songs: Last.fm artist.getTopTracks -> iTunes Search API
+# -> static local DB as a last resort.  Results are cached 24h per artist so
+# artist cards stay fast.  Never raises; [] when every source misses.
+_top_songs_cache = {}
+_TOP_SONGS_TTL = 24 * 3600
+
+
 def _fetch_artist_top_songs(artist_name: str) -> list:
-    info = get_artist_info(artist_name)
-    if info:
-        return info['top_songs'][:5]
-
+    key = (artist_name or '').strip().lower()
+    if not key:
+        return []
     try:
-        api_key = os.environ.get('LASTFM_API_KEY')
-        if api_key:
-            resp = requests.get(
-                'https://ws.audioscrobbler.com/2.0/',
-                params={'method': 'artist.getTopTracks', 'artist': artist_name,
-                        'api_key': api_key, 'format': 'json', 'limit': 5},
-                timeout=5
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                tracks = data.get('toptracks', {}).get('track', [])
-                if tracks:
-                    logger.info(f"Last.fm returned {len(tracks)} top tracks for '{artist_name}'")
-                    return [t['name'] for t in tracks[:5]]
-            logger.warning(f"Last.fm top tracks failed for '{artist_name}': status={resp.status_code}")
-        else:
-            logger.warning("LASTFM_API_KEY not available for top tracks lookup")
-    except Exception as e:
-        logger.warning(f"Last.fm top tracks error for '{artist_name}': {e}")
+        now = time.time()
+        hit = _top_songs_cache.get(key)
+        if hit and (now - hit[0]) < _TOP_SONGS_TTL and hit[1]:
+            return hit[1]
 
-    try:
-        resp = requests.get(
-            'https://itunes.apple.com/search',
-            params={'term': artist_name, 'media': 'music', 'entity': 'song', 'limit': 50},
-            timeout=5
-        )
-        if resp.status_code == 200:
-            results = resp.json().get('results', [])
-            seen = set()
-            songs = []
-            artist_lower = artist_name.lower()
-            artist_words = set(artist_lower.split())
-            for r in results:
-                aname = (r.get('artistName') or '').lower()
-                tname = r.get('trackName', '')
-                if not tname or tname in seen:
-                    continue
-                aname_words = set(aname.replace(',', ' ').replace('&', ' ').split())
-                if artist_lower in aname or artist_words <= aname_words:
-                    seen.add(tname)
-                    songs.append(tname)
-                    if len(songs) >= 5:
-                        break
-            if songs:
-                logger.info(f"iTunes returned {len(songs)} tracks for '{artist_name}'")
-                return songs
-    except Exception as e:
-        logger.warning(f"iTunes fallback error for '{artist_name}': {e}")
+        songs: list = []
+        try:
+            api_key = os.environ.get('LASTFM_API_KEY', '')
+            if api_key:
+                resp = requests.get(
+                    'https://ws.audioscrobbler.com/2.0/',
+                    params={'method': 'artist.getTopTracks', 'artist': artist_name,
+                            'api_key': api_key, 'format': 'json', 'limit': 10},
+                    timeout=5
+                )
+                if resp.status_code == 200:
+                    tracks = resp.json().get('toptracks', {}).get('track', [])
+                    if isinstance(tracks, dict):
+                        tracks = [tracks]
+                    names = [t.get('name', '').strip() for t in tracks
+                             if t.get('name', '').strip()]
+                    songs = list(dict.fromkeys(names))[:5]
+                    if songs:
+                        logger.info(f"Last.fm returned {len(songs)} top tracks for '{artist_name}'")
+                else:
+                    logger.warning(f"Last.fm top tracks failed for '{artist_name}': status={resp.status_code}")
+            else:
+                logger.warning("LASTFM_API_KEY not available for top tracks lookup")
+        except Exception as e:
+            logger.warning(f"Last.fm top tracks error for '{artist_name}': {e}")
 
-    return []
+        if not songs:
+            try:
+                resp = requests.get(
+                    'https://itunes.apple.com/search',
+                    params={'term': artist_name, 'media': 'music', 'entity': 'song', 'limit': 50},
+                    timeout=5
+                )
+                if resp.status_code == 200:
+                    results = resp.json().get('results', [])
+                    seen = set()
+                    artist_lower = artist_name.lower()
+                    artist_words = set(artist_lower.split())
+                    for r in results:
+                        aname = (r.get('artistName') or '').lower()
+                        tname = r.get('trackName', '')
+                        if not tname or tname in seen:
+                            continue
+                        aname_words = set(aname.replace(',', ' ').replace('&', ' ').split())
+                        if artist_lower in aname or artist_words <= aname_words:
+                            seen.add(tname)
+                            songs.append(tname)
+                            if len(songs) >= 5:
+                                break
+                    if songs:
+                        logger.info(f"iTunes returned {len(songs)} tracks for '{artist_name}'")
+            except Exception as e:
+                logger.warning(f"iTunes fallback error for '{artist_name}': {e}")
+
+        if not songs:
+            # Last resort: the static local list (may be dated).
+            info = get_artist_info(artist_name)
+            if info:
+                songs = info['top_songs'][:5]
+                logger.info(f"Using static top songs for '{artist_name}' (live sources missed)")
+
+        if songs:
+            _top_songs_cache[key] = (now, songs)
+        return songs
+    except Exception as e:
+        logger.warning(f"_fetch_artist_top_songs failed for '{artist_name}': {e}")
+        return []
 
 
 def _artist_songs_picker_command(update: Update, context: CallbackContext):
