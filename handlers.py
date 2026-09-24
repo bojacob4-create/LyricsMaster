@@ -3440,9 +3440,10 @@ def mp3_retry_tick(bot):
     try:
         from services.youtube_downloader_service import (
             mp3_block_wave_active, mp3_forget_failure, mp3_retry_due,
-            mp3_retry_note_attempt, mp3_retry_remove)
+            mp3_retry_exhausted, mp3_retry_note_attempt, mp3_retry_remove)
         due = mp3_retry_due()
-        if not due:
+        exhausted = mp3_retry_exhausted()
+        if not due and not exhausted:
             return
         for entry in due[:3]:  # max 3 per tick — don't hammer a recovering API
             key = entry.get('key')
@@ -3490,6 +3491,29 @@ def mp3_retry_tick(bot):
                 bot.send_message(chat_id=chat_id, text=result)
             except Exception:
                 pass
+        # Round-38: close the loop on exhausted entries. The user was
+        # promised automatic delivery; silence forever is not an option.
+        # One honest notice each, then the entry is gone for good.
+        for entry in exhausted:
+            key = entry.get('key')
+            chat_id = entry.get('chat_id')
+            artist = entry.get('artist', '') or ''
+            song = entry.get('song', '') or ''
+            mp3_retry_remove(key or '')
+            if not chat_id:
+                continue
+            logger.info(f"[MP3][RETRY][GAVE-UP] '{artist} - {song}' → "
+                        f"chat {chat_id} (3 attempts, wave never cleared)")
+            try:
+                bot.send_message(
+                    chat_id=chat_id,
+                    text=f"😞 I tried 3 times to get '{artist} - {song}', "
+                         "but YouTube kept blocking me.\n\n"
+                         "Tap MP3 again whenever you like and I'll fetch "
+                         "it fresh. 🎵",
+                )
+            except Exception:
+                pass
     except Exception as e:
         logger.warning(f"mp3_retry_tick failed: {e}")
 
@@ -3504,10 +3528,11 @@ def video_retry_tick(bot):
     """
     try:
         from services.youtube_downloader_service import (
-            mp3_block_wave_active, video_retry_due,
+            mp3_block_wave_active, video_retry_due, video_retry_exhausted,
             video_retry_note_attempt, video_retry_remove)
         due = video_retry_due()
-        if not due:
+        exhausted = video_retry_exhausted()
+        if not due and not exhausted:
             return
         for entry in due[:3]:  # max 3 per tick — don't hammer a recovering API
             key = entry.get('key')
@@ -3552,6 +3577,27 @@ def video_retry_tick(bot):
             video_retry_remove(key)
             try:
                 bot.send_message(chat_id=chat_id, text=result)
+            except Exception:
+                pass
+        # Round-38: close the loop on exhausted entries — one honest
+        # notice each, then gone for good (same as the MP3 queue).
+        for entry in exhausted:
+            key = entry.get('key')
+            chat_id = entry.get('chat_id')
+            video_id = entry.get('video_id', '') or ''
+            video_retry_remove(key or '')
+            if not chat_id:
+                continue
+            logger.info(f"[VIDEO][RETRY][GAVE-UP] '{video_id}' → "
+                        f"chat {chat_id} (3 attempts, wave never cleared)")
+            try:
+                bot.send_message(
+                    chat_id=chat_id,
+                    text="😞 I tried 3 times to download your video, "
+                         "but YouTube kept blocking me.\n\n"
+                         "Send the link again whenever you like and I'll "
+                         "fetch it fresh. 🎬",
+                )
             except Exception:
                 pass
     except Exception as e:

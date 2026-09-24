@@ -76,6 +76,24 @@ def _pick_downloaded_file(video_id: str) -> Optional[str]:
         return None
     return max(matches, key=os.path.getsize)
 
+
+def _tidy_part_files(video_id: str) -> None:
+    """Delete orphaned .part partials for a video id (round-38).
+
+    The timeout-kill path already tidies these, but a plain DownloadError
+    (e.g. wave-abort mid-download) left them behind — slow unbounded
+    disk growth. Never raises.
+    """
+    try:
+        for part in globmod.glob(
+                os.path.join(os.getcwd(), f'youtube_{video_id}.*.part')):
+            try:
+                os.remove(part)
+            except OSError:
+                pass
+    except Exception:
+        pass
+
 # Permanent-failure hints for the video path: another player client will not
 # fix these, so the client rotation stops immediately.  NOTE: the bot-check
 # ("sign in to confirm you're not a bot") is deliberately NOT here — it
@@ -306,6 +324,9 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
                 error_msg = str(e).lower()
                 logger.error(f"yt-dlp DownloadError (client={client}): {e}")
                 client_errors.append((client, error_msg))
+                # Round-38: a killed connection leaves .part partials
+                # behind — tidy them so failures don't grow the disk.
+                _tidy_part_files(video_id)
                 if _is_permanent_video_error(error_msg):
                     break
                 if _is_download_stage_kill(error_msg):
@@ -698,6 +719,35 @@ def mp3_retry_remove(key: str) -> None:
         pass
 
 
+def mp3_retry_exhausted() -> list:
+    """Queued entries that burned all attempts without success (round-38).
+
+    The old code filtered these out of mp3_retry_due() and never looked
+    at them again — the user was promised automatic delivery and got
+    silence forever. The tick now sweeps these: each gets ONE honest
+    final notice ("tap again and I'll fetch it fresh") and is removed.
+    TTL-expired entries are left for the silent prune on next insert.
+    Never raises.
+    """
+    try:
+        with open(_MP3_RETRY_JSON, 'r', encoding='utf-8') as f:
+            data = _json.load(f)
+    except Exception:
+        return []
+    now = _time.time()
+    out = []
+    for key, e in data.items():
+        if not isinstance(e, dict):
+            continue
+        if now - e.get('ts', 0) > _RETRY_TTL_SECS:
+            continue
+        if e.get('attempts', 0) >= _RETRY_MAX_ATTEMPTS:
+            entry = dict(e)
+            entry['key'] = key
+            out.append(entry)
+    return out
+
+
 # Round 17: /download gets the same no-re-tap treatment as /mp3. Video has
 # no alternative source (YouTube is the only video provider, unlike MP3's
 # three audio sources), so a block wave can't be routed around — but the
@@ -787,6 +837,32 @@ def video_retry_remove(key: str) -> None:
         locked_json_update(_VIDEO_RETRY_JSON, _update)
     except Exception:
         pass
+
+
+def video_retry_exhausted() -> list:
+    """Queued video entries that burned all attempts (round-38).
+
+    Same silent-death bug as the MP3 queue: video_retry_due() filtered
+    these forever with no user notice. The tick sweeps them with one
+    honest final notice each. Never raises.
+    """
+    try:
+        with open(_VIDEO_RETRY_JSON, 'r', encoding='utf-8') as f:
+            data = _json.load(f)
+    except Exception:
+        return []
+    now = _time.time()
+    out = []
+    for key, e in data.items():
+        if not isinstance(e, dict):
+            continue
+        if now - e.get('ts', 0) > _RETRY_TTL_SECS:
+            continue
+        if e.get('attempts', 0) >= _RETRY_MAX_ATTEMPTS:
+            entry = dict(e)
+            entry['key'] = key
+            out.append(entry)
+    return out
 
 # Title markers that (almost) always mean "not the original". Penalized
 # unless the requested song title itself contains the marker.
