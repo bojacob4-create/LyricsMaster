@@ -104,6 +104,21 @@ def _is_non_original(track: str) -> bool:
     return any(cw in tl for cw in _COVER_WORDS)
 
 
+# Audio extensions that never appear in a legitimate track title. lrclib
+# occasionally carries entries whose trackName is a raw filename
+# (e.g. "24 What I Want - Morgan Wallen & Tate McRae.flac - ...").
+# Accepting such an entry pollutes the dashboard title, breaks the
+# artist/song split for MP3, and sends the downloader after wrong songs.
+_AUDIO_EXTENSIONS = ('.flac', '.mp3', '.wav', '.m4a', '.ogg', '.opus',
+                     '.aac', '.wma', '.aiff', '.alac')
+
+
+def _looks_like_filename(track: str) -> bool:
+    """Return True when the track name looks like an audio filename, not a title."""
+    tl = (track or '').lower()
+    return any(ext in tl for ext in _AUDIO_EXTENSIONS)
+
+
 def _track_relevance(query_lower: str, artist: str, track: str) -> int:
     query_words  = _normalize_tokens(query_lower)
     track_words  = _normalize_tokens(track)
@@ -148,6 +163,9 @@ def _fetch_from_lrclib_direct(artist: str, song: str) -> Optional[Tuple[str, str
             if lyrics and len(lyrics) > 30:
                 api_artist = data.get('artistName', artist)
                 api_track  = data.get('trackName',  song)
+                if _looks_like_filename(api_track):
+                    logger.info(f"lrclib direct hit rejected (filename-like track): '{api_track}'")
+                    return None
                 api_artist, api_track = canonicalize_track_names(api_artist, api_track)
                 logger.info(f"lrclib direct hit: '{api_artist} - {api_track}'")
                 return api_artist, api_track, _clean_lyrics(lyrics)
@@ -194,6 +212,9 @@ def _fetch_from_lrclib_search(
                         continue
                     found_artist = item.get('artistName', '')
                     found_track  = item.get('trackName',  '')
+                    if _looks_like_filename(found_track):
+                        logger.debug(f"lrclib search: skipping filename-like track '{found_track}'")
+                        continue
                     score = _track_relevance(query_lower, found_artist, found_track)
 
                     if ea_toks:
