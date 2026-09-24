@@ -193,6 +193,95 @@ _MP3_MAX_BYTES = 1500 * 1024 * 1024
 _MIN_SONG_BYTES = 800_000     # < 800 KB = likely a short preview, skip it
 _MIN_SONG_SECS  = 90          # < 90 s duration in metadata = likely a preview
 
+# ── Resilience: YouTube circuit breaker + failure/URL memory ─────────────
+# YouTube bot-blocks this server's IP in waves (search dies with
+# IncompleteRead / "sign in to confirm you're not a bot", then recovers
+# on its own). Hammering it during a wave only burns a minute per tap.
+# The breaker skips YouTube entirely while a wave is active.
+_YT_BREAKER_SECS = 900        # 15 min — waves usually pass within this
+_YT_BLOCKED_UNTIL = 0.0
+_BLOCK_ERROR_HINTS = (
+    'not a bot', 'sign in to confirm', 'incompleteread',
+    'unable to download api page', 'http error 403', 'http error 429',
+    'too many requests',
+)
+_MP3_FAILURES_JSON = os.path.join(MP3_CACHE_DIR, 'mp3_failures.json')
+_MP3_URLS_JSON = os.path.join(MP3_CACHE_DIR, 'mp3_urls.json')
+_FAILURE_TTL_SECS = 600       # 10 min — a repeat tap fails instantly
+_CANDIDATE_TIMEOUT_SECS = 45  # hard cap per download attempt
+
+
+def _is_block_error(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return any(h in msg for h in _BLOCK_ERROR_HINTS)
+
+
+def _yt_breaker_open() -> bool:
+    return _time.time() < _YT_BLOCKED_UNTIL
+
+
+def _yt_trip_breaker(reason: str) -> None:
+    global _YT_BLOCKED_UNTIL
+    _YT_BLOCKED_UNTIL = _time.time() + _YT_BREAKER_SECS
+    logger.warning(f"[MP3][BREAKER] YouTube blocked for {_YT_BREAKER_SECS // 60}min: {reason}")
+
+
+def _failure_get(key: str):
+    """Recent total-failure memory: (message, age_secs) or None."""
+    try:
+        with open(_MP3_FAILURES_JSON, 'r', encoding='utf-8') as f:
+            entry = _json.load(f).get(key)
+        if entry and (_time.time() - entry.get('ts', 0)) < _FAILURE_TTL_SECS:
+            return entry.get('msg'), _time.time() - entry.get('ts', 0)
+    except Exception:
+        pass
+    return None
+
+
+def _failure_note(key: str, msg: str) -> None:
+    try:
+        from utils import locked_json_update
+        os.makedirs(MP3_CACHE_DIR, exist_ok=True)
+
+        def _update(data):
+            data[key] = {'ts': _time.time(), 'msg': msg}
+            # keep the file small — drop entries older than the TTL
+            cutoff = _time.time() - _FAILURE_TTL_SECS
+            for k in [k for k, v in data.items()
+                      if _time.time() - v.get('ts', 0) > cutoff]:
+                data.pop(k, None)
+            return data
+
+        locked_json_update(_MP3_FAILURES_JSON, _update)
+    except Exception:
+        pass
+
+
+def _winurl_get(key: str) -> Optional[str]:
+    try:
+        with open(_MP3_URLS_JSON, 'r', encoding='utf-8') as f:
+            return _json.load(f).get(key)
+    except Exception:
+        return None
+
+
+def _winurl_note(key: str, url: str) -> None:
+    """Remember which URL actually downloaded, for block-wave retries."""
+    try:
+        from utils import locked_json_update
+        os.makedirs(MP3_CACHE_DIR, exist_ok=True)
+
+        def _update(data):
+            data[key] = url
+            # cap size — oldest inserts evicted first (dict order)
+            while len(data) > 500:
+                data.pop(next(iter(data)))
+            return data
+
+        locked_json_update(_MP3_URLS_JSON, _update)
+    except Exception:
+        pass
+
 # Title markers that (almost) always mean "not the original". Penalized
 # unless the requested song title itself contains the marker.
 _REMIX_MARKERS = (
@@ -358,6 +447,8 @@ def _yt_search_entries(query: str, n: int = 5) -> list:
             meta = ydl.extract_info(f'ytsearch{n}:{query}', download=False)
     except Exception as e:
         logger.warning(f"[MP3][SEARCH] YouTube error: {type(e).__name__}: {e}")
+        if _is_block_error(e):
+            _yt_trip_breaker(f"search '{query}': {type(e).__name__}")
         return []
     entries = []
     if isinstance(meta, dict):
@@ -627,6 +718,14 @@ def download_audio_for_song(artist: str, song: str,
                       _build_success_msg(query, artist, 0, size_mb) + "\n⚡ Served from cache",
                       query, artist)
 
+    # ── Tier 1.5: recent-failure memory — a repeat tap fails instantly ────
+    # instead of burning another minute on a hopeless song.
+    recent_fail = _failure_get(key)
+    if recent_fail:
+        msg, age = recent_fail
+        logger.info(f"[MP3][HIT] failure memory for '{query}' ({age:.0f}s old)")
+        return False, msg + "\n\n(Last tried moments ago — retry in a few minutes.)"
+
     # ── Tier 2: fresh resolve (providers run in parallel) ──────────────────
     # SoundCloud + YouTube searches and the lrclib duration lookup are
     # independent — run them together, then score ALL candidates globally
@@ -639,10 +738,16 @@ def download_audio_for_song(artist: str, song: str,
         return _sc_search_entries(f"{artist} {song}" if song else artist, n=8)
 
     def _yt_all():
+        if _yt_breaker_open():
+            logger.info("[MP3][SEARCH] YouTube skipped — breaker open (block wave)")
+            return []
         out = []
         yt_queries = [f"{artist} {song} official audio", query] if song else [query]
         for yt_q in yt_queries:
             out.extend(_yt_search_entries(yt_q, n=5))
+            if _yt_breaker_open():
+                # First query tripped the breaker — don't waste a second call.
+                break
         return out
 
     from concurrent.futures import ThreadPoolExecutor
@@ -672,7 +777,6 @@ def download_audio_for_song(artist: str, song: str,
                     f"by '{e.get('uploader')}' | {int(e.get('duration', 0) or 0)}s")
 
     stage("⬇️ Downloading audio…")
-    file_prefix = 'audio_' + key[:10]
 
     def _accept_downloaded(path: str, title_c: str, uploader_c: str, dur: int):
         size = os.path.getsize(path)
@@ -690,44 +794,87 @@ def download_audio_for_song(artist: str, song: str,
                        _build_success_msg(title_c, uploader_c, dur, size_mb),
                        title_c, uploader_c))
 
+    def _try_download(url: str, rank_label: str):
+        """Download one candidate with a hard time budget. Returns the mp3
+        path, or raises on failure/timeout. Unique prefix per attempt so an
+        abandoned (timed-out) thread can't clobber the next attempt."""
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as _TE
+        prefix = f'audio_{key[:10]}_{rank_label}'
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(_download_url_to_mp3, url, prefix,
+                            label=rank_label)
+            try:
+                return fut.result(timeout=_CANDIDATE_TIMEOUT_SECS)
+            except _TE:
+                logger.warning(
+                    f"[MP3] {rank_label} timed out after "
+                    f"{_CANDIDATE_TIMEOUT_SECS}s — abandoning")
+                raise TimeoutError(
+                    f"download stalled ({_CANDIDATE_TIMEOUT_SECS}s budget)")
+
+    # Build the attempt list. During a YouTube block wave, a URL that
+    # downloaded fine before is worth one direct shot (search is usually
+    # what breaks, not the file hosts).
+    attempts = []
+    _bot_blocked = _yt_breaker_open()
+    if _bot_blocked:
+        stage("⚠️ YouTube is limiting us right now — trying the direct route…")
+        win_url = _winurl_get(key)
+        if win_url:
+            logger.info(f"[MP3] block-wave retry of known-good URL for '{query}'")
+            attempts.append((win_url, query, artist, 0, 'known-url'))
+
     # Try the top 3 scored candidates across ALL providers. YouTube 403s
     # and SoundCloud DRM blocks are often per-URL, so one more fallback
     # is usually the difference between success and "not available".
-    _bot_blocked = False
     for rank, (s, provider, e) in enumerate(scored[:3]):
         url = e.get('webpage_url') or e.get('url')
-        title_c = e.get('title') or query
-        uploader_c = e.get('uploader') or artist
-        dur = int(e.get('duration', 0) or 0)
-        logger.info(f"[MP3] Trying rank {rank+1} [{provider}] (score={s:.1f}): '{title_c}'")
+        attempts.append((url, e.get('title') or query,
+                         e.get('uploader') or artist,
+                         int(e.get('duration', 0) or 0),
+                         f'{provider}-rank{rank+1}'))
+
+    yt_watch_link = ("https://www.youtube.com/results?search_query=" +
+                     requests.utils.quote(f"{artist} {song} official audio"
+                                           if song else artist))
+
+    for url, title_c, uploader_c, dur, label in attempts:
+        logger.info(f"[MP3] Trying {label}: '{title_c}'")
         try:
-            path = _download_url_to_mp3(url, file_prefix, label=f'{provider}-rank{rank+1}')
+            path = _try_download(url, label.replace(' ', '_'))
         except Exception as ex:
-            logger.info(f"[MP3] rank {rank+1} failed: {type(ex).__name__}")
-            if 'not a bot' in str(ex).lower():
+            logger.info(f"[MP3] {label} failed: {type(ex).__name__}")
+            if _is_block_error(ex):
                 _bot_blocked = True
+                _yt_trip_breaker(f"download {label}: {type(ex).__name__}")
             continue
         res = _accept_downloaded(path, title_c, uploader_c, dur)
         if res == 'too_large':
             return False, ("❌ File Too Large\n━━━━━━━━━━━━━━━━━━━━━\n\nTelegram limit: 50MB.")
         if res:
+            _winurl_note(key, url)
             return res
 
     logger.error(f"[MP3][FAIL] All providers exhausted for '{query}'")
     if _bot_blocked:
-        return False, (
+        fail_msg = (
             "❌ MP3 Not Available\n"
             "━━━━━━━━━━━━━━━━━━━━━\n\n"
             "YouTube is temporarily blocking downloads from this server "
             "(bot check), and SoundCloud had no playable copy.\n\n"
+            f"🎧 Listen right now:\n{yt_watch_link}\n\n"
             "💡 This usually clears on its own — try again in a few minutes."
         )
-    return False, (
-        "❌ MP3 Not Available\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Couldn't find a working audio source for this song.\n"
-        "Please try again later."
-    )
+    else:
+        fail_msg = (
+            "❌ MP3 Not Available\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Couldn't find a working audio source for this song.\n\n"
+            f"🎧 Listen right now:\n{yt_watch_link}\n\n"
+            "Please try again later."
+        )
+    _failure_note(key, fail_msg)
+    return False, fail_msg
 
 
 
