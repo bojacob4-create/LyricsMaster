@@ -49,7 +49,7 @@ from utils import (
 )
 from services.youtube_service import get_youtube_link, get_youtube_link_info, \
     format_youtube_response
-from services.youtube_downloader_service import download_youtube_video, download_youtube_audio, download_audio_for_song, cleanup_video, note_mp3_file_id, forget_mp3_file_id, is_cached_mp3_path
+from services.youtube_downloader_service import download_youtube_video, download_youtube_audio, download_audio_for_song, cleanup_video, note_mp3_file_id, forget_mp3_file_id, is_cached_mp3_path, validate_youtube_url
 from services.ai_info_service import get_person_info
 from services.artist_service import (
     get_artist_info, format_artist_info, get_trending_songs, format_trending,
@@ -2816,6 +2816,22 @@ def download_command(update: Update, context: CallbackContext):
             "it here automatically. 📥"
         )
 
+        # Round 34b: validate BEFORE dispatching to the home worker. The
+        # worker's parse_job rejects bad URLs silently (no FAIL signal),
+        # which used to mean a 4-minute dead wait before the timeout
+        # fallback reported the problem. Garbage in → instant honest
+        # reply, worker never involved.
+        if not validate_youtube_url(url):
+            processing_message.edit_text(
+                "😕 Invalid YouTube URL\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Please provide a valid YouTube link:\n"
+                "• youtube.com/watch?v=...\n"
+                "• youtu.be/...\n"
+                "• youtube.com/shorts/..."
+            )
+            return
+
         chat_id = update.effective_chat.id
 
         # Home worker first: the user's streamer downloads over the home
@@ -2986,7 +3002,7 @@ def worker_channel_post(update: Update, context: CallbackContext):
                 entry = note_failed(job_id)
                 if entry:
                     _deliver_video_local(context.bot, entry["chat_id"],
-                                         entry["user_id"], entry["url"])
+                                         entry["user_id"], entry["video_url"])
                 return
             note_done(job_id)  # logs [WORKER][DELIVERED]
         elif sig[0] == "fail":
@@ -2996,7 +3012,7 @@ def worker_channel_post(update: Update, context: CallbackContext):
                         job_id, code)
             if entry:
                 _deliver_video_local(context.bot, entry["chat_id"],
-                                     entry["user_id"], entry["url"],
+                                     entry["user_id"], entry["video_url"],
                                      fail_code=code)
     except Exception as e:
         logger.warning("worker_channel_post failed: %s", e)
@@ -3015,7 +3031,8 @@ def worker_timeout_tick(bot):
             logger.info("[WORKER][TIMEOUT] job %s: no signal in 4 min — "
                         "local fallback", job_id)
             _deliver_video_local(bot, entry.get("chat_id"),
-                                 entry.get("user_id"), entry.get("url", ""))
+                                 entry.get("user_id"),
+                                 entry.get("video_url", ""))
     except Exception as e:
         logger.warning("worker_timeout_tick failed: %s", e)
 
