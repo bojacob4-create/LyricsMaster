@@ -4,7 +4,6 @@ import re
 import requests
 import threading
 import time
-from typing import Optional
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
@@ -3876,53 +3875,6 @@ def mood_command(update: Update, context: CallbackContext):
         )
 
 
-def _format_duration_ms(ms: int) -> str:
-    """Round-18: 142000 → '2:22'."""
-    total_s = max(0, int(round(ms / 1000)))
-    return f"{total_s // 60}:{total_s % 60:02d}"
-
-
-def _itunes_duration(artist: str, name: str) -> Optional[str]:
-    """Best-effort track duration via iTunes Search. Returns 'm:ss' or None.
-
-    Verifies the hit is actually our song (token overlap on artist+track)
-    so a same-artist different-song result can't attach a wrong duration.
-    Never raises.
-    """
-    try:
-        r = requests.get(
-            "https://itunes.apple.com/search",
-            params={"term": f"{artist} {name}", "media": "music", "limit": 3},
-            timeout=5)
-        results = (r.json().get('results') or [])
-        want = set(re.sub(r'[^\w\s]', '', f"{artist} {name}".lower()).split())
-        for hit in results:
-            ha = str(hit.get('artistName', ''))
-            ht = str(hit.get('trackName', ''))
-            got = set(re.sub(r'[^\w\s]', '', f"{ha} {ht}".lower()).split())
-            if (len(want & got) >= max(2, len(want) // 2)
-                    and hit.get('trackTimeMillis')):
-                return _format_duration_ms(hit['trackTimeMillis'])
-    except Exception:
-        pass
-    return None
-
-
-def _fetch_mix_durations(songs) -> list:
-    """Parallel iTunes duration lookups for a mood mix. Never raises.
-
-    One entry per song ('m:ss' or None). Runs in parallel so 5 songs cost
-    ~1s, not 5x serial.
-    """
-    try:
-        with ThreadPoolExecutor(max_workers=5) as pool:
-            return list(pool.map(
-                lambda s: _itunes_duration(s.get('artist', ''), s.get('name', '')),
-                songs))
-    except Exception:
-        return [None] * len(songs)
-
-
 # ── Round-19: classical-feed title noise ─────────────────────────────────
 # iTunes classical feeds return full catalog entries as titles:
 #   "Beethoven: Sonata No. 14 "Moonlight" in C-Sharp Minor, Op. 27 No 2:
@@ -4040,16 +3992,9 @@ def _send_mood_mix(update, user_id: int, mood: str):
         lines.append("🔥 Listener favorites")
     lines += ["━━━━━━━━━━━━━━━━━━━━━", ""]
     _MARK = {'fresh': '🆕 ', 'tag': '🔥 ', 'pool': ''}
-    # Round-18: show each song's duration in the mix text (parallel
-    # lookup, best-effort — a song without a verified hit keeps no suffix).
-    durations = _fetch_mix_durations(songs)
     for i, s in enumerate(songs, 1):
         mark = _MARK.get(s.get('source'), '')
-        line = f"{i}. {mark}{md(s['artist'])} — {md(s['name'])}"
-        dur = durations[i - 1] if i - 1 < len(durations) else None
-        if dur:
-            line += f" ⏱️ {dur}"
-        lines.append(line)
+        lines.append(f"{i}. {mark}{md(s['artist'])} — {md(s['name'])}")
         # Pool fallbacks keep their unique per-song reasons; live sources
         # are covered by the header + per-line markers.
         if s.get('source') == 'pool' and s.get('reason'):

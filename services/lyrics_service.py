@@ -128,6 +128,47 @@ def _track_relevance(query_lower: str, artist: str, track: str) -> int:
     return artist_overlap * 10 + track_overlap * 20
 
 
+# ── Relevance floor (round 20) ────────────────────────────────────────────
+# The fuzzy lrclib search used to return its best-scoring result no matter
+# how weak it was: tapping "Chloe Flower - Song for Snow" (instrumental,
+# no lyrics in the database) produced a dashboard for "Miike Snow - Song
+# For No One" — a completely different recording — just because the words
+# "song"/"for"/"snow" overlapped. A weak match is now rejected so the
+# caller gets an honest "couldn't find it" instead of a wrong song.
+_RELEVANCE_STOPWORDS = frozenset({
+    'the', 'a', 'an', 'and', 'or', 'of', 'for', 'to', 'in', 'on', 'at',
+    'by', 'with', 'feat', 'ft', 'vs', 'de', 'la', 'le', 'el', 'un', 'une',
+})
+
+
+def _meaningful_tokens(text: str) -> set:
+    """Normalized tokens minus stopwords (falls back to all tokens when
+    nothing meaningful remains, e.g. artist 'The')."""
+    toks = _normalize_tokens(text) - _RELEVANCE_STOPWORDS
+    return toks or _normalize_tokens(text)
+
+
+def _meets_relevance_floor(query: str, expected_artist: str,
+                           found_artist: str, found_track: str) -> bool:
+    """True when the fuzzy result is plausibly the requested song.
+
+    Requires at least half of the requested artist's meaningful tokens to
+    appear in the found artist (rejects clear artist mismatches), and at
+    least half of the query's meaningful tokens to be covered by the
+    result overall.
+    """
+    if expected_artist:
+        ea = _meaningful_tokens(expected_artist)
+        fa = _normalize_tokens(found_artist)
+        if len(ea & fa) < len(ea) / 2:
+            return False
+    q = _meaningful_tokens(query)
+    if not q:
+        return False
+    r = _normalize_tokens(found_artist) | _normalize_tokens(found_track)
+    return len(q & r) >= len(q) / 2
+
+
 def _clean_slug_title(slug: str, artist: str) -> str:
     """Convert a URL slug like 'Artist-Name-Song-Title-' into 'Song Title'.
 
@@ -235,6 +276,16 @@ def _fetch_from_lrclib_search(
                         best_clean = entry
 
                 result = best_clean if best_clean is not None else best_any
+                # Round-20 relevance floor: never hand back a recording that
+                # doesn't plausibly match the request (e.g. "Miike Snow -
+                # Song For No One" for a "Chloe Flower - Song for Snow"
+                # query). Callers then report an honest "not found".
+                if result and not _meets_relevance_floor(
+                        query, expected_artist, result[0], result[1]):
+                    logger.info(
+                        f"lrclib search hit rejected (weak match): "
+                        f"'{result[0]} - {result[1]}' for query '{query}'")
+                    return None
                 if result:
                     ra, rt, rl = result
                     ra, rt = canonicalize_track_names(ra, rt)

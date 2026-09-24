@@ -90,15 +90,15 @@ noisy = [
 ]
 
 with patch.object(h, "get_mood_mix", return_value=noisy), \
-     patch.object(h, "_fetch_mix_durations", return_value=["2:14", "1:07"]), \
      patch.object(h, "log_interaction", return_value=None):
     h._send_mood_mix(FakeUpdate(), 123, "focus")
 
 text = captured.get("text", "")
-check("line 1 clean with duration",
-      "1. 🆕 Chloe Flower — Song for Snow ⏱️ 2:14" in text, text[:160])
-check("line 2 nickname extracted",
-      '2. 🆕 Ludwig van Beethoven — Moonlight Sonata ⏱️ 1:07' in text,
+check("line 1 clean, no duration",
+      "1. 🆕 Chloe Flower — Song for Snow" in text and "⏱️" not in text,
+      text[:160])
+check("line 2 nickname extracted, no duration",
+      "2. 🆕 Ludwig van Beethoven — Moonlight Sonata" in text,
       text[160:320])
 check("no opus/catalog noise left",
       "Op." not in text and "Adagio" not in text and "Academy of St" not in text)
