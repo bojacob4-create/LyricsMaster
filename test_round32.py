@@ -17,6 +17,7 @@ Changes under test (both /download video path and MP3 path):
 """
 import os
 import sys
+from yt_dlp.networking.impersonate import ImpersonateTarget
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -126,9 +127,10 @@ mweb_opts = FakeYDL.instances[3]
 check("mweb attempt carries fetch_pot=always",
       mweb_opts['extractor_args']['youtube'].get('fetch_pot') == ['always'],
       str(mweb_opts['extractor_args']))
+imp = FakeYDL.instances[0].get('impersonate')
 check("video ydl opts impersonate chrome",
-      FakeYDL.instances[0].get('impersonate') == 'chrome',
-      str(FakeYDL.instances[0].get('impersonate')))
+      isinstance(imp, ImpersonateTarget) and imp.client == 'chrome',
+      str(imp))
 check("video ydl opts enable node JS runtime",
       FakeYDL.instances[0].get('js_runtimes') == {'node': {}},
       str(FakeYDL.instances[0].get('js_runtimes')))
@@ -173,9 +175,10 @@ try:
         path = _download_url_to_mp3(
             "https://www.youtube.com/watch?v=mp3test1", "mp3test", "YT")
     opts = FakeYDLmp3.instances[0]
+    imp = opts.get('impersonate')
     check("mp3 ydl opts impersonate chrome",
-          opts.get('impersonate') == 'chrome',
-          str(opts.get('impersonate')))
+          isinstance(imp, ImpersonateTarget) and imp.client == 'chrome',
+          str(imp))
     check("mp3 ydl opts enable node JS runtime",
           opts.get('js_runtimes') == {'node': {}},
           str(opts.get('js_runtimes')))
@@ -205,6 +208,29 @@ try:
     check("bgutil plugin version is 2.0.0", v == '2.0.0', v)
 except importlib.metadata.PackageNotFoundError as e:
     check("bgutil plugin version is 2.0.0", False, str(e))
+
+# ── 6. Real yt-dlp validation (round-32b lesson) ───────────────────────────
+# FakeYDL never touches yt-dlp's own param validation, which is exactly
+# where two round-32 bugs lived (js_runtimes list, impersonate string).
+# Instantiate a REAL YoutubeDL with the shipped opts for every client —
+# no network, auto_init=False — so API-contract mistakes fail loudly here.
+for client in ('android', 'web', 'ios', 'mweb'):
+    opts = {
+        'format': 'best', 'noplaylist': True, 'quiet': True,
+        'outtmpl': 'r32.%(ext)s',
+        'socket_timeout': 30, 'retries': 3,
+        'extractor_args': _client_extractor_args(client),
+        'impersonate': ImpersonateTarget.from_str('chrome'),
+        'js_runtimes': {'node': {}},
+    }
+    try:
+        ydl = yt_dlp.YoutubeDL(opts, auto_init=False)
+        ydl.params['js_runtimes'] = ydl.params.get('js_runtimes', {'deno': {}})
+        ydl._clean_js_runtimes(ydl.params['js_runtimes'])
+        check(f"real YoutubeDL accepts opts ({client})", True)
+    except Exception as e:
+        check(f"real YoutubeDL accepts opts ({client})", False,
+              f"{type(e).__name__}: {e}")
 
 print(f"\nround-32: {passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

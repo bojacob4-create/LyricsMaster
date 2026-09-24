@@ -4,6 +4,7 @@ import os
 import re
 import time
 import yt_dlp
+from yt_dlp.networking.impersonate import ImpersonateTarget
 import unicodedata
 import string
 import glob as globmod
@@ -120,7 +121,9 @@ def _download_video_with_client(url: str, video_id: str,
         # not a browser's — without this, extractions stall for 100s+
         # with zero output; with it they proceed immediately (verified
         # on this machine, Sep 2026). Needs curl_cffi in the venv.
-        'impersonate': 'chrome',
+        # API callers must pass an ImpersonateTarget object (the CLI
+        # converts the string itself via ImpersonateTarget.from_str).
+        'impersonate': ImpersonateTarget.from_str('chrome'),
         # Round 32: only deno is enabled by default, and it is not
         # installed here — node is. Without a JS runtime the n/sig
         # challenge solving fails and formats go missing ("requested
@@ -1035,7 +1038,9 @@ def _download_url_to_mp3(download_url: str, file_prefix: str, label: str) -> str
             # Round 32: same as the video path — browser TLS fingerprint
             # (fixes tarpitted extractions) and PO-token escalation via
             # the mweb client when the others are challenged.
-            'impersonate': 'chrome',
+            # API callers must pass an ImpersonateTarget object (the CLI
+            # converts the string itself via ImpersonateTarget.from_str).
+            'impersonate': ImpersonateTarget.from_str('chrome'),
             # Round 32: enable the system node runtime for YouTube's
             # n/sig challenge solving (deno, the default, is not
             # installed). Missing runtimes = missing formats.
