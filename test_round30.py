@@ -89,8 +89,18 @@ def clients_used():
             for o in FakeYDL.instances]
 
 
+def _passthrough(url, video_id, tmpl, client):
+    # Round 33: the rotation runs each client attempt in a forked child
+    # with a wall-clock cap. A fork can't report FakeYDL's in-memory
+    # records back to the parent, so rotation tests bypass the fork and
+    # call the inner function in-process (the cap is tested in round-33).
+    return yds._download_video_with_client(url, video_id, tmpl, client)
+
+
 def run(url=URL):
-    with patch.object(yds.yt_dlp, 'YoutubeDL', FakeYDL):
+    with patch.object(yds.yt_dlp, 'YoutubeDL', FakeYDL), \
+         patch.object(yds, '_download_video_with_client_capped',
+                      _passthrough):
         return download_youtube_video(url)
 
 

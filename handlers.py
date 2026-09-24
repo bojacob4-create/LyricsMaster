@@ -2811,8 +2811,9 @@ def download_command(update: Update, context: CallbackContext):
         processing_message = update.message.reply_text(
             "📥 Downloading...\n"
             "━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "⏳ Fetching video info and preparing download.\n"
-            "This may take 30–60 seconds."
+            "⏳ This usually takes under a minute.\n"
+            "If YouTube blocks the download, I'll queue it and send "
+            "it here automatically. 📥"
         )
 
         success, result = download_youtube_video(url)

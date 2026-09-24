@@ -90,8 +90,18 @@ def reset(behaviors=None):
         os.remove(DUMMY)
 
 
+def _passthrough(url, video_id, tmpl, client):
+    # Round 33: the rotation runs each client attempt in a forked child
+    # with a wall-clock cap. A fork can't report FakeYDL's in-memory
+    # records back to the parent, so rotation tests bypass the fork and
+    # call the inner function in-process (the cap is tested in round-33).
+    return yds._download_video_with_client(url, video_id, tmpl, client)
+
+
 def run(url=URL):
-    with patch.object(yds.yt_dlp, 'YoutubeDL', FakeYDL):
+    with patch.object(yds.yt_dlp, 'YoutubeDL', FakeYDL), \
+         patch.object(yds, '_download_video_with_client_capped',
+                      _passthrough):
         return download_youtube_video(url)
 
 
@@ -127,19 +137,24 @@ check("format refusal still NOT permanent",
 # ── 2. Production reproduction: connection-kill + format refusals ────────────
 # android got the format list and started downloading (so the video EXISTS);
 # web/ios refused the format.  Must NOT say "not available".
+#
+# Round 33 supersedes the old expectation here: a connection kill
+# MID-DOWNLOAD is wave proof from a single client, so the rotation now
+# aborts at android (no more clients), trips the breaker, and marks the
+# wave so the caller queues for auto-retry.
 reset({'android': conn_reset_err(), 'web': format_err(),
        'ios': format_err(), 'mweb': format_err()})
 ok, notice = run()
 check("prod case: download fails", ok is False)
-check("prod case: tried all four clients",
-      clients_used() == list(_YT_CLIENT_ATTEMPTS), str(clients_used()))
+check("prod case: rotation aborts at the download-stage kill",
+      clients_used() == ['android'], str(clients_used()))
 check("prod case: never claims 'not available'",
       "not available" not in notice.lower()
       and "region-locked" not in notice.lower(), notice[:150])
 check("prod case: honest blocked reason",
       "YouTube blocked the download" in notice, notice[:150])
-check("prod case: single-client block does not queue",
-      not download_hit_block_wave() and not yds._yt_breaker_open())
+check("prod case: download-stage kill queues for auto-retry",
+      download_hit_block_wave() and yds._yt_breaker_open())
 
 # ── 3. Block error preferred over the last client's format refusal ──────────
 reset({'android': yt_dlp.utils.DownloadError(

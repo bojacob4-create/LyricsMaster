@@ -113,9 +113,18 @@ check("web/ios have no forced fetch_pot",
 
 
 # ── 2. Video path: challenged android/web/ios escalate to mweb ────────────
+# Round 33: rotation runs each client attempt in a forked child with a
+# wall-clock cap; a fork can't report FakeYDL's in-memory records back to
+# the parent, so these rotation checks bypass the fork in-process (the
+# cap itself is tested in round-33).
+def _passthrough(url, video_id, tmpl, client):
+    return yds._download_video_with_client(url, video_id, tmpl, client)
+
+
 reset({'android': bot_err(), 'web': bot_err(), 'ios': bot_err(),
        'mweb': 'ok'})
-with patch.object(yds.yt_dlp, 'YoutubeDL', FakeYDL):
+with patch.object(yds.yt_dlp, 'YoutubeDL', FakeYDL), \
+     patch.object(yds, '_download_video_with_client_capped', _passthrough):
     ok, _ = download_youtube_video(URL)
 clients = [o['extractor_args']['youtube']['player_client'][0]
            for o in FakeYDL.instances]
@@ -137,7 +146,8 @@ check("video ydl opts enable node JS runtime",
 
 # ── 3. Video path: android success never reaches mweb (no slowdown) ──────
 reset({'android': 'ok'})
-with patch.object(yds.yt_dlp, 'YoutubeDL', FakeYDL):
+with patch.object(yds.yt_dlp, 'YoutubeDL', FakeYDL), \
+     patch.object(yds, '_download_video_with_client_capped', _passthrough):
     ok, _ = download_youtube_video(URL)
 clients = [o['extractor_args']['youtube']['player_client'][0]
            for o in FakeYDL.instances]

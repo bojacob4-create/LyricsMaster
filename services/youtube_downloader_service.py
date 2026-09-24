@@ -191,6 +191,74 @@ def _download_video_with_client(url: str, video_id: str,
         return True, (file_path, success_msg)
 
 
+_VIDEO_CLIENT_TIMEOUT_SECS = 150  # wall-clock cap per player-client attempt
+
+
+def _download_video_with_client_capped(url: str, video_id: str,
+                                       output_template: str,
+                                       client: str) -> Tuple[bool, object]:
+    """One client attempt with a hard wall-clock cap (round 33).
+
+    Runs _download_video_with_client in a FORKED child (the round-24
+    pattern): threads can't be killed, so a client stuck minting PO
+    tokens or tarpitted at extraction could otherwise burn minutes and
+    hold the user's "Downloading..." spinner hostage. The child is
+    terminate()d at the cap with SIGKILL escalation; partial .part
+    files are tidied so the next client starts clean.
+
+    Returns whatever _download_video_with_client returns; raises the
+    child's exception (re-raised in the parent) or TimeoutError on cap.
+    """
+    import multiprocessing as _mp
+
+    def _child(q, durl, dvid, dtmpl, dclient):
+        # The fork inherits bot.py's SIGTERM/SIGINT handlers, which catch
+        # the signal and shut down gracefully WITHOUT exiting — reset to
+        # default so the parent's terminate() really terminates (round-24
+        # lesson: a "hard-killed" child that never dies).
+        import signal as _signal
+        _signal.signal(_signal.SIGTERM, _signal.SIG_DFL)
+        _signal.signal(_signal.SIGINT, _signal.SIG_DFL)
+        try:
+            q.put(('ok', _download_video_with_client(
+                durl, dvid, dtmpl, dclient)))
+        except Exception as e:
+            q.put(('err', e))
+
+    ctx = _mp.get_context('fork')
+    q = ctx.Queue()
+    p = ctx.Process(target=_child,
+                    args=(q, url, video_id, output_template, client),
+                    daemon=True)
+    p.start()
+    p.join(_VIDEO_CLIENT_TIMEOUT_SECS)
+    if p.is_alive():
+        p.terminate()
+        p.join(5)
+        if p.is_alive():
+            # Last resort: SIGKILL can't be caught or ignored.
+            p.kill()
+            p.join(5)
+        for m in globmod.glob(
+                os.path.join(os.getcwd(), f'youtube_{video_id}.*')):
+            if (m.endswith('.part') or m.endswith('.ytdl')
+                    or '.temp.' in m):
+                try:
+                    os.remove(m)
+                except OSError:
+                    pass
+        logger.warning(f"[VIDEO] client={client} hard-killed after "
+                       f"{_VIDEO_CLIENT_TIMEOUT_SECS}s — no lingering worker")
+        raise TimeoutError(
+            f"client '{client}' timed out after {_VIDEO_CLIENT_TIMEOUT_SECS}s")
+    if not q.empty():
+        status, payload = q.get()
+        if status == 'ok':
+            return payload
+        raise payload
+    raise RuntimeError("download child exited without a result")
+
+
 def download_youtube_video(url: str) -> Tuple[bool, str]:
     global _LAST_DOWNLOAD_WAVE
     _LAST_DOWNLOAD_WAVE = False
@@ -224,14 +292,34 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
         client_errors: list = []  # (client, lowered message) in attempt order
         for client in _YT_CLIENT_ATTEMPTS:
             try:
-                return _download_video_with_client(
+                return _download_video_with_client_capped(
                     url, video_id, output_template, client)
+            except TimeoutError as e:
+                # Round 33: one stuck client (PO-token minting spinning,
+                # tarpitted extraction) must never hold the user's spinner
+                # hostage — the cap killed it, note it and move on. A
+                # stall is not wave proof, so the breaker stays untouched.
+                logger.warning(f"[VIDEO] client={client} timed out: {e}")
+                client_errors.append((client, str(e).lower()))
             except yt_dlp.utils.DownloadError as e:
                 last_err = e
                 error_msg = str(e).lower()
                 logger.error(f"yt-dlp DownloadError (client={client}): {e}")
                 client_errors.append((client, error_msg))
                 if _is_permanent_video_error(error_msg):
+                    break
+                if _is_download_stage_kill(error_msg):
+                    # Round 33: wave proof from a single client — YouTube
+                    # killed the connection mid-download, which only
+                    # happens when it is blocking this IP. Abort the
+                    # rotation NOW instead of burning minutes on the
+                    # remaining clients; the caller queues for auto-retry.
+                    logger.warning(
+                        f"[VIDEO] client={client} connection killed "
+                        f"mid-download — wave, aborting rotation")
+                    _yt_trip_breaker(
+                        "download: connection killed mid-download")
+                    _LAST_DOWNLOAD_WAVE = True
                     break
                 if _is_block_error(e):
                     block_hits += 1
@@ -288,6 +376,11 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
             reason = "Requires authentication to access."
         elif "429" in error_msg or "too many" in error_msg:
             reason = "YouTube rate limit. Wait a few minutes."
+        elif "timed out" in error_msg:
+            # Round 33: a client attempt hit the wall-clock cap — a stall,
+            # not a block and not a missing video.
+            reason = ("The download took too long.\n\n"
+                      "Try again in a bit — a faster moment usually works.")
         else:
             reason = "YouTube blocked the download."
 
@@ -355,6 +448,18 @@ _BLOCK_ERROR_HINTS = (
     # got the format list and started downloading, then the remote kept
     # closing the connection — not a missing video.
     'remote end closed', 'connection reset', 'connection aborted',
+    # Round 33: the same kill wearing curl's clothes — "Failed to perform,
+    # curl: (56) Connection closed abruptly" mid-download is the identical
+    # IP-block mask (seen 2026-09-24: android at 77% of the file).
+    'connection closed abruptly', 'curl: (56)',
+)
+# Subset of _BLOCK_ERROR_HINTS that specifically means "the TCP connection
+# was killed". Used with the download-stage check below: a kill that
+# arrives while bytes are flowing is wave proof from a single client —
+# YouTube only does that when it is blocking this IP.
+_CONN_KILL_HINTS = (
+    'remote end closed', 'connection reset', 'connection aborted',
+    'connection closed abruptly', 'curl: (56)',
 )
 # Soft-wave hints: stalls and per-video format refusals that arrive
 # back-to-back across DIFFERENT candidates. One of these is bad luck;
@@ -386,6 +491,21 @@ def _is_block_error_msg(msg: str) -> bool:
 def _is_soft_wave_error(exc: BaseException) -> bool:
     msg = str(exc).lower()
     return any(h in msg for h in _SOFT_WAVE_HINTS)
+
+
+def _is_download_stage_kill(msg: str) -> bool:
+    """True when YouTube killed the TCP connection while bytes were flowing.
+
+    Round 33: extraction-stage errors ("sign in to confirm you're not a
+    bot") can flap per client, but a connection kill mid-download —
+    "[download] Got error: ... Giving up after N retries" — only happens
+    when YouTube is actively blocking this egress IP. One of these from
+    ANY client is wave proof on its own, so the rotation aborts
+    immediately instead of burning minutes on the remaining clients.
+    """
+    m = msg.lower()
+    return ('[download] got error' in m
+            and any(h in m for h in _CONN_KILL_HINTS))
 
 
 def _yt_breaker_open() -> bool:
