@@ -307,9 +307,9 @@ fb = lc._parse_itunes_rss({'feed': {'entry': [
 check("fallback parser captures im:releaseDate",
       fb and fb[0]['release_date'] == '2026-01-15T00:00:00-07:00', repr(fb))
 
-# ── 9. Artist top songs are live-first (no fixed 5) ──────────────────────────
+# ── 9. Artist top songs come from the artist's own page (iTunes ranking) ─────
 
-print("== artist top songs live-first ==")
+print("== artist top songs: artist-page ranking first ==")
 import handlers as _h
 
 class _FakeResp:
@@ -322,37 +322,48 @@ _real_get = _h.requests.get
 _h._top_songs_cache.clear()
 os.environ['LASTFM_API_KEY'] = 'test-key'
 
-def _fake_lastfm(url, params=None, timeout=None):
-    assert params.get('method') == 'artist.getTopTracks'
-    return _FakeResp({'toptracks': {'track': [
-        {'name': 'New Hit A'}, {'name': 'New Hit B'}, {'name': 'New Hit A'},
-        {'name': 'New Hit C'}, {'name': 'Old Classic'}, {'name': 'New Hit D'},
-        {'name': 'New Hit E'}]}})
+def _fake_itunes_first(url, params=None, timeout=None):
+    # iTunes artist-page ranking (popularity order) wins over Last.fm all-time
+    if 'itunes.apple.com' in url:
+        return _FakeResp({'results': [
+            {'artistName': 'Tyla', 'trackName': 'Apple Hit 1'},
+            {'artistName': 'Tyla', 'trackName': 'Apple Hit 2'},
+            {'artistName': 'Tyla', 'trackName': 'Apple Hit 1'},  # dupe
+            {'artistName': 'Tyla', 'trackName': 'Apple Hit 3'},
+            {'artistName': 'WizTheMc, bees & honey & Tyla', 'trackName': 'Collab Cut'},
+            {'artistName': 'Someone Else', 'trackName': 'Wrong Artist Song'},
+        ]})
+    return _FakeResp({'toptracks': {'track': [{'name': 'Lastfm Oldie'}]}})
 
-_h.requests.get = _fake_lastfm
+_h.requests.get = _fake_itunes_first
 try:
     live = _h._fetch_artist_top_songs('Tyla')  # in static DB, must still go live first
-    check("known artist uses live top tracks, not static list",
-          live == ['New Hit A', 'New Hit B', 'New Hit C', 'Old Classic', 'New Hit D'],
+    check("known artist uses artist-page ranking, not static list",
+          live == ['Apple Hit 1', 'Apple Hit 2', 'Apple Hit 3', 'Collab Cut'],
           repr(live))
-    check("live top songs are cached",
+    check("wrong-artist tracks are filtered out",
+          'Wrong Artist Song' not in live)
+    check("artist-page results are cached",
           _h._fetch_artist_top_songs('Tyla') == live)
 finally:
     _h.requests.get = _real_get
     _h._top_songs_cache.clear()
 
-# live miss -> iTunes fallback
-def _fake_itunes(url, params=None, timeout=None):
-    if 'audioscrobbler' in url:
+# iTunes miss -> Last.fm fallback
+def _fake_lastfm_only(url, params=None, timeout=None):
+    if 'itunes.apple.com' in url:
         return _FakeResp({}, status=500)
-    return _FakeResp({'results': [
-        {'artistName': 'Tyla', 'trackName': 'iTunes Song 1'},
-        {'artistName': 'Tyla', 'trackName': 'iTunes Song 2'}]})
-_h.requests.get = _fake_itunes
+    return _FakeResp({'toptracks': {'track': [
+        {'name': 'New Hit A'}, {'name': 'New Hit B'}, {'name': 'New Hit A'},
+        {'name': 'New Hit C'}, {'name': 'Old Classic'}, {'name': 'New Hit D'},
+        {'name': 'New Hit E'}]}})
+
+_h.requests.get = _fake_lastfm_only
 try:
     fb = _h._fetch_artist_top_songs('Tyla')
-    check("Last.fm miss falls back to live iTunes search",
-          fb == ['iTunes Song 1', 'iTunes Song 2'], repr(fb))
+    check("iTunes miss falls back to Last.fm top tracks",
+          fb == ['New Hit A', 'New Hit B', 'New Hit C', 'Old Classic', 'New Hit D'],
+          repr(fb))
 finally:
     _h.requests.get = _real_get
     _h._top_songs_cache.clear()
@@ -368,61 +379,32 @@ try:
           repr(static))
     check("unknown artist with dead sources -> []",
           _h._fetch_artist_top_songs('Some Unknown Artist XYZ') == [])
+    check("empty artist name -> []",
+          _h._fetch_artist_top_songs('') == [])
 finally:
     _h.requests.get = _real_get
     _h._top_songs_cache.clear()
 
-# ── 10. Trending-now boost on artist top songs ─────────────────────────────
+# ── 10. Artist page ranking is never the worldwide chart ─────────────────────
 
-print("== trending-now boost ==")
-_h._top_songs_cache.clear()
-_h.requests.get = _fake_lastfm
-_h._chart_song_index = lambda: [('tyla', 'new hit d'), ('tyla', 'water')]
+print("== artist ranking independent of worldwide chart ==")
+# iTunes artist ranking must be used verbatim — no reordering by any chart
+_h.requests.get = _fake_itunes_first
 try:
     songs = _h._fetch_artist_top_songs('Tyla')
-    trending = _h._fetch_artist_trending('Tyla')
-    check("charting songs are boosted first",
-          songs[:2] == ['New Hit D', 'New Hit A'] or songs[0] == 'New Hit D',
+    check("artist-page order kept exactly as Apple returns it",
+          songs == ['Apple Hit 1', 'Apple Hit 2', 'Apple Hit 3', 'Collab Cut'],
           repr(songs))
-    check("trending set flags chart hits",
-          trending == {'New Hit D'}, repr(trending))
-    check("non-charting hits keep their order after",
-          songs[2:] == ['New Hit B', 'New Hit C', 'Old Classic'], repr(songs))
 finally:
     _h.requests.get = _real_get
     _h._top_songs_cache.clear()
 
-# no chart overlap -> order untouched, trending empty
-_h.requests.get = _fake_lastfm
-_h._chart_song_index = lambda: [('someone else', 'other song')]
-try:
-    songs = _h._fetch_artist_top_songs('Tyla')
-    check("no chart overlap keeps Last.fm order",
-          songs == ['New Hit A', 'New Hit B', 'New Hit C', 'Old Classic', 'New Hit D'],
-          repr(songs))
-    check("trending empty when nothing charts",
-          _h._fetch_artist_trending('Tyla') == set())
-finally:
-    _h.requests.get = _real_get
-    _h._top_songs_cache.clear()
-
-# chart unreachable -> graceful, no crash
-_h.requests.get = _fake_lastfm
-_h._chart_song_index = lambda: []
-try:
-    songs = _h._fetch_artist_top_songs('Tyla')
-    check("dead chart index still returns live songs",
-          len(songs) == 5, repr(songs))
-finally:
-    _h.requests.get = _real_get
-    _h._top_songs_cache.clear()
-
-# button labels mark trending songs
+# buttons render plain song labels (no worldwide-chart flags)
 import buttons as _b
-mk = _b.artist_summary_buttons('Tyla', ['New Hit D', 'New Hit B'], {'New Hit D'})
+mk = _b.artist_summary_buttons('Tyla', ['Apple Hit 1', 'Apple Hit 2'])
 labels = [row[0].text for row in mk.inline_keyboard]
-check("trending song gets fire label",
-      labels[:2] == ['🔥 New Hit D', '🎵 New Hit B'], repr(labels))
+check("song buttons use plain labels",
+      labels[:2] == ['\U0001f3b5 Apple Hit 1', '\U0001f3b5 Apple Hit 2'], repr(labels))
 
 _reset_mem()
 

@@ -73,14 +73,12 @@ def song_dashboard_buttons(query):
     ])
 
 
-def artist_buttons(artist_name, top_songs=None, trending=None):
+def artist_buttons(artist_name, top_songs=None):
     rows = []
-    trending = trending or set()
     if top_songs:
         for s in top_songs[:5]:
             song_query = f"{artist_name} - {s}"
-            label = f"🔥 {s}" if s in trending else f"🎵 {s}"
-            rows.append([InlineKeyboardButton(label, callback_data=_cb("song", song_query))])
+            rows.append([InlineKeyboardButton(f"🎵 {s}", callback_data=_cb("song", song_query))])
     rows.append([
         InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", artist_name)),
         InlineKeyboardButton("🎧 Similar", callback_data=_cb("recommend", f"artist:{artist_name}")),
@@ -91,13 +89,11 @@ def artist_buttons(artist_name, top_songs=None, trending=None):
     return InlineKeyboardMarkup(rows)
 
 
-def artist_summary_buttons(artist_name, top_songs, trending=None):
+def artist_summary_buttons(artist_name, top_songs):
     rows = []
-    trending = trending or set()
     for s in top_songs[:5]:
         song_query = f"{artist_name} - {s}"
-        label = f"🔥 {s}" if s in trending else f"🎵 {s}"
-        rows.append([InlineKeyboardButton(label, callback_data=_cb("song", song_query))])
+        rows.append([InlineKeyboardButton(f"🎵 {s}", callback_data=_cb("song", song_query))])
     rows.append([
         InlineKeyboardButton("👤 Full Artist Profile", callback_data=_cb("artist", artist_name)),
     ])
@@ -180,13 +176,11 @@ def ambiguous_buttons(query):
     ])
 
 
-def recommend_pick_buttons(artist_name, top_songs, trending=None):
+def recommend_pick_buttons(artist_name, top_songs):
     rows = []
-    trending = trending or set()
     for s in top_songs[:5]:
         song_query = f"{artist_name} - {s}"
-        label = f"🔥 {s}" if s in trending else f"🎵 {s}"
-        rows.append([InlineKeyboardButton(label, callback_data=_cb("song", song_query))])
+        rows.append([InlineKeyboardButton(f"🎵 {s}", callback_data=_cb("song", song_query))])
     return InlineKeyboardMarkup(rows)
 
 
