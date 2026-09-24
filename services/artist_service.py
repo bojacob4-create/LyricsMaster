@@ -578,6 +578,10 @@ def _get_cached_chart() -> Optional[List[Dict]]:
         return _chart_cache['raw']
 
     raw = _fetch_apple_chart()
+    if not raw:
+        # One retry: the Apple RSS endpoint occasionally drops a single
+        # request — don't fall back to the static list on a lone blip.
+        raw = _fetch_apple_chart()
     if raw:
         _chart_cache['raw'] = raw
         _chart_cache['timestamp'] = now

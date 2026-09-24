@@ -4,6 +4,7 @@ import logging
 import random
 import requests
 import time
+import unicodedata
 from functools import lru_cache
 from typing import List, Dict, Optional
 
@@ -2150,9 +2151,19 @@ def _production_compat(p1: str, p2: str) -> float:
 # Lightweight metadata helpers (no external API calls)
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _fold(s: str) -> str:
+    """Lowercase ASCII-folded string: accents stripped ("Jhené" → "jhene").
+
+    The local ARTIST_* maps use plain-ASCII keys, so every lookup folds
+    the input first — otherwise accented names (Jhené Aiko, ROSALÍA,
+    Beyoncé) miss the map and fall back to wrong defaults.
+    """
+    return unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode("ascii").lower()
+
+
 def _detect_genre_fast(artist: str) -> str:
     """Genre from artist map only — no external calls, O(1)."""
-    key = artist.lower().strip()
+    key = _fold(artist).strip()
     if key in ARTIST_GENRE_MAP:
         return ARTIST_GENRE_MAP[key]
     # Try stripping 'feat.' suffix
@@ -2168,7 +2179,7 @@ def _detect_genre_fast(artist: str) -> str:
 
 def _get_artist_profile(artist: str) -> Dict:
     """Lookup vocal type + era for a known artist; returns safe defaults."""
-    key = artist.lower().strip()
+    key = _fold(artist).strip()
     if key in ARTIST_PROFILE:
         return ARTIST_PROFILE[key]
     clean = re.sub(r'\s+(feat\.?|ft\.?|featuring)\s.*', '', key, flags=re.IGNORECASE).strip()
@@ -2646,7 +2657,7 @@ def _generate_reason(candidate_artist: str, candidate_name: str,
 def _detect_genre(artist: str, song: str, mood: str) -> str:
     """Detect genre: artist map → iTunes API → mood fallback."""
     result = _detect_genre_fast(artist)
-    if result != 'pop' or artist.lower().strip() in ARTIST_GENRE_MAP:
+    if result != 'pop' or _fold(artist).strip() in ARTIST_GENRE_MAP:
         return result
 
     try:
@@ -2662,7 +2673,7 @@ def _detect_genre(artist: str, song: str, mood: str) -> str:
                 mapped = _ITUNES_GENRE_MAP.get(itunes_genre)
                 if mapped:
                     logger.info(f"iTunes genre: '{artist} - {song}' → {itunes_genre} → {mapped}")
-                    ARTIST_GENRE_MAP[artist.lower().strip()] = mapped
+                    ARTIST_GENRE_MAP[_fold(artist).strip()] = mapped
                     return mapped
     except Exception:
         pass
