@@ -452,7 +452,13 @@ def detect_themes(lyrics: str) -> List[str]:
         'heartbreak': {'broke', 'broken', 'goodbye', 'leave', 'left', 'gone', 'miss', 'regret', 'apart', 'over', 'end', 'letting'},
         'longing': {'miss', 'wish', 'remember', 'memories', 'again', 'return', 'waiting', 'distance', 'far', 'someday', 'hope'},
         'confidence': {'boss', 'queen', 'king', 'power', 'strong', 'unstoppable', 'fearless', 'own', 'shine', 'crown', 'flex', 'win', 'best'},
-        'celebration': {'party', 'dance', 'tonight', 'celebrate', 'cheers', 'vibe', 'festival', 'drink', 'club', 'turn', 'lit'},
+        # Round 14b: added high-precision celebration words — anthems like
+        # "Happy" never say party/dance/celebrate, but "clap along" /
+        # "happiness" / "joy" are unambiguous. Deliberately NOT 'happy':
+        # sad songs say "I'm not happy" too, and keyword matching can't
+        # see negation.
+        'celebration': {'party', 'dance', 'tonight', 'celebrate', 'cheers', 'vibe', 'festival', 'drink', 'club', 'turn', 'lit',
+                        'clap', 'joy', 'joyful', 'happiness', 'celebration'},
         'introspective': {'think', 'wonder', 'question', 'soul', 'meaning', 'inside', 'reflect', 'truth', 'searching', 'understand', 'mind', 'thought'},
         'motivational': {'rise', 'fight', 'believe', 'dream', 'strength', 'never', 'give', 'stand', 'keep', 'brave', 'overcome', 'forward'},
         'nostalgic': {'remember', 'young', 'childhood', 'past', 'used', 'days', 'old', 'time', 'memories', 'back', 'years', 'ago'},

@@ -106,5 +106,19 @@ check("empty lyrics -> zero stats, no crash",
       and get_song_statistics(None)['total_lines'] == 0)
 check("marker-only lyrics -> 0 lines", get_song_statistics("[Intro]\n[Chorus]")['total_lines'] == 0)
 
+print("== 7. celebration keywords tuned (round-14b) ==")
+# "Happy" never says party/dance/celebrate — 'clap'/'happiness'/'joy' catch it.
+happy_lyrics = "Because I'm happy\nClap along if you feel like happiness is the truth\n" * 4
+check("'Happy'-style anthem -> celebration first",
+      detect_themes(happy_lyrics)[0] == 'celebration',
+      str(detect_themes(happy_lyrics)))
+# 'happy' itself stays OUT of the list: negation-blind matching would put
+# 'celebration' on sad songs ("I'm not happy anymore").
+sad_lyrics = "I'm not happy anymore\ntears fall down in the cold dark rain\n" * 3
+check("sad song saying 'not happy' is not celebration",
+      'celebration' not in detect_themes(sad_lyrics),
+      str(detect_themes(sad_lyrics)))
+check("clap is celebration", detect_themes("clap clap clap your hands\n" * 2)[0] == 'celebration')
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
