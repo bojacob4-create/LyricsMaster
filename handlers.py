@@ -1504,6 +1504,10 @@ def callback_query_handler(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     _pending_recommend_artist.pop(user_id, None)
     _pending_disambig.pop(user_id, None)
+    # A stashed recommendation count ("recommend 3 songs ...") dies here:
+    # tapping any button is a new request, and no button flow consumes the
+    # count — without this it would leak into a later /recommend.
+    _rec_limit.pop(user_id, None)
     logger.info(f"Callback from user {user_id}: action='{action}', param='{param}'")
 
     if action == 'noop':
@@ -1763,7 +1767,8 @@ def _send_fresh_picks(update, user_id: int, query: str):
     pool is served with an honest note instead of silence.  Never raises.
     """
     try:
-        from services.live_charts import get_fresh_songs, get_top_songs
+        from services.live_charts import (
+            get_fresh_songs, get_top_songs, search_songs_by_genre)
         from buttons import daily_picker_buttons
 
         artist = genre = None
@@ -1777,6 +1782,31 @@ def _send_fresh_picks(update, user_id: int, query: str):
         fresh = get_fresh_songs(limit=50, genre=genre) if genre \
             else get_fresh_songs(limit=50)
         note = ""
+        if genre and not fresh:
+            # No Apple-chart slice for this genre (afrobeats, amapiano,
+            # dancehall, ...): use the live iTunes genre search.  Prefer
+            # genuinely fresh releases (≤ ~24 months); if none qualify,
+            # serve the biggest songs in that genre with an honest note
+            # rather than falling back to the unrelated global chart.
+            try:
+                _cut = time.strftime(
+                    '%Y-%m-%d',
+                    time.localtime(time.time() - 730 * 86400))
+                _gs = search_songs_by_genre(genre, limit=50) or []
+                _gf = [s for s in _gs
+                       if (s.get('release_date') or '') >= _cut][:50]
+                if _gf:
+                    fresh = _gf
+                    logger.info(
+                        f"Sent fresh picks: genre '{genre}' via iTunes "
+                        f"search, {len(fresh)} fresh")
+                elif _gs:
+                    fresh = _gs[:50]
+                    note = (f"\n\n📡 No brand-new {genre} tracks on the "
+                            f"charts right now — here are the biggest "
+                            f"{genre} songs instead.")
+            except Exception as _ge:
+                logger.warning(f"[fresh] genre search fallback failed: {_ge}")
         if artist:
             _af = [s for s in fresh if artist.lower() in s['artist'].lower()]
             if _af:
@@ -2111,6 +2141,27 @@ def translate_lyrics_command(update: Update, context: CallbackContext):
             return
 
         song_query, lang_code, lang_name = _parse_translate_language(query)
+
+        if not lang_code and not lang_name:
+            # Bare language name ("Spanish", "spanish please") with a song
+            # on screen: translate that song instead of searching for a
+            # song literally called "Spanish".  Only fires when the whole
+            # message is just the language (a real song query like
+            # "french montana" keeps its meaning), and only when there is
+            # a last-viewed song to apply it to.
+            _lc, _lw = _extract_language_name(query)
+            if _lc:
+                _rest = re.sub(re.escape(_lw), '', query,
+                               flags=re.IGNORECASE)
+                _rest = re.sub(r'\b(please|pls|thanks|thank you)\b', '',
+                               _rest, flags=re.IGNORECASE).strip()
+                _last = _last_song.get(user_id)
+                if not _rest and _last:
+                    logger.info(
+                        f"User {user_id} bare language '{_lw}': using last "
+                        f"viewed song '{_last}'"
+                    )
+                    lang_code, lang_name, song_query = _lc, _lw, _last
 
         if lang_name and not lang_code:
             supported = get_supported_languages_text()

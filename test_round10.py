@@ -117,11 +117,53 @@ finally:
     handlers.recommend_command = orig_rec
     _rec_limit.pop(777001, None)
 
-# ── 5. get_similar_songs honors limit ─────────────────────────────────────
+# ── 6. get_similar_songs honors limit ─────────────────────────────────────
 import inspect
 sig = inspect.signature(handlers.get_similar_songs)
 check('get_similar_songs has limit param', 'limit' in sig.parameters,
       str(sig))
+
+# ── 7. Log-review fixes ───────────────────────────────────────────────────
+# Fix 1: a button tap clears a stashed recommend count (it would otherwise
+# leak into a later /recommend via the callback path, which bypasses the
+# natural_language_handler clearing).
+class FakeQuery:
+    def __init__(self, data): self.data = data; self.message = FakeMsg()
+    def answer(self): pass
+class FakeCBUpdate:
+    effective_user = FakeUser()
+    def __init__(self, data): self.callback_query = FakeQuery(data)
+_rec_limit[777001] = 3
+handlers.callback_query_handler(FakeCBUpdate('noop:x'), FakeCtx())
+check('fix1: button tap clears stashed count', 777001 not in _rec_limit,
+      dict(_rec_limit))
+
+# Fix 2: "__fresh__ genre:afrobeats" serves afrobeats songs (live iTunes
+# genre search) with an honest note — not the unrelated global chart.
+u_af = FakeUpdate()
+handlers._send_fresh_picks(u_af, 777001, '__fresh__ genre:afrobeats')
+blob_af = '\n'.join(u_af.message.texts)
+import re as _re
+af_lines = [l for l in blob_af.split('\n') if _re.match(r'^\d+\.', l)]
+check('fix2: 5 afrobeats picks served', len(af_lines) == 5, blob_af[:150])
+check('fix2: honest genre note',
+      'biggest afrobeats songs instead' in blob_af, blob_af[-200:])
+
+# Fix 3: bare "Spanish" with a song on screen translates THAT song to
+# Spanish — not a song literally called "Spanish" to Arabic.
+handlers._last_song[777001] = 'Lola Young - Messy'
+u_tr = FakeUpdate()
+handlers.translate_lyrics_command(u_tr, FakeCtx(['Spanish']))
+blob_tr = '\n'.join(u_tr.message.texts)
+check('fix3: bare language uses on-screen song',
+      'Messy' in blob_tr and 'Spanish Fly' not in blob_tr,
+      blob_tr[:150])
+handlers._last_song.pop(777001, None)
+# ...but a real song query containing a language word is untouched.
+_lc, _lw = handlers._extract_language_name('french montana')
+_rest = _re.sub(_re.escape(_lw), '', 'french montana',
+                flags=_re.IGNORECASE).strip()
+check('fix3: "french montana" not hijacked', bool(_rest), _rest)
 
 print(f"\nTOTAL: {passed+failed}  PASS: {passed}  FAIL: {failed}")
 sys.exit(1 if failed else 0)
