@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import requests
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
@@ -2230,7 +2231,13 @@ _mp3_in_progress = set()
 
 
 def mp3_command(update: Update, context: CallbackContext):
-    """Handle the MP3 button — convert a known song to MP3."""
+    """Handle the MP3 button — convert a known song to MP3.
+
+    Non-blocking: acknowledges immediately and runs the download in a
+    background thread, so the bot keeps accepting inputs and answering
+    while the MP3 is being prepared. The finished MP3 arrives as a new
+    message when it's ready.
+    """
     user_id = update.effective_user.id
     try:
         if not context.args:
@@ -2258,10 +2265,23 @@ def mp3_command(update: Update, context: CallbackContext):
             return
         _mp3_in_progress.add(job_key)
 
-        try:
-            _run_mp3_job(update, user_id, artist_q, song_q, raw)
-        finally:
-            _mp3_in_progress.discard(job_key)
+        chat_id = update.effective_chat.id
+        update.message.reply_text(
+            "🎧 On it!\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Finding the audio for {raw} and converting…\n\n"
+            "I'll send the MP3 here when it's ready — "
+            "feel free to keep using the bot meanwhile. 🎵"
+        )
+
+        worker = threading.Thread(
+            target=_mp3_background_job,
+            args=(context.bot, chat_id, user_id,
+                  artist_q, song_q, raw, job_key),
+            daemon=True,
+            name=f"mp3-{user_id}",
+        )
+        worker.start()
 
     except Exception as e:
         logger.error(f"Error in mp3 command for user {user_id}: {str(e)}")
@@ -2271,87 +2291,98 @@ def mp3_command(update: Update, context: CallbackContext):
         )
 
 
-def _run_mp3_job(update, user_id, artist_q, song_q, raw):
-    """Single MP3 pipeline run (concurrency-guarded by mp3_command)."""
-    processing_message = update.message.reply_text(
-        "🎧 Converting to MP3...\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "⏳ Finding audio source and converting.\n"
-        "This may take 30–60 seconds."
-    )
+def _mp3_background_job(bot, chat_id, user_id,
+                        artist_q, song_q, raw, job_key):
+    """Download and deliver one MP3 in a background thread.
 
-    def _stage(text: str):
-        try:
-            processing_message.edit_text(
-                "🎧 Converting to MP3...\n"
-                "━━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{text}"
-            )
-        except Exception:
-            pass
+    Never blocks the bot's update handling: the user gets an
+    acknowledgement up front (sent by mp3_command) and the finished
+    audio — or a failure notice — arrives as a new message.
+    """
+    try:
+        success, result = download_audio_for_song(artist_q, song_q)
 
-    def _send_fresh_file(file_path, info_message, title, uploader):
-        processing_message.edit_text(info_message)
-        try:
-            with open(file_path, 'rb') as audio_file:
-                sent_msg = update.message.reply_audio(
-                    audio_file,
-                    caption=f"🎵 {title}",
-                    title=title,
-                    performer=uploader
-                )
-            # Remember Telegram's file_id so the next request is instant.
-            try:
-                if sent_msg and sent_msg.audio:
-                    note_mp3_file_id(artist_q, song_q, sent_msg.audio.file_id)
-            except Exception:
-                pass
-        except Exception as send_err:
-            logger.error(f"Failed to send audio: {send_err}")
-            processing_message.edit_text(
-                "❌ The MP3 was created but couldn't be sent.\n"
-                "It may be too large for Telegram (50MB limit)."
-            )
-        # Never delete files that live in the MP3 cache — they're reused.
-        if not is_cached_mp3_path(file_path):
-            cleanup_video(file_path)
+        if not success:
+            # result is the user-facing failure text (incl. YouTube search link).
+            bot.send_message(chat_id=chat_id, text=result)
+            return
 
-    success, result = download_audio_for_song(artist_q, song_q, on_stage=_stage)
-
-    if success:
-        # Tier-0 hit: Telegram already hosts this file — send instantly.
         if result[0] == 'file_id':
+            # Tier-0 hit: Telegram already hosts this file — send instantly.
             _, fid, title, uploader = result
             try:
-                update.message.reply_audio(
+                bot.send_audio(
+                    chat_id=chat_id,
                     audio=fid,
                     caption=f"🎵 {title}\n⚡ Instant delivery",
                     title=title,
-                    performer=uploader
+                    performer=uploader,
                 )
-                processing_message.delete()
             except Exception as send_err:
                 # Stale file_id (expired/invalid): drop it and transparently
                 # re-run the fresh download path instead of dead-ending.
                 logger.warning(f"Stale cached file_id for '{raw}': {send_err}")
                 forget_mp3_file_id(artist_q, song_q)
-                _stage("⚡ Cached copy expired — fetching a fresh one…")
-                success2, result2 = download_audio_for_song(
-                    artist_q, song_q, on_stage=_stage)
+                bot.send_message(
+                    chat_id=chat_id,
+                    text="⚡ Cached copy expired — fetching a fresh one…\n"
+                         "I'll send it here when it's ready. 🎵",
+                )
+                success2, result2 = download_audio_for_song(artist_q, song_q)
                 if success2 and result2[0] != 'file_id':
-                    file_path, info_message, title2, uploader2 = result2
-                    _send_fresh_file(file_path, info_message, title2, uploader2)
+                    _deliver_fresh_mp3(bot, chat_id, artist_q, song_q, result2)
                 else:
-                    processing_message.edit_text(
-                        "❌ Couldn't send the audio file.\n"
-                        "Please try again in a moment. 🔄"
+                    bot.send_message(
+                        chat_id=chat_id,
+                        text="❌ Couldn't send the audio file.\n"
+                             "Please try again in a moment. 🔄",
                     )
             return
 
-        file_path, info_message, title, uploader = result
-        _send_fresh_file(file_path, info_message, title, uploader)
-    else:
-        processing_message.edit_text(result)
+        _deliver_fresh_mp3(bot, chat_id, artist_q, song_q, result)
+
+    except Exception as e:
+        logger.error(f"Background MP3 job failed for user {user_id} '{raw}': {e}")
+        try:
+            bot.send_message(
+                chat_id=chat_id,
+                text="😓 Something went wrong with the MP3 conversion.\n"
+                     "Please try again later! 🔄",
+            )
+        except Exception:
+            pass
+    finally:
+        _mp3_in_progress.discard(job_key)
+
+
+def _deliver_fresh_mp3(bot, chat_id, artist_q, song_q, result):
+    """Send a freshly downloaded MP3 file and remember its Telegram file_id."""
+    file_path, _info_message, title, uploader = result
+    try:
+        with open(file_path, 'rb') as audio_file:
+            sent_msg = bot.send_audio(
+                chat_id=chat_id,
+                audio=audio_file,
+                caption=f"🎵 {title}",
+                title=title,
+                performer=uploader,
+            )
+        # Remember Telegram's file_id so the next request is instant.
+        try:
+            if sent_msg and sent_msg.audio:
+                note_mp3_file_id(artist_q, song_q, sent_msg.audio.file_id)
+        except Exception:
+            pass
+    except Exception as send_err:
+        logger.error(f"Failed to send audio: {send_err}")
+        bot.send_message(
+            chat_id=chat_id,
+            text="❌ The MP3 was created but couldn't be sent.\n"
+                 "It may be too large for Telegram (50MB limit).",
+        )
+    # Never delete files that live in the MP3 cache — they're reused.
+    if not is_cached_mp3_path(file_path):
+        cleanup_video(file_path)
 
 
 def _build_fallback_artist_profile(query: str):

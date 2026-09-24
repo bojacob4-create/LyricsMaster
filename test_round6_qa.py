@@ -372,6 +372,7 @@ finally:
     _clean_state()
 
 # Stale file_id: send fails -> stale id dropped -> fresh download runs
+# (background job: wait for the worker thread to finish via _mp3_in_progress)
 _clean_state()
 noted = {}
 forgot = []
@@ -394,22 +395,47 @@ def _fake_dl(artist, song, on_stage=None):
     open(p, 'wb').write(b'x' * 100)
     return True, (p, "done", 'T', 'U')  # second: fresh file
 handlers.download_audio_for_song = _fake_dl
-class _BoomMsg(FakeMessage):
-    def reply_audio(self, *a, **k):
-        if k.get('audio') == 'STALE_ID' or (a and a[0] == 'STALE_ID'):
+class _BoomBot:
+    def __init__(self):
+        self.sent = []
+    def send_audio(self, **kw):
+        if kw.get('audio') == 'STALE_ID':
             raise RuntimeError("file_id expired")
-        m = FakeMessage()
-        m.audio = type('A', (), {})()
+        self.sent.append(('audio', kw.get('caption', '')))
+        m = type('M', (), {})()
+        m.audio = type('A', (), {'file_id': 'NEWFID'})()
         return m
+    def send_message(self, **kw):
+        self.sent.append(('message', kw.get('text', '')[:40]))
+        return None
 try:
     upd = FakeUpdate("x")
-    upd.message = _BoomMsg("x")
-    mp3_command(upd, FakeContext(args=['Tyla', '-', 'Water']))
+    upd.effective_chat = type('C', (), {'id': 999})()
+    ctx = FakeContext(args=['Tyla', '-', 'Water'])
+    ctx.bot = _BoomBot()
+    mp3_command(upd, ctx)
+    # ack must be immediate and non-blocking
+    ack = upd.message.sent[-1][0] if upd.message.sent else ""
+    check("mp3: ack sent immediately, handler non-blocking",
+          "On it" in ack, ack[:50])
+    # wait for the background job to finish (max 10s)
+    import time as _t
+    _deadline = _t.time() + 10
+    while (4242, 'tyla', 'water') in handlers._mp3_in_progress and _t.time() < _deadline:
+        _t.sleep(0.05)
     check("mp3: stale file_id dropped + fresh download ran",
           forgot == [('Tyla', 'Water')] and len(fresh_calls) == 2,
           f"forgot={forgot} calls={len(fresh_calls)}")
+    check("mp3: fresh audio delivered via background send_audio",
+          any(s[0] == 'audio' for s in ctx.bot.sent),
+          str(ctx.bot.sent[:2]))
 finally:
     handlers.note_mp3_file_id = orig_note
+    handlers.forget_mp3_file_id = orig_forget
+    handlers.is_cached_mp3_path = orig_is_cached
+    handlers.cleanup_video = orig_cleanup
+    handlers.download_audio_for_song = orig_handlers_dl
+    _clean_state()
     handlers.forget_mp3_file_id = orig_forget
     handlers.is_cached_mp3_path = orig_is_cached
     handlers.cleanup_video = orig_cleanup
