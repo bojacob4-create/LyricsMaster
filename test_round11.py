@@ -15,7 +15,7 @@ def check(name, cond, note=''):
         failed += 1
         print(f"FAIL  {name} :: {note}")
 
-# ── 1. Live-first moods (blended: fresh releases + tag chart) ──────────
+# ── 1. Live-first moods (3-tier fresh system) ─────────────────────────────
 from services import discovery_service as ds
 
 moods = [m for _, m in ds.MOOD_BUTTONS]
@@ -23,27 +23,36 @@ t0 = time.time()
 for mood in moods:
     mix = ds.get_mood_mix(mood, 5)
     ok = (isinstance(mix, list) and len(mix) == 5
-          and all(s.get('artist') and s.get('name') and s.get('reason')
+          and all(s.get('artist') and s.get('name')
+                  and s.get('source') in ('fresh', 'tag', 'pool')
                   for s in mix))
-    live = sum(1 for s in mix if s['reason'].startswith(('🔥', '🆕')))
-    check(f"mood '{mood}': 5 songs, all fields", ok,
+    fresh = sum(1 for s in mix if s.get('source') == 'fresh')
+    check(f"mood '{mood}': 5 songs, valid source", ok,
           f"got {len(mix) if isinstance(mix, list) else mix!r}")
-    check(f"mood '{mood}': live sources ({live}/5)", live >= 3,
-          f"only {live} live picks")
-print(f"   (7 moods fetched in {time.time()-t0:.1f}s — fresh + tag chart, pool fallback)")
+    check(f"mood '{mood}': mostly fresh ({fresh}/5)", fresh >= 3,
+          f"only {fresh} fresh picks")
+print(f"   (7 moods fetched in {time.time()-t0:.1f}s — fresh tiers + tag chart)")
 
-# Fresh picks must have a REAL mood keyword in the title (no guessing)
-from services.recommendation_service import _MOOD_KEYWORDS
+# Quality gate: every fresh pick must carry a real match reason, and
+# keyword picks must genuinely contain the mood word in the title.
 import re as _re
 for mood in moods:
     internal = ds._MOOD_INTERNAL.get(mood, 'happy')
-    kws = _MOOD_KEYWORDS.get(internal, set())
+    kws = ds._MOOD_KEYWORDS.get(internal, set())
     for s in ds.get_mood_mix(mood, 5):
-        if not s['reason'].startswith('🆕'):
+        if s.get('source') != 'fresh':
             continue
-        words = set(_re.sub(r"[^a-z\s]", "", s['name'].lower()).split())
-        check(f"mood '{mood}': fresh pick has keyword: {s['name'][:30]!r}",
-              bool(kws & words), f"title words={words}")
+        why = s.get('why')
+        check(f"mood '{mood}': fresh pick has match reason: {s['name'][:30]!r}",
+              why in ('keyword', 'genre', 'search'), f"why={why!r}")
+        if why in ('keyword', 'search'):
+            words = set(_re.sub(r"[^a-z\s]", "", s['name'].lower()).split())
+            check(f"mood '{mood}': title carries mood word: {s['name'][:30]!r}",
+                  bool(kws & words), f"title words={sorted(words)[:8]}")
+        if mood in ('relaxed', 'focus'):
+            m = _re.search(r'\(\s*(\d{2,3})\s*bpm', s['name'], _re.I)
+            check(f"mood '{mood}': no 150+bpm track: {s['name'][:30]!r}",
+                  not (m and int(m.group(1)) >= 150))
 
 # Dedupe: no repeated artist-title pairs in a mix
 for mood in moods:
@@ -62,12 +71,18 @@ check("mood garbage input safe", ds.get_mood_mix('zzz-nope', 5) == []
       or isinstance(ds.get_mood_mix('zzz-nope', 5), list))
 check("mood None input safe", isinstance(ds.get_mood_mix(None, 5), list))
 
-# Pool fallback path: simulate a dead API by poisoning the cache with [].
+# Pool fallback path: simulate every live source down.
 ds._MOOD_TAG_CACHE.clear()
 import time as _t
 for tag in ds._MOOD_LASTFM_TAG.values():
     ds._MOOD_TAG_CACHE[tag] = (_t.time(), [])  # API "returned nothing"
+_orig_fresh = ds.get_fresh_entries
+_orig_t3 = ds._tier3_picks
+ds.get_fresh_entries = lambda *a, **k: []
+ds._tier3_picks = lambda *a, **k: []
 mix = ds.get_mood_mix('happy', 5)
+ds.get_fresh_entries = _orig_fresh
+ds._tier3_picks = _orig_t3
 check("mood pool fallback: 5 songs when live is empty",
       isinstance(mix, list) and len(mix) == 5,
       f"got {len(mix) if isinstance(mix, list) else mix!r}")
@@ -75,7 +90,7 @@ check("mood pool fallback: reasons present",
       all(s.get('reason') for s in mix))
 ds._MOOD_TAG_CACHE.clear()  # let the real API repopulate
 
-# Header render: blended mix shows one "Live mix" note, no repeated lines
+# Header render: compact legend, no linkifiable domain, per-line markers
 import handlers as _handlers
 class _FakeChat:
     def send_action(self, action=None): pass
@@ -87,12 +102,14 @@ class _FakeUpdate:
 _upd = _FakeUpdate()
 _handlers._send_mood_mix(_upd, 123, 'happy')
 _txt = _upd.message.text
-check("mood render: single Live mix header",
-      _txt.count("Live mix:") == 1, _txt[:200])
-check("mood render: no per-song repeated note",
-      _txt.count("What Last.fm listeners reach for") <= 1)
+check("mood render: no bare Last.fm domain (link noise)",
+      "Last.fm" not in _txt, _txt[:160])
+check("mood render: compact header line",
+      "Fresh now" in _txt and _txt.count("Fresh now") == 1)
 check("mood render: 5 numbered songs",
       all(f"*{i}.*" in _txt for i in range(1, 6)))
+check("mood render: per-line freshness markers",
+      _txt.count("🆕") >= 3)  # header + fresh song lines
 
 # ── 2. Audius provider ────────────────────────────────────────────────────
 from services.youtube_downloader_service import (

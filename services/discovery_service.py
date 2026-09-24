@@ -11,9 +11,8 @@ Module import performs NO network I/O.  Every public function never raises:
 on any failure it returns [] / {} / a safe default.
 
 Exception to the local-first rule: mood mixes are LIVE-first by explicit
-product direction — a blend of fresh releases (<=24 months, live Apple
-chart) matched to the mood plus the live Last.fm tag chart; the pool is
-fallback/shortfall only.
+product direction — a 3-tier fresh system (fresh chart -> genre feeds /
+term search -> listener favorites); the pool is fallback/shortfall only.
 """
 
 import json
@@ -27,7 +26,10 @@ from services.recommendation_service import (
     get_similar_songs, ARTIST_GENRE_MAP,
     _MOOD_KEYWORDS, _MOOD_COMPAT, _GENRE_MOOD_DEFAULT,
 )
-from services.live_charts import get_fresh_songs
+from services.live_charts import (
+    get_fresh_songs, get_fresh_entries, get_fresh_genre_feed,
+    search_songs_by_term, _is_fresh,
+)
 from services.artist_service import (
     GENRE_TOP_SONGS,
     GENRE_ALIASES,
@@ -125,48 +127,153 @@ _MOOD_INTERNAL = {
 }
 
 
-def _mood_fresh_picks(mood: str, n: int = 2,
-                      exclude: set = None) -> List[Dict]:
-    """Fresh releases (<=24 months, live Apple chart) matched to the mood.
+# Apple genre tags (from the live chart feeds) that honestly signal a mood.
+# Conservative on purpose: a genre is listed only when it genuinely fits.
+_MOOD_APPLE_GENRES = {
+    'happy': {'Pop', 'Dance', 'Reggae'},
+    'energetic': {'Dance', 'House', 'Electronic', 'Latin Urban',
+                  'Hip-Hop/Rap', 'K-Pop', 'Afrobeats'},
+    'relaxed': {'Jazz', 'Classical', 'New Age', 'Ambient', 'Acoustic',
+                'Reggae', 'Singer/Songwriter'},
+    'sad': set(),
+    'romantic': {'R&B/Soul', 'Singer/Songwriter'},
+    'party': {'Dance', 'House', 'Latin Urban', 'Electronic',
+              'Hip-Hop/Rap', 'Afrobeats'},
+    'focus': {'Classical', 'Jazz', 'New Age', 'Ambient', 'Acoustic',
+              'Singer/Songwriter'},
+}
 
-    Strict and predictable: the title must contain a real keyword of the
-    requested mood, and the artist's known genre must not contradict it
-    (unknown genres don't count for or against).  Artist-diverse, never
-    raises.  When nothing qualifies, the tag chart fills the mix.
-    """
+# Tier-3 shortfall sources per mood: (iTunes RSS genre feeds, search terms).
+# Only used when tiers 1+2 leave the mix short — calm moods especially,
+# since this week's all-genres chart carries almost no calm music.
+_MOOD_TIER3 = {
+    'relaxed': ([(11, 'Jazz'), (5, 'Classical')], ['chill', 'calm']),
+    'focus': ([(5, 'Classical'), (11, 'Jazz')], []),
+    'sad': ([], ['lonely', 'goodbye', 'heartbreak']),
+    'happy': ([], ['happy']),
+    'energetic': ([], ['hype']),
+    'party': ([], ['party']),
+    'romantic': ([], ['love']),
+}
+
+# Artist-name fragments that mark compilation/karaoke/AI-farm junk in
+# search results — the user wants real artists, no AI-generated music.
+_JUNK_ARTIST_BITS = ('various artists', 'karaoke', 'tribute', 'collection',
+                     'hits ', 'sing along', 'chill out', 'relaxing')
+
+
+def _title_has_mood_word(title: str, internal: str) -> bool:
     try:
-        internal = _MOOD_INTERNAL.get((mood or '').lower(), 'happy')
-        mood_kws = _MOOD_KEYWORDS.get(internal, set())
-        fresh = get_fresh_songs() or []
-        exclude = exclude or set()
-        out, seen_artists = [], set()
-        for s in fresh:
-            a = str(s.get('artist') or '').strip()
-            t = str(s.get('song') or '').strip()
-            if not a or not t:
-                continue
-            if (a.lower(), t.lower()) in exclude:
-                continue
-            if a.lower() in seen_artists:
-                continue
-            words = set(re.sub(r"[^a-z\s]", "", t.lower()).split())
-            if not (mood_kws & words):
-                continue  # no title evidence — don't guess
-            genre = ARTIST_GENRE_MAP.get(a.lower(), '')
-            genre_mood = _GENRE_MOOD_DEFAULT.get(genre)
-            if genre_mood:
-                compat = (_MOOD_COMPAT.get((internal, genre_mood))
-                          or _MOOD_COMPAT.get((genre_mood, internal)) or 0)
-                if compat < 40:
-                    continue  # genre contradicts the mood
-            seen_artists.add(a.lower())
-            out.append({'artist': a, 'name': t,
-                        'reason': f"🆕 Fresh release picked for your {mood} mood"})
-            if len(out) >= n:
-                break
-        return out
+        words = set(re.sub(r"[^a-z\s]", "", (title or '').lower()).split())
+        return bool(_MOOD_KEYWORDS.get(internal, set()) & words)
     except Exception:
-        return []
+        return False
+
+
+def _apple_genre_fits_mood(genres, mood: str) -> bool:
+    try:
+        return bool(set(genres or []) & _MOOD_APPLE_GENRES.get(mood, set()))
+    except Exception:
+        return False
+
+
+def _claim_pick(out: List[Dict], seen_keys: set, seen_artists: set,
+                artist: str, name: str, source: str, why: str = '') -> bool:
+    """Append a pick if unseen; True when added."""
+    try:
+        a = str(artist or '').strip()
+        t = str(name or '').strip()
+        if not a or not t:
+            return False
+        key = (a.lower(), t.lower())
+        if key in seen_keys or a.lower() in seen_artists:
+            return False
+        seen_keys.add(key)
+        seen_artists.add(a.lower())
+        out.append({'artist': a, 'name': t, 'source': source, 'why': why})
+        return True
+    except Exception:
+        return False
+
+
+def _tier12_picks(entries: List[Dict], mood: str, internal: str, want: int,
+                  seen_keys: set, seen_artists: set) -> List[Dict]:
+    """Tier 1 (title keyword) then tier 2 (Apple genre) from fresh entries."""
+    out: List[Dict] = []
+    try:
+        calm = mood in ('relaxed', 'focus')
+        for e in entries:  # tier 1 — title carries a real mood word
+            if len(out) >= want:
+                break
+            if calm and _too_fast_for_calm(e.get('song', '')):
+                continue
+            if _title_has_mood_word(e.get('song', ''), internal):
+                _claim_pick(out, seen_keys, seen_artists,
+                            e.get('artist'), e.get('song'), 'fresh', 'keyword')
+        for e in entries:  # tier 2 — Apple's own genre tag fits the mood
+            if len(out) >= want:
+                break
+            if calm and _too_fast_for_calm(e.get('song', '')):
+                continue
+            if _apple_genre_fits_mood(e.get('genres'), mood):
+                _claim_pick(out, seen_keys, seen_artists,
+                            e.get('artist'), e.get('song'), 'fresh', 'genre')
+    except Exception:
+        pass
+    return out
+
+
+def _too_fast_for_calm(title: str) -> bool:
+    """BPM markers are explicit tempo metadata — honor them for calm moods."""
+    try:
+        m = re.search(r'\(\s*(\d{2,3})\s*bpm', str(title or ''), re.I)
+        return bool(m and int(m.group(1)) >= 150)
+    except Exception:
+        return False
+
+
+def _tier3_picks(mood: str, internal: str, want: int,
+                 seen_keys: set, seen_artists: set) -> List[Dict]:
+    """Shortfall tier: genre feeds + iTunes term search, still fresh-only.
+
+    Genre RSS feeds are curated charts (no AI farms); search results get
+    the junk/AI-farm guards.  Every candidate must still match the mood
+    by keyword or genre — no guessing.  Never raises.
+    """
+    out: List[Dict] = []
+    try:
+        feeds, terms = _MOOD_TIER3.get(mood, ([], []))
+        for gid, gname in feeds:
+            if len(out) >= want:
+                break
+            feed = _tier12_picks(get_fresh_genre_feed(gid, gname),
+                                 mood, internal, want - len(out),
+                                 seen_keys, seen_artists)
+            out += feed
+        for term in terms:
+            if len(out) >= want:
+                break
+            for e in search_songs_by_term(term):
+                if len(out) >= want:
+                    break
+                a = str(e.get('artist') or '').strip()
+                t = str(e.get('song') or '').strip()
+                if not a or not t:
+                    continue
+                if any(j in a.lower() for j in _JUNK_ARTIST_BITS):
+                    continue
+                if a.islower():
+                    continue  # AI-farm guard
+                if not _is_fresh(e, 24):
+                    continue
+                if not re.search(r'\b' + re.escape(term) + r'\b', t, re.I):
+                    continue  # term must be a real word in the title
+                if _title_has_mood_word(t, internal):
+                    _claim_pick(out, seen_keys, seen_artists, a, t,
+                                'fresh', 'search')
+    except Exception:
+        pass
+    return out
 
 
 def normalize_mood(text: str) -> Optional[str]:
@@ -464,9 +571,9 @@ def _similar_quick(artist: str, song: str, mood: str,
 
 
 def _mood_lastfm_tag_tracks(mood: str, limit: int = 12) -> List[Dict]:
-    """Live-first mood source: Last.fm tag.getTopTracks (REST, ~0.5s).
+    """Listener-favorites mood source: Last.fm tag.getTopTracks (REST, ~0.5s).
 
-    12-hour in-memory cache per mood. Returns [{'artist','name','reason'}]
+    12-hour in-memory cache per mood. Returns [{'artist','name'}]
     deduplicated, or [] when the API is down/slow. Never raises.
     """
     import os as _os
@@ -506,11 +613,7 @@ def _mood_lastfm_tag_tracks(mood: str, limit: int = 12) -> List[Dict]:
             if k in seen:
                 continue
             seen.add(k)
-            out.append({
-                'artist': a,
-                'name': name,
-                'reason': f"🔥 What Last.fm listeners reach for when they're feeling {mood}",
-            })
+            out.append({'artist': a, 'name': name})
         _MOOD_TAG_CACHE[tag] = (_time.time(), out)
         # Cap cache size (7 moods max, but be tidy).
         while len(_MOOD_TAG_CACHE) > 12:
@@ -521,33 +624,49 @@ def _mood_lastfm_tag_tracks(mood: str, limit: int = 12) -> List[Dict]:
 
 
 def get_mood_mix(mood: str, n: int = 5) -> List[Dict]:
-    """Mood mix — LIVE-first, blended from two live sources.
+    """Mood mix — LIVE-first across three tiers, all current.
 
-    1. Fresh releases (<=24 months, live Apple chart) whose inferred mood
-       genuinely matches — the "current" half of the mix.
-    2. The Last.fm tag chart for the mood (live-fetched, 12h cached) —
-       the "crowd-validated" half.
-    The local MOOD_SONG_POOLS only fills a shortfall or serves when both
-    live sources are down — so the user always gets a mix.  Never raises.
+    1. Fresh main-chart releases (<=24 months): title keyword match, then
+       Apple genre-tag match.
+    2. Shortfall tier: iTunes genre feeds (calm moods) + iTunes term
+       search (all moods) — still fresh-only, junk/AI-farm guarded.
+    3. Listener favorites: the live Last.fm tag chart (12h cached).
+    The local MOOD_SONG_POOLS only fills a shortfall or serves when every
+    live source is down — so the user always gets a mix.
+
+    Returns [{'artist','name','source'}] with source in
+    {'fresh','tag','pool'}.  Never raises.
     """
     try:
         mood = (mood or '').lower()
+        internal = _MOOD_INTERNAL.get(mood, 'happy')
         n = max(1, min(int(n or 5), 10))
-        out = _mood_fresh_picks(mood, n=min(2, n))
-        exclude = {(s['artist'].lower(), s['name'].lower()) for s in out}
-        live = [s for s in _mood_lastfm_tag_tracks(
-                    mood, limit=max(n * 2, 10))
-                if (s['artist'].lower(), s['name'].lower()) not in exclude]
-        out += live[:max(n - len(out), 0)]
+        seen_keys: set = set()
+        seen_artists: set = set()
+        out = _tier12_picks(get_fresh_entries(), mood, internal, n,
+                            seen_keys, seen_artists)
         if len(out) < n:
-            pool = MOOD_SONG_POOLS.get(mood) or []
-            seen = {(s['artist'].lower(), s['name'].lower()) for s in out}
-            fill = [s for s in _rng.sample(pool, min(len(pool), n))
-                    if (s['artist'].lower(), s['song'].lower()) not in seen]
-            for s in fill:
+            out += _tier3_picks(mood, internal, n - len(out),
+                               seen_keys, seen_artists)
+        if len(out) < n:
+            for s in _mood_lastfm_tag_tracks(mood, limit=max(n * 2, 10)):
                 if len(out) >= n:
                     break
+                if _claim_pick(out, seen_keys, seen_artists,
+                               s.get('artist'), s.get('name'), 'tag', 'tag'):
+                    pass
+        if len(out) < n:
+            pool = MOOD_SONG_POOLS.get(mood) or []
+            for s in _rng.sample(pool, min(len(pool), n * 2)):
+                if len(out) >= n:
+                    break
+                akey = (str(s.get('artist', '')).lower(),
+                        str(s.get('song', '')).lower())
+                if akey in seen_keys:
+                    continue
+                seen_keys.add(akey)
                 out.append({'artist': s['artist'], 'name': s['song'],
+                            'source': 'pool',
                             'reason': s.get('reason', '')})
         return out[:n]
     except Exception as e:

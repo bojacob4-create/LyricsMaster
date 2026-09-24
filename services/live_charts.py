@@ -274,6 +274,80 @@ def get_fresh_songs(max_age_months: int = _FRESH_MONTHS,
         return []
 
 
+def get_fresh_entries(max_age_months: int = _FRESH_MONTHS,
+                      limit: int = 200) -> List[Dict]:
+    """Fresh chart entries WITH Apple genre tags.
+
+    Same pool as get_fresh_songs but keeps each entry's 'genres' list so
+    callers (mood mixes) can match on genre as well as title.  Cached via
+    the shared chart cache — no extra network cost.  Never raises.
+    """
+    try:
+        out = []
+        for s in _get_chart_entries():
+            if not _is_fresh(s, max_age_months):
+                continue
+            out.append({'artist': s['artist'], 'song': s['song'],
+                        'release_date': s.get('release_date'),
+                        'genres': list(s.get('genres') or [])})
+            if len(out) >= limit:
+                break
+        return out
+    except Exception as e:
+        logger.error(f"[CHARTS] fresh entries error: {e}")
+        return []
+
+
+_ITUNES_GENRE_FEED_TTL = 6 * 3600  # cache genre feeds ~6h like the charts
+
+
+def get_fresh_genre_feed(genre_id: int, genre_name: str,
+                         max_age_months: int = _FRESH_MONTHS,
+                         limit: int = 25) -> List[Dict]:
+    """Fresh songs from an iTunes RSS genre top-songs feed (e.g. Jazz=11).
+
+    Used as the shortfall source for calm moods (relaxed/focus) whose
+    music never appears in the all-genres chart.  Returns
+    [{artist, song, release_date, genres:[name]}, ...] — only releases
+    within `max_age_months`, artist-diverse.  Cached ~6h.  Never raises.
+    """
+    try:
+        key = f"genrefeed:{genre_id}"
+        now = time.time()
+        cache = _mem.setdefault('genre_feed', {})
+        hit = cache.get(key)
+        if hit and (now - hit[0]) < _ITUNES_GENRE_FEED_TTL:
+            return hit[1][:limit]
+
+        r = requests.get(
+            f"https://itunes.apple.com/us/rss/topsongs/limit=50/genre={genre_id}/json",
+            headers=_HEADERS, timeout=10)
+        entries = _parse_itunes_rss(r.json())
+        out, seen = [], set()
+        for s in entries:
+            if not _is_fresh(s, max_age_months):
+                continue
+            akey = s['artist'].lower()
+            if akey in seen:
+                continue
+            # AI-farm / junk guard: all-lowercase artist names dominate the
+            # generated-content feeds the user wants excluded.
+            if s['artist'].islower():
+                continue
+            seen.add(akey)
+            out.append({'artist': s['artist'], 'song': s['song'],
+                        'release_date': s.get('release_date'),
+                        'genres': [genre_name]})
+            if len(out) >= limit:
+                break
+        cache[key] = (now, out)
+        logger.info(f"[CHARTS] Genre feed '{genre_name}': {len(out)} fresh songs")
+        return out
+    except Exception as e:
+        logger.debug(f"[CHARTS] Genre feed {genre_id} failed: {e}")
+        return []
+
+
 def get_top_by_genre(genre_key: str, limit: int = 20) -> List[Dict]:
     """Live genre slice of the Apple chart, e.g. 'pop', 'rap', 'rock'.
 
@@ -344,25 +418,19 @@ _ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
 _ITUNES_GENRE_TTL = 6 * 3600  # cache genre searches ~6h like the charts
 
 
-def search_songs_by_genre(genre: str, limit: int = 50) -> List[Dict]:
-    """Live iTunes Search for ANY genre — the general genre fallback.
+def _itunes_term_search(term: str, limit: int = 50,
+                        label: str = 'term') -> List[Dict]:
+    """Raw iTunes Search `term=<term>&entity=song`, cached ~6h.
 
-    The Apple-chart genre slices (get_top_by_genre) only cover ~10 genres
-    (pop/rap/rnb/rock/country/latin/kpop/soul/dance/electronic).  Genres like
-    afrobeats, amapiano, dancehall, jazz or gospel have no chart slice, so a
-    plain `term=<genre>&entity=song` search fills the gap with real, live
-    results instead of silently serving the global chart (which is how
-    "Random Afrobeats" used to return Olivia Rodrigo).
-
-    Returns [{artist, song, release_date}, ...] deduped by artist, or []
-    when iTunes has nothing for the genre.  Cached ~6h.  Never raises.
+    Shared by genre search and mood-term search.  Returns
+    [{artist, song, release_date}, ...] deduped by artist.  Never raises.
     """
     try:
-        key = (genre or '').lower().strip()
+        key = (term or '').lower().strip()
         if not key:
             return []
         now = time.time()
-        cache = _mem.setdefault('genre_search', {})
+        cache = _mem.setdefault('itunes_term', {})
         hit = cache.get(key)
         if hit and (now - hit[0]) < _ITUNES_GENRE_TTL:
             return hit[1][:limit]
@@ -392,9 +460,35 @@ def search_songs_by_genre(genre: str, limit: int = 50) -> List[Dict]:
                 continue
         if out:
             cache[key] = (now, out)
-            logger.info(f"[CHARTS] iTunes genre search '{key}': "
+            logger.info(f"[CHARTS] iTunes {label} search '{key}': "
                         f"{len(out)} songs")
         return out[:limit]
     except Exception as e:
-        logger.debug(f"[CHARTS] iTunes genre search failed: {e}")
+        logger.debug(f"[CHARTS] iTunes {label} search failed: {e}")
         return []
+
+
+def search_songs_by_genre(genre: str, limit: int = 50) -> List[Dict]:
+    """Live iTunes Search for ANY genre — the general genre fallback.
+
+    The Apple-chart genre slices (get_top_by_genre) only cover ~10 genres
+    (pop/rap/rnb/rock/country/latin/kpop/soul/dance/electronic).  Genres like
+    afrobeats, amapiano, dancehall, jazz or gospel have no chart slice, so a
+    plain `term=<genre>&entity=song` search fills the gap with real, live
+    results instead of silently serving the global chart (which is how
+    "Random Afrobeats" used to return Olivia Rodrigo).
+
+    Returns [{artist, song, release_date}, ...] deduped by artist, or []
+    when iTunes has nothing for the genre.  Cached ~6h.  Never raises.
+    """
+    return _itunes_term_search(genre, limit, label='genre')
+
+
+def search_songs_by_term(term: str, limit: int = 50) -> List[Dict]:
+    """Live iTunes Search for a free term (e.g. a mood keyword).
+
+    Same mechanics as search_songs_by_genre; the mood-mix shortfall tier
+    uses it to find recent songs whose titles carry the mood word.
+    Cached ~6h.  Never raises.
+    """
+    return _itunes_term_search(term, limit, label='term')

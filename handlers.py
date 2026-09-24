@@ -3686,7 +3686,7 @@ def mood_command(update: Update, context: CallbackContext):
 
 
 def _send_mood_mix(update, user_id: int, mood: str):
-    """Fetch and send a mood mix (works fully offline)."""
+    """Fetch and send a mood mix (live-first, pool fallback)."""
     label = _MOOD_LABELS.get(mood, mood.title())
     update.message.chat.send_action(action="typing")
     songs = get_mood_mix(mood, 5)
@@ -3698,23 +3698,22 @@ def _send_mood_mix(update, user_id: int, mood: str):
         return
 
     lines = [f"🎧 *{label} Mix*"]
-    reasons = [s.get('reason') or '' for s in songs]
-    note_bits = []
-    if any(r.startswith('🆕') for r in reasons):
-        note_bits.append("🆕 fresh releases picked for your mood")
-    if any(r.startswith('🔥') for r in reasons):
-        note_bits.append(
-            f"🔥 what Last.fm listeners reach for when feeling {mood}")
-    if note_bits:
-        lines.append("Live mix: " + "  ·  ".join(note_bits))
+    sources = {s.get('source') for s in songs}
+    if sources == {'fresh'}:
+        lines.append(f"🆕 Fresh now — picked for your {mood} mood")
+    elif 'fresh' in sources:
+        lines.append("🆕 Fresh now  ·  🔥 Listener favorites")
+    elif sources == {'tag'}:
+        lines.append("🔥 Listener favorites")
     lines += ["━━━━━━━━━━━━━━━━━━━━━", ""]
+    _MARK = {'fresh': '🆕 ', 'tag': '🔥 ', 'pool': ''}
     for i, s in enumerate(songs, 1):
-        lines.append(f"*{i}.* {md(s['artist'])} — {md(s['name'])}")
-        r = s.get('reason') or ''
-        # Live/fresh songs are covered by the header note; pool fallbacks
-        # keep their unique per-song reasons.
-        if r and not r.startswith(('🔥', '🆕')):
-            lines.append(f"   ↳ {r}")
+        mark = _MARK.get(s.get('source'), '')
+        lines.append(f"*{i}.* {mark}{md(s['artist'])} — {md(s['name'])}")
+        # Pool fallbacks keep their unique per-song reasons; live sources
+        # are covered by the header + per-line markers.
+        if s.get('source') == 'pool' and s.get('reason'):
+            lines.append(f"   ↳ {s['reason']}")
     lines += ["",
               "━━━━━━━━━━━━━━━━━━━━━",
               "🎧 /mood — another mood  •  🎲 /random — surprise me"]

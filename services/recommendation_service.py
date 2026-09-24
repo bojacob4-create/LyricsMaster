@@ -560,7 +560,8 @@ ARTIST_PROFILE.update(_ARTIST_PROFILE_EXTRA)
 _MOOD_KEYWORDS: Dict[str, set] = {
     'sad': {
         'sad', 'cry', 'crying', 'tears', 'heartbreak', 'sorry', 'goodbye', 'alone',
-        'lost', 'missing', 'hurt', 'pain', 'broken', 'leaving', 'dark', 'empty',
+        'lonely', 'lonesome', 'lost', 'missing', 'hurt', 'pain', 'broken', 'leaving',
+        'dark', 'empty',
         'cold', 'ache', 'aching', 'weep', 'weeping', 'sorrow', 'despair', 'grief',
         'die', 'dying', 'dead', 'death', 'gone', 'never', 'miss', 'suffer',
     },
