@@ -47,6 +47,7 @@ _SIMILAR_TIMEOUT = 8  # seconds — a live call slower than this is treated as "
 # Moods
 # ──────────────────────────────────────────────────────────────────────────────
 MOOD_BUTTONS = [
+    ('😊 Happy', 'happy'),
     ('⚡ Hyped', 'energetic'),
     ('😌 Chill', 'relaxed'),
     ('😢 Sad', 'sad'),
@@ -58,11 +59,17 @@ MOOD_BUTTONS = [
 # Free-text keywords -> canonical mood.  Checked longest-first so that e.g.
 # "workout" beats "work" and "heartbreak" beats "heart".
 _MOOD_KEYWORD_MAP: Dict[str, List[str]] = {
+    'happy': ['happiness', 'joyful', 'cheerful', 'upbeat', 'feel good',
+              'feeling good', 'good vibes', 'sunshine', 'uplifting',
+              'positive', 'glad', 'delighted', 'merry', 'bright', 'sunny',
+              'happy'],
     'energetic': ['hyped', 'pumped', 'workout', 'hype', 'energetic', 'energy',
-                  'gym', 'running', 'adrenaline', 'intense', 'powerful', 'amped'],
+                  'gym', 'running', 'adrenaline', 'intense', 'powerful', 'amped',
+                  'angry', 'furious', 'rage', 'pissed off'],
     'relaxed': ['chill', 'chilling', 'calm', 'calming', 'relax', 'relaxed',
                 'relaxing', 'mellow', 'lazy', 'cozy', 'unwind', 'sunday',
-                'coffee', 'lofi', 'laid back'],
+                'coffee', 'lofi', 'laid back', 'sleepy', 'tired', 'sleep',
+                'bedtime'],
     'sad': ['heartbreak', 'heartbroken', 'depress', 'melancholy', 'loneliness',
             'breakup', 'broke up', 'crying', 'tears', 'lonely', 'sad', 'blue',
             'cry', 'miss', 'missing', 'pain', 'hurt', 'hurting', 'emotional'],
@@ -89,6 +96,9 @@ def normalize_mood(text: str) -> Optional[str]:
         t = (text or '').lower()
         if not t.strip():
             return None
+        # "unhappy" contains "happy" — catch the negation first.
+        if re.search(r'\bunhappy\b', t):
+            return 'sad'
         for kw, mood in _MOOD_KEYWORDS_SORTED:
             if kw in t:
                 return mood
@@ -99,9 +109,41 @@ def normalize_mood(text: str) -> Optional[str]:
 
 # ──────────────────────────────────────────────────────────────────────────────
 # MOOD_SONG_POOLS — the PRIMARY (local, unlimited) source for mood mixes.
-# 6 moods × 15 well-known songs, each with a real one-line reason.
+# 7 moods × 15 well-known songs, each with a real one-line reason.
 # ──────────────────────────────────────────────────────────────────────────────
 MOOD_SONG_POOLS: Dict[str, List[Dict]] = {
+    'happy': [
+        {'artist': 'Pharrell Williams', 'song': 'Happy',
+         'reason': 'Pure joy in song form — impossible not to smile'},
+        {'artist': 'ABBA', 'song': 'Dancing Queen',
+         'reason': 'Timeless feel-good anthem, young and sweet'},
+        {'artist': 'Katrina and the Waves', 'song': 'Walking on Sunshine',
+         'reason': 'Sunshine pop at its brightest and bounciest'},
+        {'artist': 'Bobby McFerrin', 'song': "Don't Worry Be Happy",
+         'reason': 'The original good-vibes prescription'},
+        {'artist': 'Cyndi Lauper', 'song': 'Girls Just Want to Have Fun',
+         'reason': 'Playful 80s pop that never gets old'},
+        {'artist': 'The Beach Boys', 'song': 'Good Vibrations',
+         'reason': 'Good vibrations, exactly as promised'},
+        {'artist': 'Stevie Wonder', 'song': 'Sir Duke',
+         'reason': 'A brass-powered celebration of music itself'},
+        {'artist': 'Earth, Wind & Fire', 'song': 'September',
+         'reason': 'Do you remember? Instant dancefloor happiness'},
+        {'artist': 'Whitney Houston', 'song': 'I Wanna Dance with Somebody',
+         'reason': 'Pure 80s euphoria in every chorus'},
+        {'artist': 'Queen', 'song': "Don't Stop Me Now",
+         'reason': 'Freddie at his most unstoppable and joyful'},
+        {'artist': 'Outkast', 'song': 'Hey Ya!',
+         'reason': 'Funk-pop sugar rush, shake it like a Polaroid'},
+        {'artist': 'The Beatles', 'song': 'Here Comes the Sun',
+         'reason': 'George Harrison bottling a spring morning'},
+        {'artist': 'Sister Sledge', 'song': 'We Are Family',
+         'reason': 'Disco warmth about togetherness'},
+        {'artist': 'Mark Ronson', 'song': 'Uptown Funk',
+         'reason': 'Bruno Mars swagger over a monster groove'},
+        {'artist': 'Bon Jovi', 'song': "Livin' on a Prayer",
+         'reason': 'Stadium-sized optimism, whoa-oh included'},
+    ],
     'energetic': [
         {'artist': 'Dua Lipa', 'song': 'Levitating',
          'reason': 'Disco-pop adrenaline with a relentless groove'},

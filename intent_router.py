@@ -12,7 +12,7 @@ YOUTUBE_URL_PATTERN = re.compile(
 # Must be compiled once and checked BEFORE the generic YouTube keyword scan
 # because 'play' sits in YOUTUBE_KEYWORDS and would wrongly capture these.
 _PLAY_BY_ARTIST_RE = re.compile(
-    r'^(?:play|give\s+me|get\s+me|show\s+me|find\s+me|put\s+on)\s+'
+    r'^(?:play(?:\s+me)?|give\s+me|get\s+me|show\s+me|find\s+me|put\s+on)\s+'
     r'(?:something|anything|songs?|music|a\s+song|some\s+music|tracks?)\s+'
     r'(?:by|from)\s+(.+)$',
     re.IGNORECASE,
@@ -375,12 +375,16 @@ def _normalize_song_query(raw: str) -> str:
         song_part = by_match.group(1).strip()
         artist_part = by_match.group(2).strip()
         # Guards: pronouns can never be artists ("stand by me" is not
-        # "me - stand"), and questions stay with the NLP layer.
+        # "me - stand"), questions stay with the NLP layer, and generic
+        # phrasing is never a song title ("songs to hello by adele" must
+        # not become "adele - songs to hello").
         first_word = song_part.split()[0].lower() if song_part.split() else ''
+        song_words = set(re.findall(r'[a-z]+', song_part.lower()))
         if (song_part and artist_part
                 and len(song_part) >= 2 and len(artist_part) >= 2
                 and artist_part.lower() not in _PRONOUNS
-                and first_word not in _QUESTION_WORDS):
+                and first_word not in _QUESTION_WORDS
+                and not (song_words & _GENERIC_SONG_WORDS)):
             return f"{artist_part} - {song_part}"
     return raw.strip()
 
@@ -533,6 +537,27 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
         ])
         return 'random', _genre_q
 
+    # "gimme some afrobeats" / "give me some jazz" → genre random pick.
+    # Conservative on purpose: only when the remainder is short, carries no
+    # other intent's keywords, and has no "by" (the "X by Y" artist pattern
+    # is handled by _PLAY_BY_ARTIST_RE / the song branch below).  Anything
+    # longer or ambiguous falls through to the normal branches as before.
+    _gimme = re.match(r'^(?:gimme|give\s+me)\s+(.+?)[.!?]*$', text,
+                      re.IGNORECASE)
+    if _gimme and not _PLAY_BY_ARTIST_RE.match(text):
+        _g_rest = _strip_filler_prefix(re.sub(
+            r'^(some|songs?|music|tracks?|tunes?)\s+', '',
+            _gimme.group(1).strip(), flags=re.IGNORECASE))
+        _g_words = _g_rest.split()
+        _g_low = _g_rest.lower()
+        _g_blocked = (LYRICS_KEYWORDS + TRANSLATE_KEYWORDS + YOUTUBE_KEYWORDS
+                      + MP3_KEYWORDS + DOWNLOAD_KEYWORDS + QUIZ_KEYWORDS
+                      + WIKI_KEYWORDS)
+        if (_g_rest and len(_g_words) <= 2
+                and not re.search(r'\bby\b', _g_low)
+                and not any(k in _g_low for k in _g_blocked)):
+            return 'random', _g_rest
+
     if _match_keywords(text, TRENDING_KEYWORDS):
         genre = _extract_top_genre(text)
         if genre:
@@ -558,7 +583,13 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
     if _match_keywords(text, RECOMMEND_KEYWORDS):
         query = _clean_query(text, ['similar', 'songs like', 'music like', 'recommend', 'recommendation',
                                      'suggestion', 'something like', 'more like', 'like this',
-                                     'what else', 'similar songs', 'similar music', 'like'])
+                                     'what else', 'similar songs', 'similar music', 'like',
+                                     # Generic phrasing must go too, otherwise the
+                                     # "X by Y" reorder mangles it: "songs similar
+                                     # to hello by adele" → "adele - hello", not
+                                     # "adele - songs to hello".
+                                     'songs', 'song', 'music', 'tracks', 'track',
+                                     'tunes', 'tune'])
         return 'recommend', query
 
     if _match_keywords(text, WIKI_KEYWORDS):
@@ -617,7 +648,7 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
 
     if _match_keywords(text, LYRICS_KEYWORDS):
         query = _clean_query(text, ['lyrics', 'lyric', 'words', 'text', 'sing',
-                                     'how does', 'go'])
+                                     'how does', 'go', 'gimme', 'give me'])
         return 'lyrics', query
 
     if _match_keywords(text, MP3_KEYWORDS):

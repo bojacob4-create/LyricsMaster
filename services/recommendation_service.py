@@ -3405,18 +3405,23 @@ def _get_similar_songs_uncached(artist: str, song: str, mood: str,
             f"vocal={source_profile['vocal']} era={source_profile['era']}"
         )
 
-        # ── 1. Last.fm similarity graph (listener overlap) ───────────────────
-        lastfm_recs = _get_lastfm_recommendations(
-            artist, song, source_profile,
-            limit=max(limit, 5), exclude_artists=exclude_artists)
-
-        # ── 2. Apple Music Top 100 (live charts, quality-gated) ──────────────
-        apple_recs = _get_apple_recommendations(
-            artist, song, source_profile, exclude_artists=exclude_artists)
-
-        # ── 3. Last.fm hot chart (live, quality-gated) ───────────────────────
-        chart_recs = _get_lastfm_chart_recommendations(
-            artist, song, source_profile, exclude_artists=exclude_artists)
+        # ── 1/2/3. Three independent live sources — fetched in parallel ─────
+        # (same inputs, same merge; wall-clock drops from sum → max).
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=3) as _rec_pool:
+            _f_lastfm = _rec_pool.submit(
+                _get_lastfm_recommendations,
+                artist, song, source_profile,
+                limit=max(limit, 5), exclude_artists=exclude_artists)
+            _f_apple = _rec_pool.submit(
+                _get_apple_recommendations,
+                artist, song, source_profile, exclude_artists=exclude_artists)
+            _f_chart = _rec_pool.submit(
+                _get_lastfm_chart_recommendations,
+                artist, song, source_profile, exclude_artists=exclude_artists)
+            lastfm_recs = _f_lastfm.result()
+            apple_recs = _f_apple.result()
+            chart_recs = _f_chart.result()
 
         merged = _merge_recommendations(lastfm_recs, apple_recs, chart_recs,
                                         limit=limit)
