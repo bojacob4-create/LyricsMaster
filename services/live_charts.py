@@ -338,3 +338,63 @@ def get_lastfm_chart(limit: int = 50) -> List[Dict]:
     except Exception as e:
         logger.debug(f"[CHARTS] Last.fm chart failed: {e}")
         return _mem.get('lastfm') or []
+
+
+_ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
+_ITUNES_GENRE_TTL = 6 * 3600  # cache genre searches ~6h like the charts
+
+
+def search_songs_by_genre(genre: str, limit: int = 50) -> List[Dict]:
+    """Live iTunes Search for ANY genre — the general genre fallback.
+
+    The Apple-chart genre slices (get_top_by_genre) only cover ~10 genres
+    (pop/rap/rnb/rock/country/latin/kpop/soul/dance/electronic).  Genres like
+    afrobeats, amapiano, dancehall, jazz or gospel have no chart slice, so a
+    plain `term=<genre>&entity=song` search fills the gap with real, live
+    results instead of silently serving the global chart (which is how
+    "Random Afrobeats" used to return Olivia Rodrigo).
+
+    Returns [{artist, song, release_date}, ...] deduped by artist, or []
+    when iTunes has nothing for the genre.  Cached ~6h.  Never raises.
+    """
+    try:
+        key = (genre or '').lower().strip()
+        if not key:
+            return []
+        now = time.time()
+        cache = _mem.setdefault('genre_search', {})
+        hit = cache.get(key)
+        if hit and (now - hit[0]) < _ITUNES_GENRE_TTL:
+            return hit[1][:limit]
+
+        r = requests.get(
+            _ITUNES_SEARCH_URL,
+            params={'term': key, 'entity': 'song', 'limit': 50,
+                    'country': 'US'},
+            headers=_HEADERS, timeout=8)
+        results = r.json().get('results', [])
+        out, seen = [], set()
+        for it in results:
+            try:
+                a = (it.get('artistName') or '').strip()
+                n = (it.get('trackName') or '').strip()
+                if not a or not n:
+                    continue
+                akey = a.lower()
+                if akey in seen:
+                    continue
+                seen.add(akey)
+                out.append({'artist': a, 'song': n,
+                            'release_date': it.get('releaseDate', '')[:10]})
+                if len(out) >= 20:
+                    break
+            except (AttributeError, TypeError):
+                continue
+        if out:
+            cache[key] = (now, out)
+            logger.info(f"[CHARTS] iTunes genre search '{key}': "
+                        f"{len(out)} songs")
+        return out[:limit]
+    except Exception as e:
+        logger.debug(f"[CHARTS] iTunes genre search failed: {e}")
+        return []

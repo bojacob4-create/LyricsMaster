@@ -301,7 +301,7 @@ def disambiguation_message(
         f"🎵 Several songs match *{song_name}*.\n"
         f"Which one did you mean?\n\n"
         f"{options_str}\n\n"
-        f"Or type: `Artist - {song_name}` to be more specific."
+        f"Tap one 👇 or type: `Artist - {song_name}` to be more specific."
     )
 
 # ── Model ──────────────────────────────────────────────────────────────────

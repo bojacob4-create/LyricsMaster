@@ -351,6 +351,15 @@ _shown_recs = {}
 # Structure: {user_id: {'artist': str, 'song': str, 'intent_cmd': str}}
 _pending_confirmation: dict = {}
 
+# Stores a just-sent multi-candidate disambiguation ("Which one did you
+# mean?") so the user's NEXT message can be understood as a SELECTION:
+# typing one of the artists (or a number 1-3) picks that candidate instead
+# of starting a brand-new search.
+# Structure: {user_id: {'candidates': [{'artist','song'}, ...], 'ts': float}}
+# TTL: 5 minutes — a fresh message after that is a new request.
+_pending_disambig: dict = {}
+_DISAMBIG_TTL = 300
+
 
 def _names_match(a: str, b: str) -> bool:
     """Fuzzy artist-name equality: containment either way, case-insensitive."""
@@ -371,6 +380,108 @@ def _query_matches_song(query: str, song: str) -> bool:
         return True
     qwords = [w for w in re.findall(r'[a-z0-9]+', q) if len(w) > 2]
     return bool(qwords) and all(w in s for w in qwords)
+
+
+def _disambiguation_buttons(candidates) -> 'InlineKeyboardMarkup':
+    """Tappable buttons for a 'Which one did you mean?' candidate list.
+
+    The old UX printed `/song Artist - Song` in backticks, which is NOT
+    tappable in Telegram — the user had to retype it.  One tap on a button
+    now opens the song card directly (via the existing 'song' callback).
+    """
+    from buttons import _cb
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    rows = []
+    for c in (candidates or [])[:5]:
+        label = f"🎵 {c['artist']} - {c['song']}"
+        if len(label) > 60:
+            label = label[:57] + "…"
+        rows.append([InlineKeyboardButton(
+            label,
+            callback_data=_cb("song", f"{c['artist']} - {c['song']}"))])
+    return InlineKeyboardMarkup(rows)
+
+
+def _remember_disambiguation(user_id: int, candidates) -> None:
+    """Remember a just-sent candidate list for follow-up selection."""
+    _pending_disambig[user_id] = {
+        'candidates': list(candidates or [])[:5],
+        'ts': time.time(),
+    }
+
+
+def _match_disambiguation_choice(text: str, candidates):
+    """Match a follow-up message against a pending candidate list.
+
+    Returns the chosen {'artist','song'} candidate, or None when the text
+    is not a selection.  Accepts:
+      • a number ("1", "2", …) — the position in the shown list;
+      • an artist name ("Justin Bieber", even just "bieber");
+      • a song title from the list.
+    Matching is accent-insensitive and word-based (nlp_router._covers),
+    so minor variations still select the intended candidate.
+    """
+    t = (text or '').strip()
+    if not t or not candidates:
+        return None
+    if t.isdigit():
+        idx = int(t) - 1
+        if 0 <= idx < len(candidates):
+            return candidates[idx]
+        return None
+    # Guard: long sentences are new requests, never selections.
+    if len(t.split()) > 6 or len(t) > 60:
+        return None
+    try:
+        from services.nlp_router import _covers
+    except Exception:
+        return None
+    for c in candidates:
+        if _covers(t, c.get('artist', '')) or _covers(t, c.get('song', '')):
+            return c
+    return None
+
+
+def _sole_artist_name(name, candidates):
+    """Pure conflict-free check: is `name` best read as an artist's name?
+
+    True only when ALL candidates are by ONE artist AND the input covers
+    that artist's name (accent-insensitive).  "Ghost" -> artists {Ghost,
+    Justin Bieber, ...} -> None.  "Blinding Lights" -> sole artist The
+    Weeknd, but the input doesn't cover the artist name -> None.
+    Never raises.
+    """
+    if not candidates:
+        return None
+    try:
+        from services.nlp_router import _covers, _norm
+    except Exception:
+        return None
+    artists = {_norm(c.get('artist', '')) for c in candidates}
+    artists.discard('')
+    if len(artists) == 1:
+        sole = candidates[0]['artist']
+        if _covers(name, sole):
+            return sole
+    return None
+
+
+def _detect_bare_artist_name(name: str):
+    """General bare-artist-name check - beyond the 43 local-DB artists.
+
+    Typing just an artist's name ("Justin Bieber") should show the artist
+    card, not song suggestions.  Delegates the decision to
+    _sole_artist_name (conflict-free by design): "Ghost" (many artists)
+    still falls through to song disambiguation exactly as before.
+
+    Returns (canonical_artist_name_or_None, candidates).  Never raises.
+    """
+    try:
+        from services.nlp_router import search_song_candidates
+        cands = search_song_candidates(name) or []
+        return _sole_artist_name(name, cands), cands
+    except Exception:
+        return None, []
 
 _YES_WORDS = frozenset({
     'yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'correct',
@@ -529,6 +640,31 @@ def natural_language_handler(update: Update, context: CallbackContext):
                 _handle_emoji_guess(update, user_id, text)
                 return
 
+    # ── Pending disambiguation follow-up ───────────────────────────────────
+    # The bot just asked "Which one did you mean?" with tappable options.
+    # If the user's next message names one of the ARTISTS (or a number),
+    # that's a SELECTION — resolve it to "Artist - Song" and let normal
+    # routing open the song card.  Anything else is a new request: clear
+    # the stale options and fall through.  Runs before the regex router.
+    _pend = _pending_disambig.get(user_id)
+    if _pend and _pend.get('candidates'):
+        if time.time() - _pend.get('ts', 0) > _DISAMBIG_TTL:
+            _pending_disambig.pop(user_id, None)
+        else:
+            _choice = _match_disambiguation_choice(text,
+                                                   _pend['candidates'])
+            if _choice:
+                _pending_disambig.pop(user_id, None)
+                _pending_recommend_artist.pop(user_id, None)
+                logger.info(
+                    f"Disambiguation follow-up for user {user_id}: "
+                    f"'{text}' → {_choice['artist']} - {_choice['song']}"
+                )
+                text = f"{_choice['artist']} - {_choice['song']}"
+            else:
+                # Not a selection — the options are stale now.
+                _pending_disambig.pop(user_id, None)
+
     # ── Step 1: Regex router — always runs first ────────────────────────────
     # Deterministic, zero-latency, and must take priority over ALL stored
     # state.  If the user typed a new structured request, clear any pending
@@ -582,7 +718,7 @@ def natural_language_handler(update: Update, context: CallbackContext):
                             f"🎵 Several songs match *{_seed}*.\n"
                             f"Which one did you mean?\n\n"
                             + "\n".join(_lines)
-                            + f"\n\nOr type: `Artist - {_seed}` to be more specific."
+                            + f"\n\nTap one 👇 or type: `Artist - {_seed}` to be more specific."
                         )
                 else:
                     _pending_confirmation.pop(user_id, None)
@@ -591,7 +727,13 @@ def natural_language_handler(update: Update, context: CallbackContext):
                         f"Please use the format: `Artist - Song`\n"
                         f"Example: `Kavinsky - Nightcall`"
                     )
-                update.message.reply_text(_rmsg, parse_mode='Markdown')
+                if _cands and not _is_dom(_cands):
+                    _remember_disambiguation(user_id, _cands)
+                    update.message.reply_text(
+                        _rmsg, parse_mode='Markdown',
+                        reply_markup=_disambiguation_buttons(_cands))
+                else:
+                    update.message.reply_text(_rmsg, parse_mode='Markdown')
             except Exception as _re:
                 logger.warning(f"[regex-recommend] Disambig error: {_re}")
                 # Safe fallback — execute directly
@@ -823,6 +965,7 @@ def natural_language_handler(update: Update, context: CallbackContext):
         _bare_artist = get_artist_info(text.strip())
         if _bare_artist and text.strip().lower() not in _local_song_titles():
             _pending_recommend_artist.pop(user_id, None)
+            _pending_disambig.pop(user_id, None)
             logger.info(
                 f"NL bare artist name for user {user_id}: "
                 f"'{text.strip()}' → artist card"
@@ -853,6 +996,28 @@ def natural_language_handler(update: Update, context: CallbackContext):
                 disambiguation_message as _fp_disambig,
             )
             _fp_cands = _fp_search(_seed)
+            # ── General bare-artist check ────────────────────────────────
+            # Typing just an artist's name ("Justin Bieber") should show the
+            # artist card — not song suggestions — even when the artist is
+            # outside the 43-name local DB (Step 3.55 only covers those).
+            # Conflict-free: fires only when ALL candidates are by ONE
+            # artist AND the input covers that artist's name.  "Ghost"
+            # (many artists) and "Blinding Lights" (input isn't the artist
+            # name) fall through to song disambiguation exactly as before.
+            _bare_live = None
+            if _fp_cands and _seed.lower() not in _local_song_titles():
+                _bare_live = _sole_artist_name(_seed, _fp_cands)
+            if _bare_live:
+                _pending_recommend_artist.pop(user_id, None)
+                _pending_disambig.pop(user_id, None)
+                _pending_confirmation.pop(user_id, None)
+                logger.info(
+                    f"NL bare artist name (live) for user {user_id}: "
+                    f"'{_seed}' -> artist card ({_bare_live})"
+                )
+                context.args = _bare_live.split()
+                artist_command(update, context)
+                return
             if _fp_cands:
                 if _fp_is_dom(_fp_cands):
                     _fp_top = _fp_cands[0]
@@ -872,7 +1037,15 @@ def natural_language_handler(update: Update, context: CallbackContext):
                     "`Artist - Song`\n\n"
                     "Example: `Tyla - Water`"
                 )
-            update.message.reply_text(_fp_msg, parse_mode='Markdown')
+            if _fp_cands and not _fp_is_dom(_fp_cands):
+                # Multi-candidate list → tappable buttons + remember the
+                # options so the next message can select one by artist name.
+                _remember_disambiguation(user_id, _fp_cands)
+                update.message.reply_text(
+                    _fp_msg, parse_mode='Markdown',
+                    reply_markup=_disambiguation_buttons(_fp_cands))
+            else:
+                update.message.reply_text(_fp_msg, parse_mode='Markdown')
         except Exception as _fp_err:
             logger.warning(f"[fast-path] Disambiguation error: {_fp_err}")
         return
@@ -1002,7 +1175,7 @@ def natural_language_handler(update: Update, context: CallbackContext):
                                 f"🎵 Several songs match *{nlp_song}*.\n"
                                 f"Which one did you mean?\n\n"
                                 + "\n".join(_lines)
-                                + f"\n\nOr type: `Artist - {nlp_song}` to be more specific."
+                                + f"\n\nTap one 👇 or type: `Artist - {nlp_song}` to be more specific."
                             )
                     else:
                         _pending_confirmation.pop(user_id, None)
@@ -1011,7 +1184,13 @@ def natural_language_handler(update: Update, context: CallbackContext):
                             f"Please use the format: `Artist - Song`\n"
                             f"Example: `Kavinsky - Nightcall`"
                         )
-                    update.message.reply_text(_rec_msg, parse_mode='Markdown')
+                    if _rec_cands and not _is_dom(_rec_cands):
+                        _remember_disambiguation(user_id, _rec_cands)
+                        update.message.reply_text(
+                            _rec_msg, parse_mode='Markdown',
+                            reply_markup=_disambiguation_buttons(_rec_cands))
+                    else:
+                        update.message.reply_text(_rec_msg, parse_mode='Markdown')
                 except Exception as _rec_err:
                     logger.warning(f"[NLP] Recommend disambig error: {_rec_err}")
                     # Something broke — fall through to direct execute as a safe fallback
@@ -1050,6 +1229,7 @@ def natural_language_handler(update: Update, context: CallbackContext):
                 if sum(1 for c in _candidate if c.isalpha()) >= 2:
                     song_to_search = _candidate
 
+            _nlp_multi_cands = None  # set when a tappable option list is shown
             if song_to_search:
                 try:
                     from services.nlp_router import is_dominant_match as _is_dom
@@ -1073,6 +1253,8 @@ def natural_language_handler(update: Update, context: CallbackContext):
                         msg = nlp_disambig_msg(
                             song_to_search, _display_intent, candidates
                         )
+                        if not _is_dom(candidates):
+                            _nlp_multi_cands = candidates
                     else:
                         msg = nlp_low_conf_msg()
                 except Exception as _de:
@@ -1087,7 +1269,14 @@ def natural_language_handler(update: Update, context: CallbackContext):
             else:
                 msg = nlp_low_conf_msg()
 
-            update.message.reply_text(msg, parse_mode='Markdown')
+            if _nlp_multi_cands:
+                # Tappable option buttons + remember for follow-up selection.
+                _remember_disambiguation(user_id, _nlp_multi_cands)
+                update.message.reply_text(
+                    msg, parse_mode='Markdown',
+                    reply_markup=_disambiguation_buttons(_nlp_multi_cands))
+            else:
+                update.message.reply_text(msg, parse_mode='Markdown')
 
     except Exception as nlp_err:
         logger.warning(f"[NLP] Fallback error for user {user_id}: {nlp_err}")
@@ -1112,6 +1301,7 @@ def callback_query_handler(update: Update, context: CallbackContext):
     param = cb_resolve(param)
     user_id = update.effective_user.id
     _pending_recommend_artist.pop(user_id, None)
+    _pending_disambig.pop(user_id, None)
     logger.info(f"Callback from user {user_id}: action='{action}', param='{param}'")
 
     if action == 'noop':

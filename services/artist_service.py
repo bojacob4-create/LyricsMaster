@@ -435,7 +435,9 @@ def get_random_song(user_id=None, genre=None) -> Optional[Dict]:
       callers must degrade gracefully (friendly message, not a crash).
     """
     import random as rng
-    from services.live_charts import get_top_songs, get_top_by_genre, get_fresh_songs
+    from services.live_charts import (
+        get_top_songs, get_top_by_genre, get_fresh_songs,
+        search_songs_by_genre)
 
     recent = _recent_random_picks.get(user_id) if user_id else None
 
@@ -447,8 +449,17 @@ def get_random_song(user_id=None, genre=None) -> Optional[Dict]:
         if not pool:
             pool = get_top_by_genre(resolved)
         if not pool:
+            # General fallback: live iTunes search for the genre itself.
+            # Covers every genre iTunes knows (afrobeats, amapiano,
+            # dancehall, jazz, …) — no per-genre special-casing needed.
+            pool = search_songs_by_genre(resolved)
+            if pool:
+                logger.info(
+                    f"/random: genre '{resolved}' via iTunes search "
+                    f"({len(pool)} songs)")
+        if not pool:
             logger.info(
-                f"/random: no live genre chart for '{resolved}', "
+                f"/random: no live genre pool for '{resolved}', "
                 "using global chart")
 
     if not pool:
