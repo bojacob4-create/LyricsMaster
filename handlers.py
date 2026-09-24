@@ -3923,11 +3923,97 @@ def _fetch_mix_durations(songs) -> list:
         return [None] * len(songs)
 
 
+# ── Round-19: classical-feed title noise ─────────────────────────────────
+# iTunes classical feeds return full catalog entries as titles:
+#   "Beethoven: Sonata No. 14 "Moonlight" in C-Sharp Minor, Op. 27 No 2:
+#    I. Adagio sostenuto I"
+# and triple artist credits:
+#   "Chloe Flower, Academy of St Martin in the Fields & Jessica Cottis"
+# Unreadable in a chat mix — and the noise is exactly what makes the song
+# card's search struggle when a mix button is tapped. Cleaned once here,
+# the display lines, button callbacks and card-context keys all use the
+# clean names, so the card is fixed as a side effect.
+_ENSEMBLE_WORDS = ('orchestra', 'academy', 'philharmonic', 'symphony',
+                   'sinfonia', 'quartet', 'quintet', 'trio', 'choir',
+                   'chorus', 'ensemble', 'consort', 'players', 'camerata',
+                   'kapelle', 'baroque')
+_WORK_TYPES = ('sonata', 'symphony', 'concerto', 'nocturne', 'waltz',
+               'prelude', 'etude', 'étude', 'ballade', 'scherzo',
+               'impromptu', 'rhapsody', 'overture', 'requiem', 'mass')
+
+
+def _clean_mix_artist(artist: str) -> str:
+    """Keep the primary artist: 'Chloe Flower, Academy of St Martin in the
+    Fields & Jessica Cottis' → 'Chloe Flower'. Short duo acts
+    ('Simon & Garfunkel') are left alone."""
+    head = re.split(r'\s*,\s*', artist, maxsplit=1)[0].strip()
+    m = re.match(r'^(.*?)\s+&\s+(.*)$', head)
+    if m:
+        left, right = m.group(1).strip(), m.group(2).strip()
+        rl = right.lower()
+        if any(w in rl for w in _ENSEMBLE_WORDS) or len(head) >= 28:
+            head = left
+    return head or artist
+
+
+def _clean_mix_title(artist: str, name: str) -> str:
+    """Strip classical catalog noise from a mix title."""
+    t = name.strip()
+
+    # Quoted nickname + work type → 'Moonlight Sonata'. Short-circuits the
+    # rest: nothing else in the string is worth keeping.
+    m = re.search(r'"([^"]+)"', t)
+    if m:
+        nick = m.group(1).strip()
+        before = t[:m.start()].lower()
+        for wt in _WORK_TYPES:
+            if re.search(r'\b' + wt + r'\b', before):
+                return f"{nick} {wt.title()}"
+        # Nickname but no recognizable work type — keep title, drop the rest.
+        t = nick
+
+    # Redundant composer prefix: artist already says Beethoven, so
+    # 'Beethoven: Sonata ...' → 'Sonata ...'.
+    a_words = [w for w in re.sub(r'[^\w\s]', '', artist.lower()).split()
+               if len(w) > 2]
+    m = re.match(r'^([A-Za-zÀ-ÿ\-]+):\s*(.*)$', t)
+    if m and m.group(1).lower() in a_words:
+        t = m.group(2)
+
+    # Catalog numbers + everything after: ', Op. 27 No 2: I. Adagio ...',
+    # 'Op. 6: V. Giga. Allegro', 'BWV 565', 'K. 545 ...'.
+    t = re.sub(r'\s*,?\s*\b(Op\.|BWV|K\.|D\.)\s*\d+.*$', '', t).strip()
+    # Trailing movement marking without opus: ': V. Giga. Allegro'.
+    t = re.sub(r'\s*:?\s*\b[IVX]+\.\s*[^:()]*$', '', t).strip()
+    # Leading movement intro: 'I. Prologue: One Ring ...' → 'One Ring ...'.
+    t = re.sub(r'^[IVX]+\.\s*[\w\-]+\s*:\s*', '', t).strip()
+    # Trailing parenthetical work description:
+    # '(The Lord of the Rings Organ Symphony)'.
+    t = re.sub(r'\s*\([^()]*\)\s*$', '', t).strip()
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t or name
+
+
+def _clean_mix_songs(songs) -> list:
+    """Apply artist/title cleaning to every song in a mood mix."""
+    out = []
+    for s in songs:
+        s = dict(s)
+        s['artist'] = _clean_mix_artist(s.get('artist', ''))
+        s['name'] = _clean_mix_title(s['artist'], s.get('name', ''))
+        out.append(s)
+    return out
+
+
 def _send_mood_mix(update, user_id: int, mood: str):
     """Fetch and send a mood mix (live-first, pool fallback)."""
     label = _MOOD_LABELS.get(mood, mood.title())
     update.message.chat.send_action(action="typing")
     songs = get_mood_mix(mood, 5)
+    # Round-19: strip classical catalog noise from artist/title once here —
+    # the display lines, song buttons and card-context keys below all use
+    # the cleaned names, so taps resolve to the right song on their own.
+    songs = _clean_mix_songs(songs)
     if not songs:
         update.message.reply_text(
             "😓 I couldn't put a mix together right now.\n"
