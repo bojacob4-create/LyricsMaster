@@ -115,7 +115,7 @@ def _run_song_card(query):
                                     "hello it's me\nline two\nline three",
                                     "ok")), \
          patch.object(h, '_is_artist_only_query', return_value=False), \
-         patch.object(h, 'get_youtube_link', return_value=None), \
+         patch.object(h, 'get_youtube_link_info', return_value=None), \
          patch.object(h, 'get_similar_songs', return_value=[]), \
          patch.object(h, 'detect_song_mood', return_value='sad'), \
          patch.object(h, 'get_song_statistics',

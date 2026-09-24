@@ -79,8 +79,12 @@ def run_card(artwork_value, lyrics=LYRICS):
          patch.object(handlers, "get_song_statistics",
                        return_value={"total_words": 100, "total_lines": 20,
                                      "vocabulary_richness": 60}), \
-         patch.object(handlers, "get_youtube_link",
-                       return_value="https://youtu.be/abc"), \
+         patch.object(handlers, "get_youtube_link_info",
+                       return_value={"url": "https://youtu.be/abc",
+                                     "kind": "official", "is_live": False,
+                                     "is_official": True,
+                                     "title": "Adele - Hello (Official Music Video)",
+                                     "alt": None}), \
          patch.object(handlers, "get_similar_songs",
                        return_value=[{"artist": "X", "name": "Y"}]), \
          patch.object(handlers, "detect_themes", return_value=["love"]), \

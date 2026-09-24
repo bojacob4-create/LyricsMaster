@@ -47,7 +47,8 @@ from utils import (
     is_section_marker_line,
     escape_markdown as md,
 )
-from services.youtube_service import get_youtube_link, format_youtube_response
+from services.youtube_service import get_youtube_link, get_youtube_link_info, \
+    format_youtube_response
 from services.youtube_downloader_service import download_youtube_video, download_youtube_audio, download_audio_for_song, cleanup_video, note_mp3_file_id, forget_mp3_file_id, is_cached_mp3_path
 from services.ai_info_service import get_person_info
 from services.artist_service import (
@@ -2510,6 +2511,7 @@ def youtube_command(update: Update, context: CallbackContext):
 
         candidates = parse_song_query(query)
         url = None
+        info = {}
         used_artist = ''
         used_song = ''
 
@@ -2519,7 +2521,8 @@ def youtube_command(update: Update, context: CallbackContext):
             a = artist if artist else song
             s = song if artist else ''
             logger.info(f"YouTube search trying: artist='{a}', song='{s}'")
-            result = get_youtube_link(a, s)
+            info = get_youtube_link_info(a, s) or {}
+            result = info.get('url')
             if result:
                 url = result
                 used_artist = a
@@ -2527,7 +2530,8 @@ def youtube_command(update: Update, context: CallbackContext):
                 break
 
         if not url:
-            url = get_youtube_link(query, '')
+            info = get_youtube_link_info(query, '') or {}
+            url = info.get('url')
             used_artist = query
             used_song = ''
 
@@ -2543,7 +2547,8 @@ def youtube_command(update: Update, context: CallbackContext):
 
         display_artist = used_artist
         display_song = used_song if used_song else ''
-        response = format_youtube_response(display_artist, display_song, url)
+        response = format_youtube_response(display_artist, display_song, url,
+                                           info)
         update.message.reply_text(response)
         logger.info(f"Successfully sent YouTube link to user {user_id}")
 
@@ -3560,6 +3565,17 @@ def _itunes_track_lookup(artist, title):
     return None
 
 
+def _yt_card_line(yt_info, empty_fallback=""):
+    """Round 27: the card's 🎬 line labels a live-only video honestly."""
+    yt_info = yt_info or {}
+    yt_url = yt_info.get('url')
+    if not yt_url:
+        return empty_fallback
+    if yt_info.get('is_live') and not yt_info.get('is_official'):
+        return f"🎬 {yt_url} — 🎥 live version"
+    return f"🎬 {yt_url}"
+
+
 def _verify_track_exists(artist, title):
     """Confirm a lyrics-less track is real via iTunes and/or YouTube.
 
@@ -3841,10 +3857,10 @@ def song_command(update: Update, context: CallbackContext):
         # Run YouTube + recommendations + artwork in parallel — all independent HTTP calls
         _tpar0 = time.time()
         with ThreadPoolExecutor(max_workers=3) as _pool:
-            _yt_fut  = _pool.submit(get_youtube_link, use_artist, use_song)
+            _yt_fut  = _pool.submit(get_youtube_link_info, use_artist, use_song)
             _rec_fut = _pool.submit(get_similar_songs, use_artist, use_song, mood)
             _art_fut = _pool.submit(_itunes_track_lookup, use_artist, use_song)
-            yt_url = _yt_fut.result()
+            _yt_info = _yt_fut.result() or {}
             recs   = _rec_fut.result()
             try:
                 _art_meta = _art_fut.result()
@@ -3864,7 +3880,7 @@ def song_command(update: Update, context: CallbackContext):
             (time.time() - _t0) * 1000,
         )
 
-        yt_section = f"🎬 {yt_url}" if yt_url else "🎬 YouTube: not found"
+        yt_section = _yt_card_line(_yt_info, "🎬 YouTube: not found")
 
         recs_lines = []
         for i, r in enumerate(recs[:3]):
@@ -4047,12 +4063,12 @@ def random_command(update: Update, context: CallbackContext):
 
         # Run YouTube + recommendations in parallel
         with ThreadPoolExecutor(max_workers=2) as _pool:
-            _yt_fut  = _pool.submit(get_youtube_link, artist_name, song_name)
+            _yt_fut  = _pool.submit(get_youtube_link_info, artist_name, song_name)
             _rec_fut = _pool.submit(get_similar_songs, artist_name, song_name, mood)
-            yt_url = _yt_fut.result()
+            _yt_info = _yt_fut.result() or {}
             recs   = _rec_fut.result()
 
-        yt_section = f"🎬 {yt_url}" if yt_url else ""
+        yt_section = _yt_card_line(_yt_info, "")
         recs_lines = []
         for i, r in enumerate(recs[:3]):
             emoji = ['🔥', '✨', '💫'][i]

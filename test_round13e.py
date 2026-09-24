@@ -48,7 +48,7 @@ ctx.args = "ADÉLA - Nicole Kidman".split()
 with patch.object(h, 'search_lyrics_with_fallback',
                   return_value=("ADÉLA", "Nicole Kidman", LYRICS, "ok")), \
      patch.object(h, '_is_artist_only_query', return_value=False), \
-     patch.object(h, 'get_youtube_link', return_value=None), \
+     patch.object(h, 'get_youtube_link_info', return_value=None), \
      patch.object(h, 'get_similar_songs', return_value=[]), \
      patch.object(h, 'detect_song_mood', return_value='romantic'), \
      patch.object(h, 'get_song_statistics',
