@@ -413,6 +413,10 @@ _REMIX_MARKERS = (
     'remix', 'cover', 'sped up', 'spedup', 'slowed', 'nightcore', 'mashup',
     'unplugged', 'acoustic', '8d', 'flip', 'bootleg', 'extended',
     'karaoke', 'instrumental', 'reverb', 'tiktok',
+    # Reaction videos ("Twins React to X ...") — talking over the music,
+    # never a valid audio source. Phrased (not bare 'react') so a song
+    # genuinely titled "React" is untouched.
+    'reaction', 'react to', 'reacts to',
 )
 
 

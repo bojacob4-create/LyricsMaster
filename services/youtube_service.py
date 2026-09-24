@@ -92,6 +92,10 @@ def _score_candidate(candidate: Dict, artist: str, song: str) -> int:
         'instrumental', 'remix by', 'mashup', 'parody', 'behind the scenes',
         'interview', 'podcast', 'explained', 'how to', 'compilation',
         'top 10', 'ranking', 'tier list',
+        # Reaction-video phrasings the bare 'reaction' substring misses:
+        # "Twins React to X (Official Music Video)" etc.  Kept as phrases
+        # (not bare 'react') so a song genuinely titled "React" is safe.
+        'react to', 'reacts to', 'reaction to', 'reacting to',
     ]
     for pattern in reject_patterns:
         if pattern in title_lower:
