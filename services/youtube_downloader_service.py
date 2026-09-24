@@ -205,6 +205,17 @@ _BLOCK_ERROR_HINTS = (
     'unable to download api page', 'http error 403', 'http error 429',
     'too many requests',
 )
+# Soft-wave hints: stalls and per-video format refusals that arrive
+# back-to-back across DIFFERENT candidates. One of these is bad luck;
+# two in a row is YouTube throttling this server (a wave). The breaker
+# only trips on hard block errors today, so a half-working YouTube can
+# burn 45s x N candidates (~5 min) on doomed attempts before failing.
+_SOFT_WAVE_HINTS = (
+    'timed out', 'timeout', 'stalled',
+    'requested format is not available', 'format not available',
+    'read operation timed out', 'giving up after',
+)
+_WAVE_ABORT_STRIKES = 2  # consecutive soft failures -> wave: fail fast
 _MP3_FAILURES_JSON = os.path.join(MP3_CACHE_DIR, 'mp3_failures.json')
 _MP3_URLS_JSON = os.path.join(MP3_CACHE_DIR, 'mp3_urls.json')
 _FAILURE_TTL_SECS = 600       # 10 min — a repeat tap fails instantly
@@ -214,6 +225,11 @@ _CANDIDATE_TIMEOUT_SECS = 45  # hard cap per download attempt
 def _is_block_error(exc: BaseException) -> bool:
     msg = str(exc).lower()
     return any(h in msg for h in _BLOCK_ERROR_HINTS)
+
+
+def _is_soft_wave_error(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return any(h in msg for h in _SOFT_WAVE_HINTS)
 
 
 def _yt_breaker_open() -> bool:
@@ -995,6 +1011,8 @@ def download_audio_for_song(artist: str, song: str,
                      requests.utils.quote(f"{artist} {song} official audio"
                                            if song else artist))
 
+    _bot_blocked = _yt_breaker_open()
+    _soft_wave_strikes = 0
     for url, title_c, uploader_c, dur, label in attempts:
         logger.info(f"[MP3] Trying {label}: '{title_c}'")
         try:
@@ -1004,7 +1022,25 @@ def download_audio_for_song(artist: str, song: str,
             if _is_block_error(ex):
                 _bot_blocked = True
                 _yt_trip_breaker(f"download {label}: {type(ex).__name__}")
+            elif _is_soft_wave_error(ex):
+                # One stall is bad luck; two in a row across different
+                # candidates is a throttling wave. Stop burning minutes:
+                # trip the breaker so this and later taps fail fast and
+                # queue for the automatic retry instead.
+                _soft_wave_strikes += 1
+                if _soft_wave_strikes >= _WAVE_ABORT_STRIKES:
+                    _bot_blocked = True
+                    _yt_trip_breaker(
+                        f"soft wave: {_soft_wave_strikes}x "
+                        f"{type(ex).__name__} (last: {label})")
+                    logger.warning(
+                        f"[MP3] aborting '{query}' — soft wave detected, "
+                        f"failing fast")
+                    break
+            else:
+                _soft_wave_strikes = 0
             continue
+        _soft_wave_strikes = 0
         res = _accept_downloaded(path, title_c, uploader_c, dur)
         if res == 'too_large':
             return False, ("❌ File Too Large\n━━━━━━━━━━━━━━━━━━━━━\n\nTelegram limit: 50MB.")
