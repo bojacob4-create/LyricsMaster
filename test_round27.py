@@ -3,9 +3,10 @@
 The pipeline was match-and-present: the best artist+title overlap won and was
 handed over as THE video.  When the only match was a live recording (covers,
 concert-only songs…), the user got a live video passed off silently as the
-video.  Now the winner is classified; a non-official live winner is labeled
-honestly, and the original artist's official video is offered when one
-surfaces (cover case: Brandi Carlile - Uninvited -> Alanis Morissette).
+video.  Now the winner is classified and a non-official live winner is
+labeled honestly.  No second-link alternative is offered: a title-only
+search cannot reliably establish that another artist's same-titled song is
+the covered/original work, and a wrong second link is worse than none.
 """
 import os
 import sys
@@ -92,31 +93,37 @@ def _fetch_router(mapping):
     return fake
 
 
-# ── 2. Cover case: live winner + official video by another artist ──────────
+# ── 2. Cover case: live winner, NO alternative offered ───────────────────
+# (round-28 revision: a title-only search cannot reliably identify the
+# original work, so no second-link search fires at all.)
 get_youtube_link_info.cache_clear()
+calls2 = []
+def live_recording_fetch(q):
+    calls2.append(q)
+    return mapping.get(q, mapping.get('*', []))
 mapping = {
     "Brandi Carlile Uninvited official music video": [LIVE_WIN],
     "Uninvited official music video": [ALANIS_OFFICIAL],
 }
-with patch.object(ys, '_fetch_candidates', side_effect=_fetch_router(mapping)):
+with patch.object(ys, '_fetch_candidates',
+                  side_effect=live_recording_fetch):
     info = get_youtube_link_info("Brandi Carlile", "Uninvited")
 check("cover: winner flagged live/non-official",
       info['is_live'] and not info['is_official']
       and info['url'] == "https://www.youtube.com/watch?v=brandi1", str(info))
-check("cover: alt official video offered",
-      info['alt'] and info['alt']['url'] ==
-      "https://www.youtube.com/watch?v=alanis1"
-      and info['alt']['artist'] == "Alanis Morissette", str(info.get('alt')))
+check("cover: info carries no 'alt' at all", 'alt' not in info, str(info))
+check("cover: no title-only second search fired",
+      all(q != "Uninvited official music video" for q in calls2), str(calls2))
 
-# ── 3. Live winner, no official alt anywhere -> alt None, still labeled ────
+# ── 3. Live winner, no official alt anywhere -> still just labeled ──────────
 get_youtube_link_info.cache_clear()
 with patch.object(ys, '_fetch_candidates',
                   side_effect=_fetch_router({'*': [LIVE_WIN]})):
     info2 = get_youtube_link_info("Brandi Carlile", "Uninvited")
-check("live winner, no alt: alt is None",
-      info2['is_live'] and info2['alt'] is None, str(info2))
+check("live winner: no 'alt' key on the info dict",
+      info2['is_live'] and 'alt' not in info2, str(info2))
 
-# ── 4. Official winner -> untouched behavior, no alt search ────────────────
+# ── 4. Official winner -> untouched behavior, single search ─────────────────
 get_youtube_link_info.cache_clear()
 calls = []
 def counting_fetch(q):
@@ -124,9 +131,9 @@ def counting_fetch(q):
     return [OFFICIAL_WIN]
 with patch.object(ys, '_fetch_candidates', side_effect=counting_fetch):
     info3 = get_youtube_link_info("Tyla", "Water")
-check("official winner: kind official, no alt",
-      info3['kind'] == 'official' and info3['alt'] is None, str(info3))
-check("official winner: no second (alt) search fired", len(calls) == 1, str(calls))
+check("official winner: kind official, no 'alt' key",
+      info3['kind'] == 'official' and 'alt' not in info3, str(info3))
+check("official winner: single search fired", len(calls) == 1, str(calls))
 
 # ── 5. Nothing scores -> search-fallback URL, kind none ────────────────────
 get_youtube_link_info.cache_clear()
@@ -147,7 +154,7 @@ with patch.object(ys, '_fetch_candidates',
 # ── 7. Response formatting ────────────────────────────────────────────────
 official_info = {'url': 'https://www.youtube.com/watch?v=tyla1',
                  'kind': 'official', 'is_live': False, 'is_official': True,
-                 'title': 'x', 'alt': None}
+                 'title': 'x'}
 old_style = ("🎬 Tyla — Water\n"
              "━━━━━━━━━━━━━━━━━━━━━\n\n"
              "▶️ Watch now:\nhttps://www.youtube.com/watch?v=tyla1\n\n"
@@ -163,27 +170,17 @@ check("no info: response byte-identical to the old format",
 
 live_info = {'url': 'https://www.youtube.com/watch?v=brandi1',
              'kind': 'live', 'is_live': True, 'is_official': False,
-             'title': 'x',
-             'alt': {'url': 'https://www.youtube.com/watch?v=alanis1',
-                     'artist': 'Alanis Morissette', 'title': 'y'}}
+             'title': 'x'}
 resp = format_youtube_response("Brandi Carlile", "Uninvited",
                                "https://www.youtube.com/watch?v=brandi1",
                                live_info)
 check("live: labeled as live version", "🎥 Live version" in resp, resp[:60])
 check("live: honest 'no official video' note",
       "no official video found" in resp, resp[:120])
-check("live: alt official video offered",
-      "Alanis Morissette" in resp
-      and "https://www.youtube.com/watch?v=alanis1" in resp)
-
-live_noalt = dict(live_info, alt=None)
-resp2 = format_youtube_response("Brandi Carlile", "Uninvited",
-                               "https://www.youtube.com/watch?v=brandi1",
-                               live_noalt)
-check("live without alt: no 'Also:' block", "Also:" not in resp2)
+check("live: NEVER a second-link block", "Also:" not in resp, resp[:300])
 
 live_official = {'url': 'https://www.youtube.com/watch?v=t1', 'kind': 'live',
-                 'is_live': True, 'is_official': True, 'title': 'x', 'alt': None}
+                 'is_live': True, 'is_official': True, 'title': 'x'}
 resp3 = format_youtube_response("Taylor Swift", "All Too Well",
                                "https://www.youtube.com/watch?v=t1",
                                live_official)
