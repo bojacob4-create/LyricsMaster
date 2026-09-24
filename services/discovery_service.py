@@ -186,6 +186,36 @@ _JUNK_TITLE_BITS = ('karaoke', 'tribute', '8d audio', 'slowed + reverb',
                     'sing along', 'sax solos', 'beats to relax/study to',
                     'lofi hip hop radio')
 
+# Worship/gospel guard (round-13b): no worship song belongs in any of the
+# 7 mood mixes — there is no gospel mood button and the audience is
+# mainstream. Plain keywords otherwise pull worship titles in: "How Good
+# God Is" via 'good' (happy), "Nearer My God to Thee" via the classical
+# feed (focus). Word-boundary matched; the rare mainstream "God's Plan"
+# exclusion is the accepted tradeoff — never serving worship in a happy
+# mix wins.
+_WORSHIP_WORDS = ('god', 'jesus', 'christ', 'hallelujah', 'worship',
+                  'gospel', 'psalm', 'amen', 'grace')
+_WORSHIP_RE = re.compile(r'\b(?:' + '|'.join(_WORSHIP_WORDS) + r')\b', re.I)
+
+
+def _is_worship_title(title: str) -> bool:
+    """True when the title carries an unambiguous worship/gospel marker."""
+    try:
+        return bool(_WORSHIP_RE.search(str(title or '')))
+    except Exception:
+        return False
+
+
+# Soft moods must not claim hype-genre tracks on a lone title keyword:
+# "Dead Fresh" (hip-hop) is not a sad song, whatever 'dead' says.
+# Genuine sad/relaxed hip-hop still arrives via the human-curated Last.fm
+# tag chart (tier-4), which this gate deliberately does not touch.
+_SOFT_MOOD_GENRE_CLASH = {
+    'sad': {'Hip-Hop/Rap', 'Dance', 'House', 'Electronic', 'Latin Urban'},
+    'relaxed': {'Hip-Hop/Rap', 'Dance', 'House', 'Electronic'},
+    'focus': {'Hip-Hop/Rap', 'Dance', 'House', 'Electronic'},
+}
+
 
 def _norm_title(t: str) -> str:
     """Normalize a song title for dedup: lowercase, drop bracketed extras
@@ -214,6 +244,8 @@ def _claim_pick(out: List[Dict], seen_keys: set, seen_artists: set,
             return False
         if any(j in tl for j in _JUNK_TITLE_BITS):
             return False
+        if _is_worship_title(t):
+            return False
         key = (a.lower(), t.lower())
         if key in seen_keys or a.lower() in seen_artists:
             return False
@@ -237,11 +269,14 @@ def _tier12_picks(entries: List[Dict], mood: str, internal: str, want: int,
     out: List[Dict] = []
     try:
         calm = mood in ('relaxed', 'focus')
+        clash = _SOFT_MOOD_GENRE_CLASH.get(mood, set())
         for e in entries:  # tier 1 — title carries a real mood word
             if len(out) >= want:
                 break
             if calm and _too_fast_for_calm(e.get('song', '')):
                 continue
+            if clash and (set(e.get('genres') or []) & clash):
+                continue  # hype-genre track: not a soft-mood song
             if _title_has_mood_word(e.get('song', ''), internal):
                 _claim_pick(out, seen_keys, seen_artists,
                             e.get('artist'), e.get('song'), 'fresh', 'keyword',
@@ -700,6 +735,8 @@ def get_mood_mix(mood: str, n: int = 5) -> List[Dict]:
             for s in _rng.sample(pool, min(len(pool), n * 2)):
                 if len(out) >= n:
                     break
+                if _is_worship_title(s.get('song', '')):
+                    continue
                 akey = (str(s.get('artist', '')).lower(),
                         str(s.get('song', '')).lower())
                 if akey in seen_keys:

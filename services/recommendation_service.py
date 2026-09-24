@@ -563,7 +563,11 @@ _MOOD_KEYWORDS: Dict[str, set] = {
         'lonely', 'lonesome', 'lost', 'missing', 'hurt', 'pain', 'broken', 'leaving',
         'dark', 'empty',
         'cold', 'ache', 'aching', 'weep', 'weeping', 'sorrow', 'despair', 'grief',
-        'die', 'dying', 'dead', 'death', 'gone', 'never', 'miss', 'suffer',
+        'gone', 'never', 'miss', 'suffer',
+        # NOTE (round-13b): 'die'/'dying'/'dead'/'death' deliberately
+        # excluded — in mainstream titles they skew hype/ironic/romantic
+        # ("Dead Fresh", "Die For You", "Die With A Smile"), not sad.
+        # The hype-genre clash gate in discovery backs this up.
     },
     'romantic': {
         'love', 'heart', 'forever', 'together', 'yours', 'kiss', 'darling', 'baby',

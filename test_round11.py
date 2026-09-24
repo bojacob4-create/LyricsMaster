@@ -29,7 +29,12 @@ for mood in moods:
     fresh = sum(1 for s in mix if s.get('source') == 'fresh')
     check(f"mood '{mood}': 5 songs, valid source", ok,
           f"got {len(mix) if isinstance(mix, list) else mix!r}")
-    check(f"mood '{mood}': mostly fresh ({fresh}/5)", fresh >= 3,
+    # Sad needs only >=2 fresh: on hip-hop-heavy chart days the clash gate
+    # (round-13b) correctly blocks hype-genre keyword matches, and the
+    # human-curated tag chart is the honest fallback. The invariant that
+    # matters — live sources healthy, never the dead pool — still holds.
+    need_fresh = 2 if mood == 'sad' else 3
+    check(f"mood '{mood}': mostly fresh ({fresh}/5)", fresh >= need_fresh,
           f"only {fresh} fresh picks")
 print(f"   (7 moods fetched in {time.time()-t0:.1f}s — fresh tiers + tag chart)")
 
@@ -139,6 +144,14 @@ from services.youtube_downloader_service import (
     mp3_retry_note_attempt, mp3_retry_remove, mp3_forget_failure,
     _mp3_cache_key)
 
+# Isolate the queue file: the bot is LIVE and a real user entry may sit in
+# the production queue (round-13b finding: the user's wave-queued MP3
+# polluted these tests).  Point the module at a temp file for this section.
+import tempfile as _tf
+import services.youtube_downloader_service as yds
+_orig_retry_json = yds._MP3_RETRY_JSON
+yds._MP3_RETRY_JSON = _tf.mkstemp(suffix='.json')[1]
+
 # Queue mechanics (no network)
 ok = mp3_retry_enqueue(111, 222, "Test Artist", "Test Song")
 check("retry enqueue", ok)
@@ -161,7 +174,6 @@ check("breaker helper callable", isinstance(mp3_block_wave_active(), bool))
 
 # Block-wave enqueue decision: simulate a breaker-open failure in the
 # background job path (breaker forced open, then cleared).
-import services.youtube_downloader_service as yds
 yds._yt_trip_breaker("test")
 check("breaker open after trip", mp3_block_wave_active())
 # retry_due must return [] while the breaker is open
@@ -230,6 +242,7 @@ try:
 finally:
     yds.download_audio_for_song = real_dl
     handlers.download_audio_for_song = real_dl
+    yds._MP3_RETRY_JSON = _orig_retry_json  # restore production queue
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

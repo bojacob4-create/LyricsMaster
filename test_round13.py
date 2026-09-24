@@ -137,5 +137,41 @@ gospel = [f"{m}:{s['artist']}-{s['name']}" for m in mixes for s in mixes[m]
                  for w in ['worship', 'brandon lake', 'elevation worship'])]
 check("no gospel in energetic/party", not gospel, str(gospel))
 
+print("== worship filter + soft-mood clash gate (round-13b, unit) ==")
+from services import discovery_service as ds2
+for t, want in [("How Good God Is", True), ("Nearer My God to Thee", True),
+                ("God Didn't Let Me Break", True), ("Good Feeling", False),
+                ("Halo", False), ("Amazing Grace", True)]:
+    check(f"worship filter: {t!r}", ds2._is_worship_title(t) == want,
+          f"got {ds2._is_worship_title(t)}")
+
+# _claim_pick rejects worship at the choke point (all tiers route through it)
+out, sk, sa, st = [], set(), set(), set()
+check("claim_pick rejects worship title",
+      ds2._claim_pick(out, sk, sa, "Brandon Lake", "How Good God Is",
+                      "fresh", "keyword", st) is False and len(out) == 0)
+check("claim_pick still accepts clean title",
+      ds2._claim_pick(out, sk, sa, "Flo Rida", "Good Feeling",
+                      "fresh", "keyword", st) is True)
+
+# clash gate: hip-hop track with a sad keyword must not be a tier-1 sad pick
+fake_entries = [
+    {'artist': 'Lil Baby', 'song': 'Dead Fresh',
+     'genres': ['Hip-Hop/Rap']},
+    {'artist': 'Bella Kay', 'song': 'Lonely',
+     'genres': ['Pop']},
+]
+picks = ds2._tier12_picks(fake_entries, 'sad', 'sad', 5, set(), set(), set())
+names = [p['name'] for p in picks]
+check("clash gate: hip-hop 'Dead Fresh' not a sad pick",
+      'Dead Fresh' not in names, str(names))
+check("clash gate: pop 'Lonely' still a sad pick",
+      'Lonely' in names, str(names))
+
+# death cluster gone from sad keywords (general, not just 'god')
+from services import recommendation_service as rs2
+sad_kw = rs2._MOOD_KEYWORDS['sad']
+check("sad keywords: no death cluster",
+      not ({'die', 'dying', 'dead', 'death'} & sad_kw))
 print(f"\nround-13: {passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
