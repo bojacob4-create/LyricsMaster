@@ -36,7 +36,7 @@ ARTIST_GENRE_MAP = {
     'frank ocean': 'rnb', 'chris brown': 'rnb', 'usher': 'rnb', 'alicia keys': 'rnb',
     'adele': 'rnb', 'sam smith': 'rnb', 'john legend': 'rnb', 'victoria monet': 'rnb',
     'lucky daye': 'rnb', 'chloe': 'rnb', 'rihanna': 'rnb',
-    'whitney houston': 'rnb', 'mariah carey': 'rnb',
+    'whitney houston': 'rnb', 'mariah carey': 'rnb', 'beyonce': 'rnb',
     'drake': 'hiphop', 'kendrick lamar': 'hiphop', 'j. cole': 'hiphop', 'kanye west': 'hiphop',
     'travis scott': 'hiphop', 'eminem': 'hiphop', 'lil wayne': 'hiphop', 'jay-z': 'hiphop',
     'tyler, the creator': 'hiphop', 'megan thee stallion': 'hiphop', 'nicki minaj': 'hiphop',
@@ -319,6 +319,238 @@ ARTIST_PROFILE = {
     'elton john': {'vocal': 'male', 'era': 'older'},
     'rolling stones': {'vocal': 'group', 'era': 'older'},
 }
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ARTIST_PROFILE — bulk completion (round 9)
+# ──────────────────────────────────────────────────────────────────────────────
+# Every artist present in ARTIST_GENRE_MAP but missing from ARTIST_PROFILE
+# got the wrong scoring defaults (male/modern) — e.g. Beyoncé.  These entries
+# close that data gap in one pass instead of one artist at a time.
+# vocal: 'female' | 'male' | 'group'   era: 'modern' (2020s wave) |
+# 'recent' (2010s) | 'older' (pre-2010s veterans) — same loose convention as
+# the entries above.
+_ARTIST_PROFILE_EXTRA = {
+    # ── R&B / soul ────────────────────────────────────────────────────
+    'beyonce': {'vocal': 'female', 'era': 'older'},
+    'bryson tiller': {'vocal': 'male', 'era': 'recent'},
+    'dvsn': {'vocal': 'group', 'era': 'modern'},
+    "d'angelo": {'vocal': 'male', 'era': 'older'},
+    'erykah badu': {'vocal': 'female', 'era': 'older'},
+    'giveon': {'vocal': 'male', 'era': 'modern'},
+    'india arie': {'vocal': 'female', 'era': 'older'},
+    'jill scott': {'vocal': 'female', 'era': 'older'},
+    'kehlani': {'vocal': 'female', 'era': 'recent'},
+    'lauryn hill': {'vocal': 'female', 'era': 'older'},
+    'mariah the scientist': {'vocal': 'female', 'era': 'modern'},
+    'maxwell': {'vocal': 'male', 'era': 'older'},
+    'anderson .paak': {'vocal': 'male', 'era': 'recent'},
+    'craig david': {'vocal': 'male', 'era': 'older'},
+    # ── Hip-hop / rap ─────────────────────────────────────────────────
+    '42 dugg': {'vocal': 'male', 'era': 'modern'},
+    'a boogie wit da hoodie': {'vocal': 'male', 'era': 'modern'},
+    'a$ap ferg': {'vocal': 'male', 'era': 'recent'},
+    'a$ap rocky': {'vocal': 'male', 'era': 'recent'},
+    'asap rocky': {'vocal': 'male', 'era': 'recent'},
+    'blxst': {'vocal': 'male', 'era': 'modern'},
+    'central cee': {'vocal': 'male', 'era': 'modern'},
+    'chief keef': {'vocal': 'male', 'era': 'recent'},
+    'dababy': {'vocal': 'male', 'era': 'modern'},
+    'don toliver': {'vocal': 'male', 'era': 'modern'},
+    'fivio foreign': {'vocal': 'male', 'era': 'modern'},
+    'gunna': {'vocal': 'male', 'era': 'modern'},
+    'jack harlow': {'vocal': 'male', 'era': 'modern'},
+    'juice wrld': {'vocal': 'male', 'era': 'modern'},
+    'lil baby': {'vocal': 'male', 'era': 'modern'},
+    'lil durk': {'vocal': 'male', 'era': 'modern'},
+    'lil uzi vert': {'vocal': 'male', 'era': 'recent'},
+    'migos': {'vocal': 'group', 'era': 'recent'},
+    'moneybagg yo': {'vocal': 'male', 'era': 'modern'},
+    'mozzy': {'vocal': 'male', 'era': 'modern'},
+    'nba youngboy': {'vocal': 'male', 'era': 'modern'},
+    'youngboy never broke again': {'vocal': 'male', 'era': 'modern'},
+    'offset': {'vocal': 'male', 'era': 'recent'},
+    'plan b': {'vocal': 'male', 'era': 'recent'},
+    'polo g': {'vocal': 'male', 'era': 'modern'},
+    'pooh shiesty': {'vocal': 'male', 'era': 'modern'},
+    'quavo': {'vocal': 'male', 'era': 'recent'},
+    'roddy ricch': {'vocal': 'male', 'era': 'modern'},
+    'takeoff': {'vocal': 'male', 'era': 'recent'},
+    'xxxtentacion': {'vocal': 'male', 'era': 'modern'},
+    'yeat': {'vocal': 'male', 'era': 'modern'},
+    # ── Pop ───────────────────────────────────────────────────────────
+    'aurora': {'vocal': 'female', 'era': 'recent'},
+    'becky g': {'vocal': 'female', 'era': 'recent'},
+    'birdy': {'vocal': 'female', 'era': 'recent'},
+    'boy pablo': {'vocal': 'male', 'era': 'modern'},
+    'camilo': {'vocal': 'male', 'era': 'modern'},
+    'clairo': {'vocal': 'female', 'era': 'modern'},
+    'conan gray': {'vocal': 'male', 'era': 'modern'},
+    'dominic fike': {'vocal': 'male', 'era': 'modern'},
+    'halsey': {'vocal': 'female', 'era': 'recent'},
+    'joji': {'vocal': 'male', 'era': 'modern'},
+    'lorde': {'vocal': 'female', 'era': 'recent'},
+    'mitski': {'vocal': 'female', 'era': 'recent'},
+    'omar apollo': {'vocal': 'male', 'era': 'modern'},
+    'phoebe bridgers': {'vocal': 'female', 'era': 'modern'},
+    'rex orange county': {'vocal': 'male', 'era': 'modern'},
+    'sigrid': {'vocal': 'female', 'era': 'modern'},
+    'snail mail': {'vocal': 'female', 'era': 'modern'},
+    'still woozy': {'vocal': 'male', 'era': 'modern'},
+    'surfaces': {'vocal': 'group', 'era': 'modern'},
+    'the japanese house': {'vocal': 'female', 'era': 'modern'},
+    'japanese breakfast': {'vocal': 'female', 'era': 'modern'},
+    # ── Country / folk ────────────────────────────────────────────────
+    'blake shelton': {'vocal': 'male', 'era': 'older'},
+    'brett young': {'vocal': 'male', 'era': 'recent'},
+    'chris stapleton': {'vocal': 'male', 'era': 'recent'},
+    'cody johnson': {'vocal': 'male', 'era': 'modern'},
+    'damien rice': {'vocal': 'male', 'era': 'older'},
+    'dierks bentley': {'vocal': 'male', 'era': 'older'},
+    'ella langley': {'vocal': 'female', 'era': 'modern'},
+    'eric church': {'vocal': 'male', 'era': 'older'},
+    'gregory alan isakov': {'vocal': 'male', 'era': 'modern'},
+    'hardy': {'vocal': 'male', 'era': 'modern'},
+    'iron & wine': {'vocal': 'male', 'era': 'recent'},
+    'kacey musgraves': {'vocal': 'female', 'era': 'recent'},
+    'lainey wilson': {'vocal': 'female', 'era': 'modern'},
+    'luke combs': {'vocal': 'male', 'era': 'modern'},
+    'morgan wallen': {'vocal': 'male', 'era': 'modern'},
+    'nick drake': {'vocal': 'male', 'era': 'older'},
+    'noah kahan': {'vocal': 'male', 'era': 'modern'},
+    'sufjan stevens': {'vocal': 'male', 'era': 'older'},
+    'thomas rhett': {'vocal': 'male', 'era': 'recent'},
+    'tyler hubbard': {'vocal': 'male', 'era': 'modern'},
+    'whiskey myers': {'vocal': 'group', 'era': 'modern'},
+    'zach bryan': {'vocal': 'male', 'era': 'modern'},
+    # ── Latin ─────────────────────────────────────────────────────────
+    'anuel aa': {'vocal': 'male', 'era': 'modern'},
+    'arcangel': {'vocal': 'male', 'era': 'older'},
+    'boza': {'vocal': 'male', 'era': 'modern'},
+    'darell': {'vocal': 'male', 'era': 'modern'},
+    'dei v': {'vocal': 'male', 'era': 'modern'},
+    'don omar': {'vocal': 'male', 'era': 'older'},
+    'el alfa': {'vocal': 'male', 'era': 'modern'},
+    'farruko': {'vocal': 'male', 'era': 'recent'},
+    'jhay cortez': {'vocal': 'male', 'era': 'modern'},
+    'junior h': {'vocal': 'male', 'era': 'modern'},
+    'lunay': {'vocal': 'male', 'era': 'modern'},
+    'maluma': {'vocal': 'male', 'era': 'recent'},
+    'mora': {'vocal': 'male', 'era': 'modern'},
+    'natanael cano': {'vocal': 'male', 'era': 'modern'},
+    'natti natasha': {'vocal': 'female', 'era': 'recent'},
+    'nicky jam': {'vocal': 'male', 'era': 'older'},
+    'quevedo': {'vocal': 'male', 'era': 'modern'},
+    'sech': {'vocal': 'male', 'era': 'modern'},
+    'sebastian yatra': {'vocal': 'male', 'era': 'modern'},
+    'wisin': {'vocal': 'male', 'era': 'older'},
+    'yandel': {'vocal': 'male', 'era': 'older'},
+    # ── Electronic / dance ────────────────────────────────────────────
+    'above & beyond': {'vocal': 'group', 'era': 'older'},
+    'aphex twin': {'vocal': 'male', 'era': 'older'},
+    'arca': {'vocal': 'female', 'era': 'modern'},
+    'armin van buuren': {'vocal': 'male', 'era': 'older'},
+    'avicii': {'vocal': 'male', 'era': 'recent'},
+    'bicep': {'vocal': 'group', 'era': 'modern'},
+    'bjork': {'vocal': 'female', 'era': 'older'},
+    'boards of canada': {'vocal': 'group', 'era': 'older'},
+    'bonobo': {'vocal': 'male', 'era': 'recent'},
+    'burial': {'vocal': 'male', 'era': 'recent'},
+    'calvin harris': {'vocal': 'male', 'era': 'recent'},
+    'caribou': {'vocal': 'male', 'era': 'recent'},
+    'chase & status': {'vocal': 'group', 'era': 'recent'},
+    'chris lake': {'vocal': 'male', 'era': 'modern'},
+    'clean bandit': {'vocal': 'group', 'era': 'recent'},
+    'daft punk': {'vocal': 'group', 'era': 'older'},
+    'david guetta': {'vocal': 'male', 'era': 'older'},
+    'deadmau5': {'vocal': 'male', 'era': 'older'},
+    'diplo': {'vocal': 'male', 'era': 'recent'},
+    'disclosure': {'vocal': 'group', 'era': 'recent'},
+    'dj snake': {'vocal': 'male', 'era': 'recent'},
+    'dom dolla': {'vocal': 'male', 'era': 'modern'},
+    'duke dumont': {'vocal': 'male', 'era': 'recent'},
+    'fisher': {'vocal': 'male', 'era': 'modern'},
+    'fka twigs': {'vocal': 'female', 'era': 'recent'},
+    'flume': {'vocal': 'male', 'era': 'recent'},
+    'four tet': {'vocal': 'male', 'era': 'recent'},
+    'fred again': {'vocal': 'male', 'era': 'modern'},
+    'fred again..': {'vocal': 'male', 'era': 'modern'},
+    'goldie': {'vocal': 'male', 'era': 'older'},
+    'james blake': {'vocal': 'male', 'era': 'recent'},
+    'jon hopkins': {'vocal': 'male', 'era': 'recent'},
+    'kygo': {'vocal': 'male', 'era': 'recent'},
+    'marshmello': {'vocal': 'male', 'era': 'recent'},
+    'martin garrix': {'vocal': 'male', 'era': 'recent'},
+    'massive attack': {'vocal': 'group', 'era': 'older'},
+    'moby': {'vocal': 'male', 'era': 'older'},
+    'odesza': {'vocal': 'group', 'era': 'recent'},
+    'paul van dyk': {'vocal': 'male', 'era': 'older'},
+    'pendulum': {'vocal': 'group', 'era': 'older'},
+    'portishead': {'vocal': 'group', 'era': 'older'},
+    'skrillex': {'vocal': 'male', 'era': 'recent'},
+    'st. vincent': {'vocal': 'female', 'era': 'recent'},
+    'swedish house mafia': {'vocal': 'group', 'era': 'recent'},
+    'tainy': {'vocal': 'male', 'era': 'modern'},
+    'the chainsmokers': {'vocal': 'group', 'era': 'recent'},
+    'thievery corporation': {'vocal': 'group', 'era': 'older'},
+    'tiesto': {'vocal': 'male', 'era': 'older'},
+    'tiësto': {'vocal': 'male', 'era': 'older'},
+    'tricky': {'vocal': 'male', 'era': 'older'},
+    'tycho': {'vocal': 'male', 'era': 'recent'},
+    'zedd': {'vocal': 'male', 'era': 'recent'},
+    # ── Rock / alternative ────────────────────────────────────────────
+    'alt-j': {'vocal': 'group', 'era': 'recent'},
+    'arcade fire': {'vocal': 'group', 'era': 'older'},
+    'beach boys': {'vocal': 'group', 'era': 'older'},
+    'big thief': {'vocal': 'group', 'era': 'modern'},
+    'bon iver': {'vocal': 'male', 'era': 'recent'},
+    'cage the elephant': {'vocal': 'group', 'era': 'recent'},
+    'cigarettes after sex': {'vocal': 'group', 'era': 'modern'},
+    'cocteau twins': {'vocal': 'group', 'era': 'older'},
+    'father john misty': {'vocal': 'male', 'era': 'recent'},
+    'florence + the machine': {'vocal': 'group', 'era': 'recent'},
+    'gary clark jr.': {'vocal': 'male', 'era': 'recent'},
+    'glass animals': {'vocal': 'group', 'era': 'modern'},
+    'interpol': {'vocal': 'group', 'era': 'older'},
+    'men i trust': {'vocal': 'group', 'era': 'modern'},
+    'mgmt': {'vocal': 'group', 'era': 'recent'},
+    'my bloody valentine': {'vocal': 'group', 'era': 'older'},
+    'nothing': {'vocal': 'group', 'era': 'modern'},
+    'of monsters and men': {'vocal': 'group', 'era': 'recent'},
+    'pj harvey': {'vocal': 'female', 'era': 'older'},
+    'ride': {'vocal': 'group', 'era': 'older'},
+    'sigur ros': {'vocal': 'group', 'era': 'older'},
+    'sigur rós': {'vocal': 'group', 'era': 'older'},
+    'simon & garfunkel': {'vocal': 'group', 'era': 'older'},
+    'slowdive': {'vocal': 'group', 'era': 'older'},
+    'the 1975': {'vocal': 'group', 'era': 'recent'},
+    'the cure': {'vocal': 'group', 'era': 'older'},
+    'the lumineers': {'vocal': 'group', 'era': 'recent'},
+    'the national': {'vocal': 'group', 'era': 'recent'},
+    'the smiths': {'vocal': 'group', 'era': 'older'},
+    'the strokes': {'vocal': 'group', 'era': 'older'},
+    'vampire weekend': {'vocal': 'group', 'era': 'recent'},
+    'wallows': {'vocal': 'group', 'era': 'modern'},
+    # ── Ambient / classical / instrumental ────────────────────────────
+    'alex g': {'vocal': 'male', 'era': 'modern'},
+    'brian eno': {'vocal': 'male', 'era': 'older'},
+    'ennio morricone': {'vocal': 'male', 'era': 'older'},
+    'explosions in the sky': {'vocal': 'group', 'era': 'older'},
+    'godspeed you! black emperor': {'vocal': 'group', 'era': 'older'},
+    'hammock': {'vocal': 'group', 'era': 'recent'},
+    'hans zimmer': {'vocal': 'male', 'era': 'older'},
+    'hiatus kaiyote': {'vocal': 'group', 'era': 'recent'},
+    'john williams': {'vocal': 'male', 'era': 'older'},
+    'ludovico einaudi': {'vocal': 'male', 'era': 'recent'},
+    'max richter': {'vocal': 'male', 'era': 'recent'},
+    'mogwai': {'vocal': 'group', 'era': 'older'},
+    'nick cave': {'vocal': 'male', 'era': 'older'},
+    'nils frahm': {'vocal': 'male', 'era': 'recent'},
+    'olafur arnalds': {'vocal': 'male', 'era': 'recent'},
+    'yann tiersen': {'vocal': 'male', 'era': 'older'},
+    'beach house': {'vocal': 'group', 'era': 'recent'},
+}
+ARTIST_PROFILE.update(_ARTIST_PROFILE_EXTRA)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Mood / tempo lookup tables
@@ -815,6 +1047,7 @@ ARTIST_STYLE = {
     'olivia rodrigo': 'emotional_pop',
     'miley cyrus': 'emotional_pop',
     'bruno mars': 'pop_rnb',
+    'beyonce': 'pop_rnb',
     'michael jackson': 'pop_rnb',
     # ── R&B sub-styles ────────────────────────────────────────────────────────
     'sza': 'alt_rnb',
@@ -2189,7 +2422,10 @@ def _get_artist_profile(artist: str) -> Dict:
     for k, v in ARTIST_PROFILE.items():
         if k in key:
             return v
-    return {'vocal': 'male', 'era': 'modern'}
+    # Unknown artist: stay neutral instead of guessing male/modern, which
+    # skewed recommendations toward male, modern artists for every artist
+    # missing from the map (e.g. Beyonce before the bulk completion above).
+    return {'vocal': 'unknown', 'era': 'unknown'}
 
 
 def _infer_mood_from_title(title: str, genre: str, handler_mood: str) -> str:
@@ -2447,8 +2683,16 @@ def _score_candidate(candidate_artist: str, candidate_name: str,
     energy_score     = _energy_compat(c_energy, source.get('energy', 'mid'))
     production_score = _production_compat(c_production, source.get('production', 'mixed'))
     genre_score      = 100.0 if candidate_genre == source['genre'] else 20.0
-    vocal_score      = 100.0 if cp.get('vocal') == source['vocal'] else 40.0
-    era_score        = 100.0 if cp.get('era')   == source['era']   else 30.0
+    _sv, _cv = source.get('vocal'), cp.get('vocal')
+    if _sv == 'unknown' or _cv == 'unknown':
+        vocal_score = 70.0  # no data — neutral, never a false 100 or 40
+    else:
+        vocal_score = 100.0 if _cv == _sv else 40.0
+    _se, _ce = source.get('era'), cp.get('era')
+    if _se == 'unknown' or _ce == 'unknown':
+        era_score = 65.0
+    else:
+        era_score = 100.0 if _ce == _se else 30.0
 
     # ── Ecosystem alignment score ──────────────────────────────────────────────
     # Explicit structural signal: how well does the candidate's broad musical

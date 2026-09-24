@@ -480,6 +480,56 @@ def _sole_artist_name(name, candidates):
     return None
 
 
+def _leftover_after_artist(text: str, artist_name: str) -> str:
+    """Words in `text` not explained by the artist's name (order-free).
+
+    "hello adele" vs "Adele" -> "hello".  "tate mcrae" vs "Tate McRae"
+    -> "".  Accent-insensitive.  Never raises.
+    """
+    try:
+        import re as _re
+        from services.nlp_router import _norm
+        artist_toks = set(_re.findall(r"[a-z0-9]+", _norm(artist_name)))
+        words = [w for w in _re.findall(r"[a-z0-9]+", _norm(text))
+                 if len(w) > 1]
+        return " ".join(w for w in words if w not in artist_toks)
+    except Exception:
+        return ""
+
+
+def _verify_artist_song(leftover: str, artist_name: str):
+    """Check that `leftover` is a REAL song by `artist_name` (live Last.fm).
+
+    General "Artist Title" rule for titles typed without a dash:
+    "hello adele" -> Adele - Hello, "tyla water" -> Tyla - Water.
+    Returns the top genuine candidate dict, or None when nothing by that
+    artist matches — callers then keep the previous behaviour (artist card).
+    Never raises.
+    """
+    if not leftover or not artist_name:
+        return None
+    try:
+        from services.nlp_router import (
+            search_song_candidates as _sc,
+            _covers,
+            _FILTER_WORDS,
+        )
+        for c in _sc(leftover) or []:
+            try:
+                if not _covers(artist_name, c.get("artist", "")):
+                    continue
+                if not _covers(leftover, c.get("song", "")):
+                    continue
+                if any(fw in c["song"].lower() for fw in _FILTER_WORDS):
+                    continue
+                return c
+            except Exception:
+                continue
+    except Exception:
+        return None
+    return None
+
+
 def _detect_bare_artist_name(name: str):
     """General bare-artist-name check - beyond the 43 local-DB artists.
 
@@ -1039,6 +1089,29 @@ def natural_language_handler(update: Update, context: CallbackContext):
     if _is_bare_title_fast_path(text):
         _bare_artist = get_artist_info(text.strip())
         if _bare_artist and text.strip().lower() not in _local_song_titles():
+            # ── "Artist Title" without a dash (e.g. "hello adele") ───────
+            # The input is only a bare artist name when every word is
+            # explained by the artist's name.  Leftover words are a song
+            # title: verify it is a REAL song by this artist and open its
+            # dashboard.  No genuine match → artist card as before.
+            _bare_leftover = _leftover_after_artist(
+                text.strip(), _bare_artist.get('name', ''))
+            if _bare_leftover:
+                _bare_hit = _verify_artist_song(
+                    _bare_leftover, _bare_artist.get('name', ''))
+                if _bare_hit:
+                    logger.info(
+                        f"NL artist+title for user {user_id}: "
+                        f"'{text.strip()}' → "
+                        f"{_bare_hit['artist']} - {_bare_hit['song']}"
+                    )
+                    _pending_recommend_artist.pop(user_id, None)
+                    _pending_disambig.pop(user_id, None)
+                    _pending_confirmation.pop(user_id, None)
+                    context.args = \
+                        f"{_bare_hit['artist']} - {_bare_hit['song']}".split()
+                    song_command(update, context)
+                    return
             _pending_recommend_artist.pop(user_id, None)
             _pending_disambig.pop(user_id, None)
             logger.info(
@@ -1083,6 +1156,27 @@ def natural_language_handler(update: Update, context: CallbackContext):
             if _fp_cands and _seed.lower() not in _local_song_titles():
                 _bare_live = _sole_artist_name(_seed, _fp_cands)
             if _bare_live:
+                # ── "Artist Title" without a dash (non-DB artists) ──────
+                # Same general rule as Step 3.55: leftover words after the
+                # artist's name are a song title — verify it live and open
+                # the dashboard; no genuine match → artist card as before.
+                _live_leftover = _leftover_after_artist(_seed, _bare_live)
+                if _live_leftover:
+                    _live_hit = _verify_artist_song(_live_leftover,
+                                                    _bare_live)
+                    if _live_hit:
+                        logger.info(
+                            f"NL artist+title (live) for user {user_id}: "
+                            f"'{_seed}' → "
+                            f"{_live_hit['artist']} - {_live_hit['song']}"
+                        )
+                        _pending_recommend_artist.pop(user_id, None)
+                        _pending_disambig.pop(user_id, None)
+                        _pending_confirmation.pop(user_id, None)
+                        context.args = \
+                            f"{_live_hit['artist']} - {_live_hit['song']}".split()
+                        song_command(update, context)
+                        return
                 _pending_recommend_artist.pop(user_id, None)
                 _pending_disambig.pop(user_id, None)
                 _pending_confirmation.pop(user_id, None)
@@ -3218,6 +3312,11 @@ def random_command(update: Update, context: CallbackContext):
             return
         artist_name = pick['artist']
         song_name = pick['song']
+        # Round 9: when the requested genre had no live pool anywhere, be
+        # honest about the global-chart fallback instead of silently
+        # serving an unrelated pick. The song is still served — no
+        # boundaries, just honesty.
+        genre_fallback = pick.pop('genre_fallback', None)
 
         artist, song, lyrics, status = search_lyrics_with_fallback(f"{artist_name} {song_name}")
 
@@ -3266,6 +3365,12 @@ def random_command(update: Update, context: CallbackContext):
             f"🎵 {display_title}\n"
             f"  {mood_emoji} Mood: {mood.title()}"
         ]
+
+        if genre_fallback:
+            parts.append(
+                f"\n\n💡 No '{genre_fallback}' songs in the live charts "
+                f"right now — here's a random one instead 🎶"
+            )
 
         if yt_section:
             parts.append(f"\n{yt_section}")

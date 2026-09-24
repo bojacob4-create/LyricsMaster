@@ -442,6 +442,7 @@ def get_random_song(user_id=None, genre=None) -> Optional[Dict]:
     recent = _recent_random_picks.get(user_id) if user_id else None
 
     pool: List[Dict] = []
+    genre_missed: Optional[str] = None
     if genre:
         resolved = GENRE_ALIASES.get(genre.lower().strip(),
                                      genre.lower().strip())
@@ -458,6 +459,10 @@ def get_random_song(user_id=None, genre=None) -> Optional[Dict]:
                     f"/random: genre '{resolved}' via iTunes search "
                     f"({len(pool)} songs)")
         if not pool:
+            # Nothing live for this genre anywhere: remember it so the
+            # caller can be honest about the fallback instead of silently
+            # serving an unrelated global-chart pick.
+            genre_missed = resolved
             logger.info(
                 f"/random: no live genre pool for '{resolved}', "
                 "using global chart")
@@ -486,6 +491,8 @@ def get_random_song(user_id=None, genre=None) -> Optional[Dict]:
 
     pick = {'artist': pick['artist'], 'song': pick['song']}
     _note_random_pick(user_id, pick)
+    if genre_missed:
+        pick['genre_fallback'] = genre_missed
     return pick
 
 
