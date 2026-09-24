@@ -520,7 +520,18 @@ def detect_intent(text: str) -> Tuple[Optional[str], str]:
         return 'mood', _extract_mood_word(text)
 
     if _match_keywords(text, RANDOM_KEYWORDS):
-        return 'random', ''
+        # "random rap", "surprise me with some soul" — keep the trailing
+        # genre so natural-language requests stay genre-aware, exactly
+        # like /random <genre>.  Bare "random" still yields '' (any genre).
+        _genre_q = _clean_query(text, [
+            'surprise me', 'pick me a song', 'pick a song',
+            'something random', 'anything', 'random',
+            'song', 'songs', 'track', 'tracks', 'tune', 'music',
+            'something',
+            'play me', 'give me', 'play', 'put on', 'show me', 'find me',
+            'get me',
+        ])
+        return 'random', _genre_q
 
     if _match_keywords(text, TRENDING_KEYWORDS):
         genre = _extract_top_genre(text)

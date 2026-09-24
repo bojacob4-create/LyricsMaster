@@ -35,6 +35,8 @@ import os
 import json
 import logging
 import hashlib
+import re
+import unicodedata
 import requests
 from typing import Dict, List, Optional
 
@@ -53,6 +55,22 @@ _FILTER_WORDS = frozenset({
     "lyrics", "tribute", "acoustic", "piano", "mashup",
     "medley", "parody", "reprise", "edit", "remaster",
 })
+
+
+def _norm(s: str) -> str:
+    """Lowercase ASCII-folded string: accents stripped ("Jhené" → "jhene")."""
+    return unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode("ascii").lower()
+
+
+def _covers(need: str, have: str) -> bool:
+    """True when every significant token of `need` appears in `have`.
+
+    Accent-insensitive, so "jhene aiko" covers "Jhené Aiko".
+    Single-letter tokens are ignored ("a", "x").
+    """
+    need_toks = [w for w in re.findall(r"[a-z0-9]+", _norm(need)) if len(w) > 1]
+    have_toks = set(re.findall(r"[a-z0-9]+", _norm(have)))
+    return bool(need_toks) and all(w in have_toks for w in need_toks)
 
 
 def search_song_candidates(song_name: str) -> List[Dict]:
@@ -118,6 +136,72 @@ def search_song_candidates(song_name: str) -> List[Dict]:
         # Sort by listener count descending; Last.fm already returns them
         # ranked, but an explicit sort makes the contract explicit.
         results.sort(key=lambda x: x["listeners"], reverse=True)
+
+        # ── "Artist Song" typed without a dash (e.g. "jhene aiko ghost") ──
+        # A plain track.search fuzzy-matches the whole string and returns the
+        # artist's most-played tracks instead of the named song.  Retry with
+        # the trailing word(s) as the track title, then keep only results
+        # whose artist genuinely matches the leading words.  (Last.fm's
+        # artist parameter is accent-sensitive — "Jhene aiko" misses while
+        # "Jhené Aiko" hits — so the artist match is done locally instead.)
+        words = song_name.split()
+        if len(words) >= 3:
+            scoped = []
+            for take in (1, 2):
+                if take >= len(words):
+                    continue
+                artist_part = " ".join(words[:-take])
+                track_part  = " ".join(words[-take:])
+                try:
+                    sr = requests.get(
+                        _LASTFM_BASE,
+                        params={
+                            "method":  "track.search",
+                            "track":   track_part,
+                            "api_key": api_key,
+                            "format":  "json",
+                            "limit":   8,
+                        },
+                        timeout=5,
+                    )
+                    sr.raise_for_status()
+                    smatches = (
+                        sr.json().get("results", {})
+                            .get("trackmatches", {})
+                            .get("track", [])
+                    )
+                except Exception:
+                    continue
+                for t in smatches:
+                    a  = (t.get("artist") or "").strip()
+                    tr = (t.get("name")   or "").strip()
+                    if not a or not tr:
+                        continue
+                    # Genuine match only: the returned artist must cover the
+                    # artist part and the returned title must cover the track
+                    # part (accent-insensitive).  Anything else is noise.
+                    if not (_covers(artist_part, a) and _covers(track_part, tr)):
+                        continue
+                    if any(fw in tr.lower() for fw in _FILTER_WORDS):
+                        continue
+                    scoped.append({
+                        "artist":    a,
+                        "song":      tr,
+                        "listeners": int(t.get("listeners", 0) or 0),
+                    })
+                if scoped:
+                    break  # most specific split won; don't dilute it
+            if scoped:
+                scoped.sort(key=lambda x: x["listeners"], reverse=True)
+                seen = {(c["artist"].lower(), c["song"].lower()) for c in scoped}
+                merged = list(scoped)
+                for c in results:
+                    key = (c["artist"].lower(), c["song"].lower())
+                    if key not in seen:
+                        merged.append(c)
+                        seen.add(key)
+                results = merged
+
         # Cap at 3 clean results
         results = results[:3]
         logger.debug(
