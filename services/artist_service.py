@@ -421,54 +421,51 @@ def get_available_genres() -> List[str]:
     return genres
 
 
-def get_random_song(user_id=None, genre=None) -> Dict:
-    """Pick a random song for discovery.
+def get_random_song(user_id=None, genre=None) -> Optional[Dict]:
+    """Pick a random song from LIVE charts — no static pools.
 
-    - genre: when a valid genre is given, pick from that genre's top songs.
-    - Otherwise ~25% of picks come from the live Apple Music Top 100
-      (1-hour cached) for freshness, the rest from the curated pool.
+    - genre: pick from the live genre chart (Apple genre slice of the
+      Top 100); falls back to the global chart when the genre slice is thin.
+    - Otherwise: pick from the live Apple Music Top 100 (cached ~6h).
     - Per-user recent picks are avoided (last 12) so /random feels fresh.
+    - Returns None when the live chart is unreachable AND no cache exists;
+      callers must degrade gracefully (friendly message, not a crash).
     """
     import random as rng
-
-    if genre:
-        resolved = GENRE_ALIASES.get(genre.lower().strip(), genre.lower().strip())
-        if resolved in GENRE_TOP_SONGS:
-            songs = list(GENRE_TOP_SONGS[resolved])
-            rng.shuffle(songs)
-            pick = {'artist': songs[0]['artist'], 'song': songs[0]['song']}
-            _note_random_pick(user_id, pick)
-            return pick
-
-    if rng.random() < 0.25:
-        try:
-            from services.recommendation_service import _fetch_apple_top_songs
-            chart = _fetch_apple_top_songs()
-            if chart:
-                c = rng.choice(chart)
-                pick = {'artist': c['artist'], 'song': c['name']}
-                # Chart picks must respect the no-repeat window too —
-                # otherwise /random can serve the same song twice in a row.
-                if recent:
-                    for _ in range(15):
-                        if f"{pick['artist']} - {pick['song']}".lower() not in recent:
-                            break
-                        c = rng.choice(chart)
-                        pick = {'artist': c['artist'], 'song': c['name']}
-                _note_random_pick(user_id, pick)
-                return pick
-        except Exception:
-            pass
+    from services.live_charts import get_top_songs, get_top_by_genre
 
     recent = _recent_random_picks.get(user_id) if user_id else None
-    pick = rng.choice(RANDOM_SONGS_POOL)
-    if recent:
-        for _ in range(15):
-            if f"{pick['artist']} - {pick['song']}".lower() not in recent:
-                break
-            pick = rng.choice(RANDOM_SONGS_POOL)
+
+    pool: List[Dict] = []
+    if genre:
+        resolved = GENRE_ALIASES.get(genre.lower().strip(),
+                                     genre.lower().strip())
+        pool = get_top_by_genre(resolved)
+        if not pool:
+            logger.info(
+                f"/random: no live genre chart for '{resolved}', "
+                "using global chart")
+
+    if not pool:
+        pool = get_top_songs()
+
+    if not pool:
+        logger.warning("get_random_song: live chart unavailable, no cache")
+        return None
+
+    def _fresh(p):
+        return (not recent
+                or f"{p['artist']} - {p['song']}".lower() not in recent)
+
+    pick = rng.choice(pool)
+    for _ in range(15):
+        if _fresh(pick):
+            break
+        pick = rng.choice(pool)
+
+    pick = {'artist': pick['artist'], 'song': pick['song']}
     _note_random_pick(user_id, pick)
-    return dict(pick)
+    return pick
 
 
 def get_artist_info(name: str) -> Optional[Dict]:

@@ -2768,6 +2768,105 @@ def _get_apple_recommendations(artist: str, song: str,
     return result
 
 
+def _get_lastfm_chart_recommendations(artist: str, song: str,
+                                       source_profile: Dict,
+                                       exclude_artists: frozenset = frozenset()
+                                       ) -> Optional[List[Dict]]:
+    """Score + rank Last.fm's global hot-tracks chart by vibe similarity.
+
+    This is the third live source in the pipeline (replacing the old static
+    curated pool): while the Apple Top 100 reflects US chart sales, the
+    Last.fm chart reflects what people are actually *listening* to worldwide
+    right now. Same quality gate + ecosystem filter as the Apple source.
+    Returns None when the chart is unavailable or nothing matches well.
+    """
+    from services.live_charts import get_lastfm_chart
+
+    try:
+        raw = get_lastfm_chart(limit=50)
+    except Exception as e:
+        logger.debug(f"[REC] Last.fm chart unavailable: {e}")
+        return None
+    if not raw:
+        return None
+
+    seed_artist = artist.lower().strip()
+    seed_song = song.lower().strip()
+    candidates = []
+    for t in raw:
+        a_name = (t.get('artist') or '').strip()
+        t_name = (t.get('song') or '').strip()
+        if not a_name or not t_name:
+            continue
+        if a_name.lower() == seed_artist:
+            continue
+        if t_name.lower() == seed_song:
+            continue
+        if a_name.lower() in exclude_artists:
+            continue
+        candidates.append({'name': t_name, 'artist': a_name,
+                           'reason': 'Hot on Last.fm right now'})
+
+    if len(candidates) < 3:
+        return None
+
+    scored = []
+    for c in candidates:
+        c_genre = _detect_genre_fast(c['artist'])
+        score = _score_candidate(c['artist'], c['name'], c_genre, source_profile)
+        scored.append((score, c, c_genre))
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    # Ecosystem filter (same as the Apple source): keep the chart's dominant
+    # genres from flooding results outside the source song's neighbourhood.
+    source_eco = source_profile.get('ecosystem', 'pop_synth')
+    adj_ecos = ECOSYSTEM_ADJACENT.get(source_eco, frozenset({source_eco}))
+    scored = [(s, c, g) for s, c, g in scored
+              if POOL_ECOSYSTEM.get(g, 'pop_synth') in adj_ecos]
+
+    quality_pool = [(s, c, g) for s, c, g in scored
+                    if s >= _APPLE_MIN_QUALITY]
+    if len(quality_pool) < 3:
+        logger.info("[REC] Last.fm chart quality pool too small, skipping")
+        return None
+
+    top_pool = quality_pool[:12]
+    jittered = [(s + random.uniform(-2, 2), c, g) for s, c, g in top_pool]
+    jittered.sort(key=lambda x: x[0], reverse=True)
+
+    result, seen_artists = [], set()
+    for _, c, c_genre in jittered:
+        ak = c['artist'].lower()
+        if ak not in seen_artists:
+            seen_artists.add(ak)
+            rec = dict(c)
+            rec['reason'] = _generate_reason(
+                c['artist'], c['name'], c_genre, source_profile,
+                c.get('reason', ''))
+            result.append(rec)
+        if len(result) == 5:
+            break
+
+    if len(result) < 5:
+        for _, c, c_genre in scored:
+            ak = c['artist'].lower()
+            if ak not in seen_artists:
+                seen_artists.add(ak)
+                rec = dict(c)
+                rec['reason'] = _generate_reason(
+                    c['artist'], c['name'], c_genre, source_profile,
+                    c.get('reason', ''))
+                result.append(rec)
+            if len(result) == 5:
+                break
+
+    if len(result) < 3:
+        return None
+    logger.info(f"[REC] Last.fm chart: {len(result)} recommendations "
+                f"for '{artist} - {song}'")
+    return result
+
+
 def _get_curated_recommendations(artist: str, song: str,
                                   mood: str, source_profile: Dict,
                                   limit: int = 5,
@@ -3121,9 +3220,10 @@ def _get_lastfm_recommendations(artist: str, song: str,
 def _merge_recommendations(*sources, limit: int = 5) -> List[Dict]:
     """Round-robin merge of recommendation sources, deduplicated by artist.
 
-    Sources are interleaved (Last.fm → Apple → curated …) so the final list
-    mixes the listener-similarity graph with fresh chart picks instead of
-    being dominated by a single source.
+    Sources are interleaved (Last.fm getSimilar → Apple Top 100 →
+    Last.fm hot chart …) so the final list mixes the listener-similarity
+    graph with fresh chart picks instead of being dominated by a single
+    source.
     """
     merged: List[Dict] = []
     seen: set = set()
@@ -3166,34 +3266,27 @@ def _get_similar_songs_uncached(artist: str, song: str, mood: str,
         apple_recs = _get_apple_recommendations(
             artist, song, source_profile, exclude_artists=exclude_artists)
 
-        # ── 3. Curated pool (always available) ───────────────────────────────
-        curated = _get_curated_recommendations(
-            artist, song, mood, source_profile,
-            limit=limit, exclude_artists=exclude_artists)
+        # ── 3. Last.fm hot chart (live, quality-gated) ───────────────────────
+        chart_recs = _get_lastfm_chart_recommendations(
+            artist, song, source_profile, exclude_artists=exclude_artists)
 
-        merged = _merge_recommendations(lastfm_recs, apple_recs, curated,
+        merged = _merge_recommendations(lastfm_recs, apple_recs, chart_recs,
                                         limit=limit)
-        if len(merged) >= 3:
+        if merged:
             logger.info(
                 f"[REC] Merged {len(lastfm_recs or [])} Last.fm + "
                 f"{len(apple_recs or [])} Apple + "
-                f"{len(merged) - len(lastfm_recs or []) - len(apple_recs or [])} curated "
-                f"for '{artist} - {song}'"
+                f"{len(chart_recs or [])} chart "
+                f"→ {len(merged)} for '{artist} - {song}'"
             )
             return merged
 
-        # Ultimate fallback: curated pool without exclusions
-        if exclude_artists:
-            logger.info(f"[REC] Fallback: curated without exclusions for '{artist} - {song}'")
-            return _get_curated_recommendations(artist, song, mood,
-                                                source_profile, limit=limit)
-        return merged
+        logger.info(f"[REC] All live sources empty for '{artist} - {song}'")
+        return []
 
     except Exception as e:
         logger.error(f"[REC] Error in get_similar_songs: {e}", exc_info=True)
-        genre          = _detect_genre_fast(artist)
-        source_profile = _build_song_profile(artist, song, mood, genre)
-        return _get_curated_recommendations(artist, song, mood, source_profile)
+        return []
 
 
 @lru_cache(maxsize=512)
@@ -3201,13 +3294,13 @@ def get_similar_songs(artist: str, song: str, mood: str) -> List[Dict]:
     """
     Return 5 recommended songs similar in vibe to the source.
 
-    Candidate discovery (song-first architecture):
+    Candidate discovery (all three sources are live — no static pools):
       1. Last.fm track.getSimilar — live, listener-overlap similarity graph.
          Up to 60 candidates, scored + ecosystem-filtered.
       2. Apple Music Top 100     — live charts, scored by vibe similarity with
          a quality gate (only genuinely matching songs are kept).
-      3. Curated pool            — static GENRE_RECOMMENDATIONS per genre.
-         Deterministic, always available.
+      3. Last.fm hot chart       — what's being played worldwide right now,
+         scored by vibe similarity with the same quality gate.
 
     The three sources are interleaved (round-robin, artist-deduplicated) so
     results mix proven listener favorites with fresh chart picks.

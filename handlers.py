@@ -2775,6 +2775,14 @@ def random_command(update: Update, context: CallbackContext):
         args = context.args or []
         genre_arg = " ".join(args).strip() or None
         pick = get_random_song(user_id=user_id, genre=genre_arg)
+        if not pick:
+            # Live chart unreachable and no cache — degrade with a clear
+            # message instead of crashing on a static-pool fallback.
+            processing_msg.edit_text(
+                "😓 The live music charts are unreachable right now.\n"
+                "Please try /random again in a moment! 🔄"
+            )
+            return
         artist_name = pick['artist']
         song_name = pick['song']
 
@@ -2820,7 +2828,7 @@ def random_command(update: Update, context: CallbackContext):
         recs_text = '\n'.join(recs_lines) if recs_lines else ""
 
         parts = [
-            f"🎲 Random Pick!\n"
+            f"🎲 Random Pick! 📡 Live from the charts\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"🎵 {display_title}\n"
             f"  {mood_emoji} Mood: {mood.title()}"

@@ -1,0 +1,226 @@
+"""Live-chart tests — no Telegram network, no real HTTP.
+
+Covers the "bot = live" migration:
+  1. live_charts parsing (primary + fallback feeds), caching, failure paths
+  2. get_random_song / get_quiz_songs draw from the live chart (mocked)
+  3. similar-songs pipeline uses only live sources (no curated pool)
+
+Run: ../venv/bin/python test_live_charts.py
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+PASS, FAIL = 0, 0
+FAILURES = []
+
+
+def check(name, cond, detail=""):
+    global PASS, FAIL
+    if cond:
+        PASS += 1
+        print(f"[PASS] {name}")
+    else:
+        FAIL += 1
+        FAILURES.append(name)
+        print(f"[FAIL] {name} {detail}")
+
+
+from services import live_charts as lc
+from services.artist_service import get_random_song
+from services import quiz_service as qs
+
+# ── Fixtures ────────────────────────────────────────────────────────────────
+
+def _mk(genre_label, apple_genre, n=4):
+    return [{'artist': f'{genre_label} Artist {i}', 'song': f'{genre_label} Hit {i}',
+             'genres': [apple_genre]} for i in range(1, n + 1)]
+
+
+FIXTURE_CHART = (
+    _mk('Pop', 'Pop')
+    + _mk('Rap', 'Hip-Hop/Rap')
+    + _mk('Rock', 'Alternative')
+    + _mk('Country', 'Country')
+    + _mk('Rnb', 'R&B/Soul')
+    + _mk('Kpop', 'K-Pop')
+)
+
+
+def _reset_mem():
+    lc._mem['chart'] = None
+    lc._mem['chart_ts'] = 0.0
+    lc._mem['lastfm'] = None
+    lc._mem['lastfm_ts'] = 0.0
+
+
+# ── 1. Apple primary-feed parsing ───────────────────────────────────────────
+
+print("== primary feed parsing ==")
+_apple_json = {
+    'feed': {'results': [
+        {'name': 'Song A', 'artistName': 'Artist A',
+         'genres': [{'name': 'Pop'}, {'name': 'Music'}]},
+        {'name': '', 'artistName': 'No Name'},          # skipped
+        {'name': 'Song B', 'artistName': 'Artist B',
+         'genres': [{'name': 'Hip-Hop/Rap'}]},
+    ]}
+}
+parsed = lc._parse_apple_marketing(_apple_json)
+check("primary parser: 2 valid songs", len(parsed) == 2, repr(parsed))
+check("primary parser: genres strip 'Music'",
+      parsed[0]['genres'] == ['Pop'], repr(parsed[0]))
+
+# ── 2. iTunes fallback-feed parsing ─────────────────────────────────────────
+
+print("== fallback feed parsing ==")
+_itunes_json = {
+    'feed': {'entry': [
+        {'im:name': {'label': 'Fall Song'}, 'im:artist': {'label': 'Fall Artist'},
+         'category': {'attributes': {'term': 'Pop'}}},
+        {'im:name': {'label': 'No Artist'}, 'im:artist': {'label': ''}},
+    ]}
+}
+parsed2 = lc._parse_itunes_rss(_itunes_json)
+check("fallback parser: 1 valid song", len(parsed2) == 1, repr(parsed2))
+check("fallback parser: genre captured", parsed2[0]['genres'] == ['Pop'])
+
+# ── 3. get_top_songs with mocked fetcher ────────────────────────────────────
+
+print("== get_top_songs (mocked fetch) ==")
+_reset_mem()
+lc._fetch_apple_chart = lambda: list(FIXTURE_CHART)
+top = lc.get_top_songs()
+check("top songs returns fixture", len(top) == 24 and top[0]['song'] == 'Pop Hit 1')
+check("top songs shape is {artist, song}",
+      set(top[0].keys()) == {'artist', 'song'}, repr(top[0]))
+top3 = lc.get_top_songs(limit=3)
+check("limit respected", len(top3) == 3)
+
+# ── 4. Genre filtering ──────────────────────────────────────────────────────
+
+print("== get_top_by_genre ==")
+check("pop genre", [s['song'] for s in lc.get_top_by_genre('pop')] == [f'Pop Hit {i}' for i in range(1,5)])
+check("rap genre", [s['song'] for s in lc.get_top_by_genre('rap')] == [f'Rap Hit {i}' for i in range(1,5)])
+check("rock genre", [s['song'] for s in lc.get_top_by_genre('rock')] == [f'Rock Hit {i}' for i in range(1,5)])
+check("unknown genre -> []", lc.get_top_by_genre('zydeco') == [])
+check("kpop genre", [s['song'] for s in lc.get_top_by_genre('kpop')] == [f'Kpop Hit {i}' for i in range(1,5)])
+check("thin genre slice (<3) -> []", lc.get_top_by_genre('dance') == [])
+
+# ── 5. Total failure -> [] (never raises) ───────────────────────────────────
+
+print("== total failure paths ==")
+_reset_mem()
+lc._fetch_apple_chart = lambda: []
+_cache_bak = None
+if os.path.exists(lc._CACHE_FILE):
+    _cache_bak = lc._CACHE_FILE + '.testbak'
+    os.rename(lc._CACHE_FILE, _cache_bak)
+try:
+    check("get_top_songs -> [] on total failure", lc.get_top_songs() == [])
+    check("get_top_by_genre -> [] on total failure",
+          lc.get_top_by_genre('pop') == [])
+    check("get_random_song -> None on total failure",
+          get_random_song(user_id=4242) is None)
+    check("get_quiz_songs -> [] on total failure", qs.get_quiz_songs() == [])
+finally:
+    if _cache_bak and os.path.exists(_cache_bak):
+        os.rename(_cache_bak, lc._CACHE_FILE)
+
+# ── 6. Last.fm chart without key -> [] (never raises) ───────────────────────
+
+print("== lastfm chart without key ==")
+old_key = os.environ.pop('LASTFM_API_KEY', None)
+_reset_mem()
+check("get_lastfm_chart -> [] without key", lc.get_lastfm_chart() == [])
+if old_key is not None:
+    os.environ['LASTFM_API_KEY'] = old_key
+
+# ── 7. get_random_song draws from live chart ────────────────────────────────
+
+print("== get_random_song live ==")
+_reset_mem()
+lc._fetch_apple_chart = lambda: list(FIXTURE_CHART)
+from services.artist_service import _recent_random_picks
+_recent_random_picks.pop(777, None)
+picks = {get_random_song(user_id=777)['song'] for _ in range(30)}
+check("picks come from the live chart",
+      picks <= {s['song'] for s in FIXTURE_CHART}, repr(picks))
+pg = get_random_song(user_id=778, genre='pop')
+check("genre pick is a pop chart song", pg and pg['song'].startswith('Pop Hit'), repr(pg))
+rg = get_random_song(user_id=778, genre='rap')
+check("genre pick is a rap chart song", rg and rg['song'].startswith('Rap Hit'), repr(rg))
+# unknown genre falls back to global chart (still live, no crash)
+ug = get_random_song(user_id=778, genre='zydeco')
+check("unknown genre falls back to global chart", bool(ug), repr(ug))
+
+# no-repeat window: 12 distinct picks, then repeats allowed but de-duped
+_recent_random_picks.pop(779, None)
+seq = [get_random_song(user_id=779)['song'] for _ in range(12)]
+check("12 consecutive picks are distinct", len(set(seq)) == 12, repr(seq))
+
+# ── 8. get_quiz_songs draws from live chart ─────────────────────────────────
+
+print("== get_quiz_songs live ==")
+_reset_mem()
+lc._fetch_apple_chart = lambda: list(FIXTURE_CHART)
+qz = qs.get_quiz_songs()
+check("quiz songs come from live chart",
+      len(qz) == 24 and qz[0]['song'] == 'Pop Hit 1', repr(qz[:2]))
+
+# ── 9. Similar-songs pipeline: live sources only, no curated fallback ──────
+
+print("== similar songs: live-only pipeline ==")
+import services.recommendation_service as rec
+
+# All three live sources empty -> [] (the old curated fallback is gone)
+rec._get_lastfm_recommendations = lambda *a, **k: []
+rec._fetch_apple_top_songs = lambda: []
+lc.get_lastfm_chart = lambda limit=50: []
+merged = rec._get_similar_songs_uncached('Adele', 'Hello', 'sad')
+check("all sources empty -> [] (no curated fallback)", merged == [],
+      repr(merged))
+
+# Only the Last.fm chart alive -> chart-only recs, quality-gated.
+# (Real pop artists so the vibe/ecosystem gates have something to chew on.)
+_reset_mem()
+lc.get_lastfm_chart = lambda limit=50: [
+    {'artist': 'Sabrina Carpenter', 'song': 'Espresso'},
+    {'artist': 'Chappell Roan', 'song': 'Good Luck, Babe!'},
+    {'artist': 'Olivia Rodrigo', 'song': 'vampire'},
+    {'artist': 'Dua Lipa', 'song': 'Houdini'},
+    {'artist': 'Ariana Grande', 'song': "we can't be friends"},
+    {'artist': 'Billie Eilish', 'song': 'Birds of a Feather'},
+]
+prof = rec._build_song_profile(
+    'Taylor Swift', 'Cruel Summer', 'happy',
+    rec._detect_genre('Taylor Swift', 'Cruel Summer', 'happy'))
+chart_recs = rec._get_lastfm_chart_recommendations(
+    'Taylor Swift', 'Cruel Summer', prof)
+check("chart source returns scored recs",
+      chart_recs is not None and len(chart_recs) >= 3,
+      repr(chart_recs))
+check("chart source honors seed-artist exclusion",
+      all(r['artist'].lower() != 'taylor swift' for r in (chart_recs or [])))
+
+excl = frozenset({'sabrina carpenter'})
+chart_recs2 = rec._get_lastfm_chart_recommendations(
+    'Taylor Swift', 'Cruel Summer', prof, exclude_artists=excl)
+check("chart source honors exclude_artists",
+      chart_recs2 is not None
+      and all(r['artist'].lower() != 'sabrina carpenter'
+              for r in chart_recs2))
+
+# Round-robin merge order: lastfm -> apple -> chart
+m = rec._merge_recommendations(
+    [{'artist': 'A1', 'name': 's1'}],
+    [{'artist': 'B1', 'name': 's2'}],
+    [{'artist': 'C1', 'name': 's3'}], limit=3)
+check("merge interleaves L->A->C",
+      [r['artist'] for r in m] == ['A1', 'B1', 'C1'], repr(m))
+
+print(f"\n{PASS} passed, {FAIL} failed")
+if FAILURES:
+    print("FAILURES:", FAILURES)
+    sys.exit(1)

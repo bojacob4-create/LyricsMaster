@@ -30,3 +30,5 @@ venv/
 generated-icon.png
 mp3_cache/
 *.part
+
+live_charts_cache.json

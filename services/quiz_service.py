@@ -13,124 +13,23 @@ _SCORES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             '..', 'quiz_scores.json')
 
 
-# ── Song pool (110 songs, global + multi-era) ──────────────────────────────
+# ── Song list: LIVE chart hits (no static pool) ─────────────────────────────
+# Quiz questions are drawn from the current Apple Music Top 100 so the quiz
+# stays current.  Charts are cached (~6h) inside live_charts and fall back to
+# the last cached chart when the feed is down.
 
-@lru_cache(maxsize=1)
 def get_quiz_songs() -> List[Dict]:
-    return [
-        {"artist": "Queen", "song": "Bohemian Rhapsody"},
-        {"artist": "The Beatles", "song": "Hey Jude"},
-        {"artist": "Michael Jackson", "song": "Billie Jean"},
-        {"artist": "Adele", "song": "Rolling in the Deep"},
-        {"artist": "Ed Sheeran", "song": "Shape of You"},
-        {"artist": "Taylor Swift", "song": "Shake It Off"},
-        {"artist": "Whitney Houston", "song": "I Will Always Love You"},
-        {"artist": "Journey", "song": "Don't Stop Believin'"},
-        {"artist": "Lady Gaga", "song": "Bad Romance"},
-        {"artist": "Elvis Presley", "song": "Can't Help Falling in Love"},
-        {"artist": "Tyla", "song": "Water"},
-        {"artist": "Dua Lipa", "song": "Levitating"},
-        {"artist": "Harry Styles", "song": "As It Was"},
-        {"artist": "Olivia Rodrigo", "song": "drivers license"},
-        {"artist": "The Weeknd", "song": "Blinding Lights"},
-        {"artist": "Billie Eilish", "song": "bad guy"},
-        {"artist": "Bruno Mars", "song": "Just the Way You Are"},
-        {"artist": "Rihanna", "song": "Umbrella"},
-        {"artist": "Eminem", "song": "Lose Yourself"},
-        {"artist": "Coldplay", "song": "Yellow"},
-        {"artist": "Imagine Dragons", "song": "Believer"},
-        {"artist": "Ariana Grande", "song": "thank u, next"},
-        {"artist": "Post Malone", "song": "Circles"},
-        {"artist": "Kendrick Lamar", "song": "HUMBLE."},
-        {"artist": "SZA", "song": "Kill Bill"},
-        {"artist": "Miley Cyrus", "song": "Flowers"},
-        {"artist": "Arctic Monkeys", "song": "Do I Wanna Know?"},
-        {"artist": "Beyonce", "song": "Halo"},
-        {"artist": "Drake", "song": "Hotline Bling"},
-        {"artist": "Nirvana", "song": "Smells Like Teen Spirit"},
-        {"artist": "John Legend", "song": "All of Me"},
-        {"artist": "Maroon 5", "song": "Sugar"},
-        {"artist": "Sia", "song": "Chandelier"},
-        {"artist": "Sam Smith", "song": "Stay With Me"},
-        {"artist": "Lana Del Rey", "song": "Summertime Sadness"},
-        {"artist": "Fleetwood Mac", "song": "Dreams"},
-        {"artist": "Hozier", "song": "Take Me to Church"},
-        {"artist": "Gotye", "song": "Somebody That I Used to Know"},
-        {"artist": "Pharrell Williams", "song": "Happy"},
-        {"artist": "Lewis Capaldi", "song": "Someone You Loved"},
-        # ── Expansion ──
-        {"artist": "Ayra Starr", "song": "Rush"},
-        {"artist": "Rema", "song": "Calm Down"},
-        {"artist": "Burna Boy", "song": "Last Last"},
-        {"artist": "Wizkid", "song": "Essence"},
-        {"artist": "CKay", "song": "Love Nwantiti"},
-        {"artist": "Tems", "song": "Free Mind"},
-        {"artist": "Asake", "song": "Lonely At The Top"},
-        {"artist": "Omah Lay", "song": "Soso"},
-        {"artist": "Fireboy DML", "song": "Peru"},
-        {"artist": "Davido", "song": "Fall"},
-        {"artist": "Billie Eilish", "song": "Birds of a Feather"},
-        {"artist": "Tate McRae", "song": "greedy"},
-        {"artist": "Chappell Roan", "song": "Good Luck, Babe!"},
-        {"artist": "Charli XCX", "song": "360"},
-        {"artist": "Sabrina Carpenter", "song": "Espresso"},
-        {"artist": "Taylor Swift", "song": "Cruel Summer"},
-        {"artist": "Olivia Rodrigo", "song": "vampire"},
-        {"artist": "Dua Lipa", "song": "Houdini"},
-        {"artist": "Drake", "song": "One Dance"},
-        {"artist": "Kendrick Lamar", "song": "Not Like Us"},
-        {"artist": "Travis Scott", "song": "Goosebumps"},
-        {"artist": "Doja Cat", "song": "Paint The Town Red"},
-        {"artist": "Nicki Minaj", "song": "Super Freaky Girl"},
-        {"artist": "Cardi B", "song": "I Like It"},
-        {"artist": "Future", "song": "WAIT FOR U"},
-        {"artist": "J. Cole", "song": "No Role Modelz"},
-        {"artist": "SZA", "song": "Snooze"},
-        {"artist": "The Weeknd", "song": "Die For You"},
-        {"artist": "Frank Ocean", "song": "Pink + White"},
-        {"artist": "Daniel Caesar", "song": "Get You"},
-        {"artist": "Steve Lacy", "song": "Bad Habit"},
-        {"artist": "Bad Bunny", "song": "Tití Me Preguntó"},
-        {"artist": "Shakira", "song": "Bzrp Music Sessions, Vol. 53"},
-        {"artist": "Karol G", "song": "Provenza"},
-        {"artist": "Rauw Alejandro", "song": "Todo de Ti"},
-        {"artist": "Rosalía", "song": "Despechá"},
-        {"artist": "Queen", "song": "Don't Stop Me Now"},
-        {"artist": "The Beatles", "song": "Here Comes The Sun"},
-        {"artist": "Arctic Monkeys", "song": "505"},
-        {"artist": "Tame Impala", "song": "The Less I Know The Better"},
-        {"artist": "Oasis", "song": "Wonderwall"},
-        {"artist": "Foo Fighters", "song": "Everlong"},
-        {"artist": "Linkin Park", "song": "In The End"},
-        {"artist": "Hozier", "song": "Too Sweet"},
-        {"artist": "Glass Animals", "song": "Heat Waves"},
-        {"artist": "The 1975", "song": "Somebody Else"},
-        {"artist": "Jung Kook", "song": "Seven"},
-        {"artist": "BTS", "song": "Dynamite"},
-        {"artist": "BLACKPINK", "song": "How You Like That"},
-        {"artist": "NewJeans", "song": "Super Shy"},
-        {"artist": "ABBA", "song": "Dancing Queen"},
-        {"artist": "a-ha", "song": "Take On Me"},
-        {"artist": "Toto", "song": "Africa"},
-        {"artist": "Bee Gees", "song": "Stayin' Alive"},
-        {"artist": "Elton John", "song": "Cold Heart"},
-        {"artist": "Whitney Houston", "song": "I Wanna Dance with Somebody"},
-        {"artist": "Rihanna", "song": "Diamonds"},
-        {"artist": "Adele", "song": "Hello"},
-        {"artist": "Sam Smith", "song": "Unholy"},
-        {"artist": "Lizzo", "song": "About Damn Time"},
-        {"artist": "Doja Cat", "song": "Woman"},
-        {"artist": "Jack Harlow", "song": "First Class"},
-        {"artist": "Ed Sheeran", "song": "Perfect"},
-        {"artist": "Bruno Mars", "song": "Uptown Funk"},
-        {"artist": "Mark Ronson", "song": "Uptown Funk"},
-        {"artist": "Daft Punk", "song": "Get Lucky"},
-        {"artist": "Calvin Harris", "song": "Summer"},
-        {"artist": "David Guetta", "song": "Titanium"},
-        {"artist": "Avicii", "song": "Wake Me Up"},
-        {"artist": "OneRepublic", "song": "Counting Stars"},
-        {"artist": "Shawn Mendes", "song": "Stitches"},
-    ]
+    """Current chart hits for quiz questions/distractors.  Never raises."""
+    try:
+        from services.live_charts import get_top_songs
+        songs = get_top_songs(limit=100)
+        if songs:
+            return songs
+    except Exception as e:
+        logger.error(f"[QUIZ] Live chart unavailable: {e}")
+    return []
+
+
 
 
 # ── Persistent best scores ────────────────────────────────────────────────
