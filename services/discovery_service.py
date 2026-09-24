@@ -9,6 +9,9 @@ falls back to a good local answer when the API is limited, slow, or down.
 
 Module import performs NO network I/O.  Every public function never raises:
 on any failure it returns [] / {} / a safe default.
+
+Exception to the local-first rule: mood mixes are LIVE-first (Last.fm tag
+charts) by explicit product direction — the pool is fallback/shortfall only.
 """
 
 import json
@@ -88,6 +91,20 @@ _MOOD_KEYWORDS_SORTED: List[Tuple[str, str]] = sorted(
     key=lambda kv: len(kv[0]),
     reverse=True,
 )
+
+# Canonical mood -> Last.fm tag used as the LIVE primary source for mixes.
+# (Last.fm tags are user-applied; these are the best-trafficked ones per mood.)
+_MOOD_LASTFM_TAG: Dict[str, str] = {
+    'happy': 'happy',
+    'energetic': 'workout',
+    'relaxed': 'chill',
+    'sad': 'sad',
+    'romantic': 'romantic',
+    'party': 'party',
+    'focus': 'study',
+}
+_MOOD_TAG_CACHE: Dict[str, Tuple[float, List[Dict]]] = {}  # tag -> (ts, tracks)
+_MOOD_TAG_TTL_SECS = 12 * 3600  # 12h — tag charts move slowly
 
 
 def normalize_mood(text: str) -> Optional[str]:
@@ -384,32 +401,86 @@ def _similar_quick(artist: str, song: str, mood: str,
         return []
 
 
-def get_mood_mix(mood: str, n: int = 5) -> List[Dict]:
-    """Mood mix — PRIMARY is the local MOOD_SONG_POOLS (works fully offline).
+def _mood_lastfm_tag_tracks(mood: str, limit: int = 12) -> List[Dict]:
+    """Live-first mood source: Last.fm tag.getTopTracks (REST, ~0.5s).
 
-    Returns [{'artist','name','reason'}].  Enhancement: up to 2 live picks
-    from get_similar_songs (Last.fm) are blended in when the API answers
-    quickly; the local pool always guarantees n good songs.  Never raises.
+    12-hour in-memory cache per mood. Returns [{'artist','name','reason'}]
+    deduplicated, or [] when the API is down/slow. Never raises.
+    """
+    import os as _os
+    import time as _time
+    try:
+        import requests as _requests
+    except Exception:
+        return []
+    mood = (mood or '').lower()
+    tag = _MOOD_LASTFM_TAG.get(mood, mood)
+    try:
+        entry = _MOOD_TAG_CACHE.get(tag)
+        if entry and (_time.time() - entry[0]) < _MOOD_TAG_TTL_SECS:
+            return list(entry[1])
+        api_key = _os.environ.get('LASTFM_API_KEY', '')
+        if not api_key:
+            return []
+        r = _requests.get(
+            "https://ws.audioscrobbler.com/2.0/",
+            params={"method": "tag.gettoptracks", "tag": tag,
+                    "api_key": api_key, "format": "json", "limit": limit},
+            timeout=8,
+            headers={"User-Agent": "LyricsMasterBot/1.0"})
+        tracks = ((r.json() or {}).get("tracks") or {}).get("track") or []
+        out, seen = [], set()
+        for t in tracks:
+            if not isinstance(t, dict):
+                continue
+            a = str((t.get('artist') or {}).get('name') or '').strip()
+            name = str(t.get('name') or '').strip()
+            if not a or not name:
+                continue
+            # Skip classical mega-titles and junk that look bad in a mix.
+            if len(name) > 60:
+                continue
+            k = (a.lower(), name.lower())
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append({
+                'artist': a,
+                'name': name,
+                'reason': f"🔥 What Last.fm listeners reach for when they're feeling {mood}",
+            })
+        _MOOD_TAG_CACHE[tag] = (_time.time(), out)
+        # Cap cache size (7 moods max, but be tidy).
+        while len(_MOOD_TAG_CACHE) > 12:
+            _MOOD_TAG_CACHE.pop(next(iter(_MOOD_TAG_CACHE)))
+        return list(out)
+    except Exception:
+        return []
+
+
+def get_mood_mix(mood: str, n: int = 5) -> List[Dict]:
+    """Mood mix — LIVE-first: Last.fm tag charts ranked by real listeners.
+
+    Returns [{'artist','name','reason'}].  The Last.fm tag chart for the
+    mood is the primary source (12h cached, ~0.5s when fresh); the local
+    MOOD_SONG_POOLS only fills a shortfall or serves when the API is
+    down — so the user always gets a mix.  Never raises.
     """
     try:
         mood = (mood or '').lower()
-        pool = MOOD_SONG_POOLS.get(mood)
-        if not pool:
-            return []
-        n = max(1, min(int(n or 5), len(pool)))
-        picks = _rng.sample(pool, n)
-        out = [{'artist': s['artist'], 'name': s['song'],
-                'reason': s.get('reason', '')} for s in picks]
-
-        # Optional live enhancement: blend in up to 2 non-duplicate picks.
-        live = _similar_quick(out[0]['artist'], out[0]['name'], mood,
-                              _MOOD_LIVE_CACHE)[:2]
-        seen = {(s['artist'].lower(), s['name'].lower()) for s in out}
-        fresh = [s for s in live
-                 if (s['artist'].lower(), s['name'].lower()) not in seen][:2]
-        if fresh:
-            out = out[:max(n - len(fresh), 0)] + fresh
-        return out
+        n = max(1, min(int(n or 5), 10))
+        out = _mood_lastfm_tag_tracks(mood, limit=max(n * 2, 10))[:n]
+        if len(out) < n:
+            pool = MOOD_SONG_POOLS.get(mood) or []
+            seen = {(s['artist'].lower(), s['name'].lower()) for s in out}
+            fill = [s for s in _rng.sample(pool, min(len(pool), n))
+                    if (s['artist'].lower(), s['song'].lower()) not in seen]
+            for s in fill:
+                if len(out) >= n:
+                    break
+                out.append({'artist': s['artist'], 'name': s['song'],
+                            'reason': s.get('reason', '')})
+        return out[:n]
     except Exception as e:
         logger.debug(f"get_mood_mix failed: {e}")
         return []

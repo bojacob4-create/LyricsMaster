@@ -2899,8 +2899,23 @@ def _mp3_background_job(bot, chat_id, user_id,
         success, result = download_audio_for_song(artist_q, song_q)
 
         if not success:
-            # result is the user-facing failure text (incl. YouTube search link).
-            bot.send_message(chat_id=chat_id, text=result)
+            # Block wave (YouTube throttling this server)? Queue it — the
+            # scheduler retries automatically when the wave clears and the
+            # MP3 arrives on its own.  Genuine no-source failures still
+            # get the honest notice immediately.
+            from services.youtube_downloader_service import (
+                mp3_block_wave_active, mp3_retry_enqueue)
+            if mp3_block_wave_active() and mp3_retry_enqueue(
+                    chat_id, user_id, artist_q, song_q):
+                bot.send_message(
+                    chat_id=chat_id,
+                    text="⏳ YouTube is blocking downloads from this server right now.\n\n"
+                         "I've queued your MP3 — I'll retry automatically and send it "
+                         "here as soon as the block clears. No need to tap again. 🎵",
+                )
+            else:
+                # result is the user-facing failure text (incl. YouTube search link).
+                bot.send_message(chat_id=chat_id, text=result)
             return
 
         if result[0] == 'file_id':
@@ -2949,6 +2964,66 @@ def _mp3_background_job(bot, chat_id, user_id,
             pass
     finally:
         _mp3_in_progress.discard(job_key)
+
+
+def mp3_retry_tick(bot):
+    """Scheduler tick (every 5 min): retry queued MP3s once the block wave cleared.
+
+    Runs on the scheduler's background thread — never blocks update handling.
+    Each queued song gets a real download attempt; successes are delivered,
+    no-source failures get the final honest notice, and block-wave failures
+    stay queued for the next tick (up to _RETRY_MAX_ATTEMPTS).  Never raises.
+    """
+    try:
+        from services.youtube_downloader_service import (
+            mp3_block_wave_active, mp3_forget_failure, mp3_retry_due,
+            mp3_retry_note_attempt, mp3_retry_remove)
+        due = mp3_retry_due()
+        if not due:
+            return
+        for entry in due[:3]:  # max 3 per tick — don't hammer a recovering API
+            key = entry.get('key')
+            artist = entry.get('artist', '') or ''
+            song = entry.get('song', '') or ''
+            chat_id = entry.get('chat_id')
+            if not key or not chat_id:
+                mp3_retry_remove(key or '')
+                continue
+            attempt_no = (entry.get('attempts', 0) or 0) + 1
+            logger.info(f"[MP3][RETRY] attempt {attempt_no} for '{artist} - {song}'")
+            mp3_retry_note_attempt(key)
+            mp3_forget_failure(artist, song)  # clear the 10-min instant-fail memory
+            try:
+                success, result = download_audio_for_song(artist, song)
+            except Exception as e:
+                logger.warning(f"[MP3][RETRY] error for '{artist} - {song}': {e}")
+                continue
+            if success:
+                mp3_retry_remove(key)
+                try:
+                    if result[0] == 'file_id':
+                        _, fid, title, uploader = result
+                        bot.send_audio(
+                            chat_id=chat_id, audio=fid,
+                            caption=f"🎵 {title}\n✅ Ready — your queued MP3",
+                            title=title, performer=uploader)
+                    else:
+                        _deliver_fresh_mp3(bot, chat_id, artist, song, result)
+                except Exception as e:
+                    logger.warning(f"[MP3][RETRY] delivery failed: {e}")
+                continue
+            # Failed again: block wave still on → stay queued; real
+            # no-source → drop and send the final notice once.
+            if mp3_block_wave_active():
+                logger.info(f"[MP3][RETRY] '{artist} - {song}' still blocked — stays queued")
+                continue
+            mp3_retry_remove(key)
+            try:
+                bot.send_message(chat_id=chat_id, text=result)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"mp3_retry_tick failed: {e}")
 
 
 def _deliver_fresh_mp3(bot, chat_id, artist_q, song_q, result):

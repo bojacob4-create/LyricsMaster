@@ -282,6 +282,115 @@ def _winurl_note(key: str, url: str) -> None:
     except Exception:
         pass
 
+
+# ── MP3 retry queue (block-wave auto-retry) ────────────────────────────────
+# When a download fails during a YouTube block wave, the request is queued
+# instead of dead-ending.  A scheduler tick (every 5 min) retries each
+# queued song once the breaker has cleared, and the MP3 is delivered
+# automatically — the user never has to tap again.
+_MP3_RETRY_JSON = os.path.join(MP3_CACHE_DIR, 'mp3_retry_queue.json')
+_RETRY_TTL_SECS = 3 * 3600   # give up on a queued request after 3h
+_RETRY_MAX_ATTEMPTS = 3      # initial try + up to 2 queued retries
+
+
+def mp3_block_wave_active() -> bool:
+    """Public: is YouTube currently in a block wave (breaker open)?"""
+    return _yt_breaker_open()
+
+
+def mp3_forget_failure(artist: str, song: str) -> None:
+    """Clear the recent-failure memory so a queued retry runs a real attempt."""
+    try:
+        from utils import locked_json_update
+        key = _mp3_cache_key(artist, song)
+
+        def _update(data):
+            data.pop(key, None)
+            return data
+
+        locked_json_update(_MP3_FAILURES_JSON, _update)
+    except Exception:
+        pass
+
+
+def mp3_retry_enqueue(chat_id: int, user_id: int,
+                      artist: str, song: str) -> bool:
+    """Queue a block-wave-failed request for automatic retry. Never raises."""
+    try:
+        from utils import locked_json_update
+        os.makedirs(MP3_CACHE_DIR, exist_ok=True)
+        key = _mp3_cache_key(artist, song)
+
+        def _update(data):
+            data[key] = {'chat_id': chat_id, 'user_id': user_id,
+                         'artist': artist, 'song': song,
+                         'ts': _time.time(), 'attempts': 0}
+            # keep the queue small — drop expired entries on insert
+            now = _time.time()
+            for k in [k for k, v in data.items()
+                      if now - v.get('ts', 0) > _RETRY_TTL_SECS]:
+                data.pop(k, None)
+            return data
+
+        locked_json_update(_MP3_RETRY_JSON, _update)
+        logger.info(f"[MP3][RETRY] queued '{artist} - {song}' for user {user_id}")
+        return True
+    except Exception:
+        return False
+
+
+def mp3_retry_due() -> list:
+    """Queued entries ready for a retry: breaker closed, not expired."""
+    try:
+        if _yt_breaker_open():
+            return []
+        with open(_MP3_RETRY_JSON, 'r', encoding='utf-8') as f:
+            data = _json.load(f)
+    except Exception:
+        return []
+    now = _time.time()
+    out = []
+    for key, e in data.items():
+        if not isinstance(e, dict):
+            continue
+        if now - e.get('ts', 0) > _RETRY_TTL_SECS:
+            continue
+        if e.get('attempts', 0) >= _RETRY_MAX_ATTEMPTS:
+            continue
+        entry = dict(e)
+        entry['key'] = key
+        out.append(entry)
+    return out
+
+
+def mp3_retry_note_attempt(key: str) -> None:
+    """Increment the attempt counter for a queued entry. Never raises."""
+    try:
+        from utils import locked_json_update
+
+        def _update(data):
+            if key in data:
+                data[key]['attempts'] = data[key].get('attempts', 0) + 1
+            return data
+
+        locked_json_update(_MP3_RETRY_JSON, _update)
+    except Exception:
+        pass
+
+
+def mp3_retry_remove(key: str) -> None:
+    """Drop a queued entry (delivered or given up). Never raises."""
+    try:
+        from utils import locked_json_update
+
+        def _update(data):
+            data.pop(key, None)
+            return data
+
+        locked_json_update(_MP3_RETRY_JSON, _update)
+    except Exception:
+        pass
+
 # Title markers that (almost) always mean "not the original". Penalized
 # unless the requested song title itself contains the marker.
 _REMIX_MARKERS = (
@@ -454,6 +563,47 @@ def _yt_search_entries(query: str, n: int = 5) -> list:
     if isinstance(meta, dict):
         entries = meta.get('entries', []) or []
     out = [e for e in entries if e.get('url')]
+    logger.info(f"[MP3][SEARCH] '{query}' → {len(out)} usable result(s)")
+    return out
+
+
+# ── Audius search ──────────────────────────────────────────────────────────
+# Third audio provider, independent of YouTube/SoundCloud: the free Audius
+# API (discoveryprovider.audius.co).  Catalog skews indie, but during a
+# YouTube block wave it is often the difference between success and
+# "not available".  Stream URLs return audio/mpeg directly.
+_AUDIUS_APP = "lyricsmasterbot"
+_AUDIUS_BASE = "https://discoveryprovider.audius.co/v1"
+
+
+def _audius_search_entries(query: str, n: int = 8) -> list:
+    """Flat Audius search; returns entry dicts with title/uploader/duration/url."""
+    logger.info(f"[MP3][SEARCH] Audius: '{query}'")
+    try:
+        r = requests.get(
+            f"{_AUDIUS_BASE}/tracks/search",
+            params={"query": query, "app_name": _AUDIUS_APP, "limit": n},
+            timeout=12,
+            headers={"User-Agent": "LyricsMasterBot/1.0"})
+        data = r.json().get("data") or []
+    except Exception as e:
+        logger.warning(f"[MP3][SEARCH] Audius error: {type(e).__name__}: {e}")
+        return []
+    out = []
+    for t in data:
+        if not isinstance(t, dict):
+            continue
+        tid = t.get("id")
+        title = (t.get("title") or "").strip()
+        if not tid or not title:
+            continue
+        out.append({
+            "title": title,
+            "uploader": str((t.get("user") or {}).get("name") or ""),
+            "duration": int(t.get("duration") or 0),
+            "webpage_url": (f"{_AUDIUS_BASE}/tracks/{tid}/stream"
+                            f"?app_name={_AUDIUS_APP}"),
+        })
     logger.info(f"[MP3][SEARCH] '{query}' → {len(out)} usable result(s)")
     return out
 
@@ -727,8 +877,8 @@ def download_audio_for_song(artist: str, song: str,
         return False, msg + "\n\n(Last tried moments ago — retry in a few minutes.)"
 
     # ── Tier 2: fresh resolve (providers run in parallel) ──────────────────
-    # SoundCloud + YouTube searches and the lrclib duration lookup are
-    # independent — run them together, then score ALL candidates globally
+    # SoundCloud + YouTube + Audius searches and the lrclib duration lookup
+    # are independent — run them together, then score ALL candidates globally
     # and download only the best. Audiomack's API is dead (returns HTML),
     # so it was dropped.
     stage("🔍 Finding the original track…")
@@ -736,6 +886,10 @@ def download_audio_for_song(artist: str, song: str,
     def _sc_all():
         # One query is enough — SoundCloud tokenizes the dash anyway.
         return _sc_search_entries(f"{artist} {song}" if song else artist, n=8)
+
+    def _aud_all():
+        return _audius_search_entries(
+            f"{artist} {song}" if song else artist, n=8)
 
     def _yt_all():
         if _yt_breaker_open():
@@ -751,16 +905,19 @@ def download_audio_for_song(artist: str, song: str,
         return out
 
     from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    with ThreadPoolExecutor(max_workers=4) as ex:
         fut_dur = ex.submit(_expected_duration, artist, song) if song else None
         fut_sc = ex.submit(_sc_all)
         fut_yt = ex.submit(_yt_all)
+        fut_aud = ex.submit(_aud_all)
         expected_dur = fut_dur.result() if fut_dur else None
         sc_entries = fut_sc.result()
         yt_entries = fut_yt.result()
+        aud_entries = fut_aud.result()
 
     seen_urls, scored = set(), []
-    for provider, entries in (('SC', sc_entries), ('YT', yt_entries)):
+    for provider, entries in (('SC', sc_entries), ('YT', yt_entries),
+                              ('AU', aud_entries)):
         for e in entries:
             url = e.get('webpage_url') or e.get('url')
             if not url or url in seen_urls:
