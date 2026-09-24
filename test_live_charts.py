@@ -93,8 +93,8 @@ _reset_mem()
 lc._fetch_apple_chart = lambda: list(FIXTURE_CHART)
 top = lc.get_top_songs()
 check("top songs returns fixture", len(top) == 24 and top[0]['song'] == 'Pop Hit 1')
-check("top songs shape is {artist, song}",
-      set(top[0].keys()) == {'artist', 'song'}, repr(top[0]))
+check("top songs shape is {artist, song, release_date}",
+      set(top[0].keys()) == {'artist', 'song', 'release_date'}, repr(top[0]))
 top3 = lc.get_top_songs(limit=3)
 check("limit respected", len(top3) == 3)
 
@@ -219,6 +219,95 @@ m = rec._merge_recommendations(
     [{'artist': 'C1', 'name': 's3'}], limit=3)
 check("merge interleaves L->A->C",
       [r['artist'] for r in m] == ['A1', 'B1', 'C1'], repr(m))
+
+# ── 8. Fresh-release filtering (new music, not viral oldies) ────────────────
+
+print("== fresh-release filtering ==")
+from datetime import date, timedelta
+from services.lyrics_service import canonicalize_track_names
+
+def _dated(artist, song, days_ago, genres=None):
+    d = (date.today() - timedelta(days=days_ago)).isoformat()
+    return {'artist': artist, 'song': song,
+            'genres': genres or ['Pop'], 'release_date': d}
+
+check("parse ISO date", lc._parse_release_date("2025-10-17") == date(2025, 10, 17))
+check("parse ISO datetime+tz",
+      lc._parse_release_date("2025-10-03T00:00:00-07:00") == date(2025, 10, 3))
+check("parse None/garbage",
+      lc._parse_release_date(None) is None and lc._parse_release_date("soon") is None)
+
+fresh_entry = _dated('A', 'new hit', 30)
+old_entry = _dated('B', 'oldie', 900)
+nodate_entry = {'artist': 'C', 'song': 'mystery', 'genres': ['Pop']}
+check("recent song is fresh", lc._is_fresh(fresh_entry))
+check("3-year-old song is not fresh", not lc._is_fresh(old_entry))
+check("dateless song is not fresh", not lc._is_fresh(nodate_entry))
+
+# 12 fresh + 4 oldies -> fresh pool serves only the new ones
+import time as _t
+mixed = ([_dated(f'Fresh Artist {i}', f'Fresh Hit {i}', 30 + i) for i in range(12)]
+         + [_dated(f'Old Artist {i}', f'Oldie {i}', 900 + i) for i in range(4)])
+_reset_mem()
+lc._mem['chart'] = mixed
+lc._mem['chart_ts'] = _t.time()
+fresh = lc.get_fresh_songs()
+check("fresh pool excludes oldies",
+      len(fresh) == 12 and all('Fresh' in s['artist'] for s in fresh), repr(len(fresh)))
+check("fresh pool keeps release_date",
+      all(s.get('release_date') for s in fresh))
+
+# too few fresh -> [] so callers fall back to the full chart
+thin = ([_dated('Fresh Artist 1', 'Fresh Hit 1', 30)]
+        + [_dated(f'Old Artist {i}', f'Oldie {i}', 900 + i) for i in range(20)])
+lc._mem['chart'] = thin
+lc._mem['chart_ts'] = _t.time()
+check("thin fresh pool returns []", lc.get_fresh_songs() == [])
+
+# genre-scoped fresh pool
+genre_mixed = ([_dated(f'Pop Star {i}', f'Pop Hit {i}', 60, ['Pop']) for i in range(5)]
+               + [_dated(f'Rap Star {i}', f'Rap Hit {i}', 60, ['Hip-Hop/Rap']) for i in range(5)]
+               + [_dated('Old Pop', 'Old Pop Hit', 900, ['Pop'])])
+lc._mem['chart'] = genre_mixed
+lc._mem['chart_ts'] = _t.time()
+pop_fresh = lc.get_fresh_songs(genre='pop')
+check("genre fresh pool is pop-only and fresh",
+      len(pop_fresh) == 5 and all('Pop Star' in s['artist'] for s in pop_fresh),
+      repr(pop_fresh))
+
+# /random draws only from the fresh pool when it is healthy
+lc._mem['chart'] = mixed
+lc._mem['chart_ts'] = _t.time()
+picks = {get_random_song(user_id=424242)['artist'] for _ in range(25)}
+check("/random never serves oldies from a healthy fresh pool",
+      picks and all('Fresh' in a for a in picks), repr(picks))
+
+# quiz draws from the fresh pool
+qsongs = qs.get_quiz_songs()
+check("quiz songs are fresh releases",
+      qsongs and all('Fresh' in s['artist'] for s in qsongs), repr(len(qsongs)))
+
+# mangled multi-artist credit from lrclib is normalized
+ca, ct = canonicalize_track_names("Ella Langley - & Morgan Wallen",
+                                  "I Can't Love You Anymore")
+check("artist ' - & ' mangling is fixed",
+      ca == "Ella Langley & Morgan Wallen" and ct == "I Can't Love You Anymore",
+      repr((ca, ct)))
+
+# parsers capture release dates from both feeds
+prim = lc._parse_apple_marketing({'feed': {'results': [
+    {'name': 'Hit', 'artistName': 'Star', 'releaseDate': '2026-01-15',
+     'genres': [{'name': 'Pop'}, {'name': 'Music'}]}]}})
+check("primary parser captures releaseDate",
+      prim and prim[0]['release_date'] == '2026-01-15', repr(prim))
+fb = lc._parse_itunes_rss({'feed': {'entry': [
+    {'im:name': {'label': 'Hit'}, 'im:artist': {'label': 'Star'},
+     'im:releaseDate': {'label': '2026-01-15T00:00:00-07:00'},
+     'category': {'attributes': {'term': 'Pop'}}}]}})
+check("fallback parser captures im:releaseDate",
+      fb and fb[0]['release_date'] == '2026-01-15T00:00:00-07:00', repr(fb))
+
+_reset_mem()
 
 print(f"\n{PASS} passed, {FAIL} failed")
 if FAILURES:

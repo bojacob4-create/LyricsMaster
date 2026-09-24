@@ -19,12 +19,17 @@ _SCORES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 # the last cached chart when the feed is down.
 
 def get_quiz_songs() -> List[Dict]:
-    """Current chart hits for quiz questions/distractors.  Never raises."""
+    """Current chart hits for quiz questions/distractors.  Never raises.
+
+    Prefers genuinely new releases (≤24 months old); falls back to the full
+    live chart when too few fresh songs qualify.
+    """
     try:
-        from services.live_charts import get_top_songs
-        songs = get_top_songs(limit=100)
+        from services.live_charts import get_fresh_songs, get_top_songs
+        songs = get_fresh_songs(limit=100)
         if songs:
             return songs
+        return get_top_songs(limit=100)
     except Exception as e:
         logger.error(f"[QUIZ] Live chart unavailable: {e}")
     return []

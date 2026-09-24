@@ -19,7 +19,9 @@ Cache file: <repo>/live_charts_cache.json  (repo root, not committed secrets)
 import json
 import logging
 import os
+import re
 import time
+from datetime import date, datetime
 from typing import Dict, List, Optional
 
 import requests
@@ -102,7 +104,8 @@ def _parse_apple_marketing(data: Dict) -> List[Dict]:
             continue
         genres = [g.get('name', '') for g in item.get('genres', [])
                   if g.get('name') and g.get('name') != 'Music']
-        songs.append({'artist': artist, 'song': name, 'genres': genres})
+        songs.append({'artist': artist, 'song': name, 'genres': genres,
+                      'release_date': (item.get('releaseDate') or '').strip() or None})
     return songs
 
 
@@ -125,9 +128,46 @@ def _parse_itunes_rss(data: Dict) -> List[Dict]:
         cat = entry.get('category', {})
         if isinstance(cat, dict):
             genre = ((cat.get('attributes') or {}).get('term') or '').strip()
+        rel = _label(entry, 'im:releaseDate') or None
         songs.append({'artist': artist, 'song': name,
-                      'genres': [genre] if genre else []})
+                      'genres': [genre] if genre else [],
+                      'release_date': rel})
     return songs
+
+
+# ── Freshness (new releases) ────────────────────────────────────────────────
+# The charts are "most-played", so catalog oldies (viral throwbacks) appear
+# alongside new hits.  /random and quiz prefer genuinely NEW songs, so we
+# filter on the feed's release date.  Entries without a parseable date are
+# treated as unknown age and excluded from the fresh pool.
+
+_FRESH_MONTHS = 24   # "new" = released within the last 24 months
+_FRESH_MIN = 10      # minimum fresh songs before callers fall back to full chart
+
+
+def _parse_release_date(value) -> Optional[date]:
+    if not value:
+        return None
+    try:
+        s = str(value).strip().replace('Z', '+00:00')
+        return datetime.fromisoformat(s).date()
+    except ValueError:
+        pass
+    m = re.match(r'(\d{4})-(\d{2})-(\d{2})', s)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
+    return None
+
+
+def _is_fresh(entry: Dict, max_age_months: int = _FRESH_MONTHS) -> bool:
+    rd = _parse_release_date(entry.get('release_date'))
+    if not rd:
+        return False
+    age_days = (date.today() - rd).days
+    return age_days <= max_age_months * 30.44  # future-dated (pre-releases) count as fresh
 
 
 def _fetch_apple_chart() -> List[Dict]:
@@ -190,10 +230,48 @@ def _get_chart_entries() -> List[Dict]:
 def get_top_songs(limit: int = 100) -> List[Dict]:
     """Live Apple Music Top 100 (US), cached ~6h.
 
-    Returns [{artist, song}, ...].  [] when the feed AND every cache miss.
+    Returns [{artist, song, release_date}, ...].  [] when the feed AND every cache miss.
     """
-    return [{'artist': s['artist'], 'song': s['song']}
+    return [{'artist': s['artist'], 'song': s['song'],
+             'release_date': s.get('release_date')}
             for s in _get_chart_entries()[:limit]]
+
+
+def get_fresh_songs(max_age_months: int = _FRESH_MONTHS,
+                    limit: int = 100,
+                    genre: Optional[str] = None) -> List[Dict]:
+    """Chart songs released within the last `max_age_months` — the new-music pool.
+
+    genre: optional key like 'pop'/'rap' (same keys as get_top_by_genre);
+    needs >= 3 matches.  Returns [] when fewer than _FRESH_MIN songs qualify —
+    callers should fall back to get_top_songs()/get_top_by_genre() rather than
+    a static pool.  Never raises.
+    """
+    try:
+        apple_genre = None
+        if genre:
+            apple_genre = _GENRE_TO_APPLE.get(genre.lower().strip())
+            if not apple_genre:
+                return []
+        out = []
+        for s in _get_chart_entries():
+            if apple_genre and apple_genre not in s.get('genres', []):
+                continue
+            if not _is_fresh(s, max_age_months):
+                continue
+            out.append({'artist': s['artist'], 'song': s['song'],
+                        'release_date': s.get('release_date')})
+            if len(out) >= limit:
+                break
+        need = 3 if genre else _FRESH_MIN
+        if len(out) >= need:
+            logger.info(f"[CHARTS] Fresh pool: {len(out)} songs ≤{max_age_months}mo"
+                        + (f" (genre={genre})" if genre else ""))
+            return out
+        return []
+    except Exception as e:
+        logger.error(f"[CHARTS] fresh filter error: {e}")
+        return []
 
 
 def get_top_by_genre(genre_key: str, limit: int = 20) -> List[Dict]:
@@ -213,7 +291,8 @@ def get_top_by_genre(genre_key: str, limit: int = 20) -> List[Dict]:
                 if key in seen:
                     continue
                 seen.add(key)
-                out.append({'artist': s['artist'], 'song': s['song']})
+                out.append({'artist': s['artist'], 'song': s['song'],
+                            'release_date': s.get('release_date')})
                 if len(out) >= limit:
                     break
         return out if len(out) >= 3 else []

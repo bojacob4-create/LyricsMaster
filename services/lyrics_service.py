@@ -62,6 +62,11 @@ def canonicalize_track_names(artist: str, track: str) -> Tuple[str, str]:
     """
     artist = re.sub(r'\s+', ' ', (artist or '')).strip()
     track = re.sub(r'\s+', ' ', (track or '')).strip()
+    # Fix mangled multi-artist credits seen verbatim in API data, e.g.
+    # lrclib returns artistName "Ella Langley - & Morgan Wallen" for some
+    # collabs → normalize the stray separator to a plain "&".
+    artist = re.sub(r'\s*[-–—]\s*&\s*', ' & ', artist)
+    artist = re.sub(r'\s{2,}', ' ', artist).strip()
     if artist and track:
         lowered = track.lower()
         a_lower = artist.lower()

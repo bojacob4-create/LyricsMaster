@@ -427,12 +427,15 @@ def get_random_song(user_id=None, genre=None) -> Optional[Dict]:
     - genre: pick from the live genre chart (Apple genre slice of the
       Top 100); falls back to the global chart when the genre slice is thin.
     - Otherwise: pick from the live Apple Music Top 100 (cached ~6h).
+    - Fresh-release preference: songs released within the last 24 months are
+      preferred (the charts are most-played, so viral oldies appear too);
+      falls back to the full chart when too few fresh songs qualify.
     - Per-user recent picks are avoided (last 12) so /random feels fresh.
     - Returns None when the live chart is unreachable AND no cache exists;
       callers must degrade gracefully (friendly message, not a crash).
     """
     import random as rng
-    from services.live_charts import get_top_songs, get_top_by_genre
+    from services.live_charts import get_top_songs, get_top_by_genre, get_fresh_songs
 
     recent = _recent_random_picks.get(user_id) if user_id else None
 
@@ -440,11 +443,18 @@ def get_random_song(user_id=None, genre=None) -> Optional[Dict]:
     if genre:
         resolved = GENRE_ALIASES.get(genre.lower().strip(),
                                      genre.lower().strip())
-        pool = get_top_by_genre(resolved)
+        pool = get_fresh_songs(genre=resolved)
+        if not pool:
+            pool = get_top_by_genre(resolved)
         if not pool:
             logger.info(
                 f"/random: no live genre chart for '{resolved}', "
                 "using global chart")
+
+    if not pool:
+        pool = get_fresh_songs()
+        if pool:
+            logger.info(f"/random: using fresh-release pool ({len(pool)} songs)")
 
     if not pool:
         pool = get_top_songs()

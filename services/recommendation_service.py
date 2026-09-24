@@ -2725,7 +2725,7 @@ def _get_apple_recommendations(artist: str, song: str,
 
     if len(quality_pool) < 3:
         # Not enough individually-matching songs — curated will be more accurate
-        logger.info(f"[REC] Apple quality pool too small, falling back to curated")
+        logger.info(f"[REC] Apple quality pool too small, skipping Apple source")
         return None
 
     # Good quality: take top 12 from the quality pool, apply small jitter,
@@ -3164,7 +3164,7 @@ def _get_lastfm_recommendations(artist: str, song: str,
     if len(scored) < 3:
         logger.info(
             f"[LASTFM] Only {len(scored)} candidates for '{artist} - {song}' — "
-            "falling back to curated"
+            "skipping Last.fm source"
         )
         return None
 
