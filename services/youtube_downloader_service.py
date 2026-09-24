@@ -58,6 +58,109 @@ def _pick_downloaded_file(video_id: str) -> Optional[str]:
         return None
     return max(matches, key=os.path.getsize)
 
+# Permanent-failure hints for the video path: another player client will not
+# fix these, so the client rotation stops immediately.  NOTE: the bot-check
+# ("sign in to confirm you're not a bot") is deliberately NOT here — it
+# flaps per client and is the whole reason the rotation exists.
+_VIDEO_PERMANENT_HINTS = (
+    'private video', 'private', 'age-restricted', 'age restricted',
+    'confirm your age', 'requires authentication', 'copyright', 'drm',
+    'not available', 'unavailable',
+)
+
+
+def _is_permanent_video_error(error_msg: str) -> bool:
+    # A format refused by one client is often served by another, so the
+    # format-specific phrasing rotates; a video that is itself gone does not.
+    if 'requested format' in error_msg or 'format not available' in error_msg:
+        return False
+    return any(h in error_msg for h in _VIDEO_PERMANENT_HINTS)
+
+
+def _download_video_with_client(url: str, video_id: str,
+                                output_template: str,
+                                client: str) -> Tuple[bool, object]:
+    """One /download attempt through a single YouTube player client.
+
+    Returns (True, (file_path, success_msg)) on success, or (False, notice)
+    on genuine failures (too long / file missing / too large).  Raises
+    yt_dlp.utils.DownloadError for everything else so the caller can rotate
+    to the next client.
+    """
+    ydl_opts = {
+        'format': _DOWNLOAD_FORMAT,
+        'merge_output_format': 'mp4',
+        'noplaylist': True,
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': False,
+        'outtmpl': output_template,
+        'restrictfilenames': True,
+        'socket_timeout': 30,
+        'retries': 3,
+        'extractor_args': {'youtube': {'player_client': [client]}},
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        },
+        'postprocessors': [{
+            'key': 'FFmpegVideoConvertor',
+            'preferedformat': 'mp4',
+        }],
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        duration = info.get('duration', 0) or 0
+
+        if duration > 600:
+            return False, (
+                "😕 Video Too Long\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Max duration: 10 minutes.\n"
+                "This video is {0}:{1:02d}.\n"
+                "Try a shorter video.".format(duration // 60, duration % 60)
+            )
+
+        ydl.download([url])
+
+        file_path = _pick_downloaded_file(video_id)
+        if not file_path:
+            logger.error(f"No downloaded file found for video_id: {video_id}")
+            return False, (
+                "😕 Download Failed\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "The file couldn't be saved.\n"
+                "Try a different video."
+            )
+
+        file_size = os.path.getsize(file_path)
+        file_size_mb = round(file_size / (1024 * 1024), 1)
+
+        if file_size > 50 * 1024 * 1024:
+            cleanup_video(file_path)
+            return False, (
+                "😕 File Too Large\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"Downloaded file is {file_size_mb}MB.\n"
+                "Telegram limit is 50MB.\n"
+                "Try a shorter video."
+            )
+
+        views = info.get('view_count', 0) or 0
+        success_msg = (
+            f"✅ Downloaded!\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"📽️ {info.get('title', 'Video')}\n"
+            f"👤 {info.get('uploader', 'Unknown')}\n"
+            f"⏱️ {duration//60}:{duration%60:02d}  •  📦 {file_size_mb}MB\n"
+        )
+        if views:
+            success_msg += f"👀 {views:,} views\n"
+        success_msg += "\n🚀 Uploading to Telegram..."
+
+        return True, (file_path, success_msg)
+
+
 def download_youtube_video(url: str) -> Tuple[bool, str]:
     global _LAST_DOWNLOAD_WAVE
     _LAST_DOWNLOAD_WAVE = False
@@ -77,123 +180,74 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
         video_id = extract_video_id(url)
         output_template = f'youtube_{video_id}.%(ext)s'
 
-        ydl_opts = {
-            'format': _DOWNLOAD_FORMAT,
-            'merge_output_format': 'mp4',
-            'noplaylist': True,
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-            'outtmpl': output_template,
-            'restrictfilenames': True,
-            'socket_timeout': 30,
-            'retries': 3,
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            },
-            'postprocessors': [{
-                'key': 'FFmpegVideoConvertor',
-                'preferedformat': 'mp4',
-            }],
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        # Round 30: rotate YouTube player clients (android -> web -> ios),
+        # one client per attempt.  YouTube's bot-check ("sign in to confirm
+        # you're not a bot") flaps per client — the web player can be
+        # challenged while android/ios sail through on the same IP, and a
+        # format refused by one client is often served by another.  (The
+        # MP3 path already rotates the same tuple.)  Permanent failures
+        # stop the rotation at once; the shared breaker only trips when
+        # EVERY client hits a hard block error, so one challenged client no
+        # longer queues the request.
+        last_err: Optional[BaseException] = None
+        block_hits = 0
+        for client in _YT_CLIENT_ATTEMPTS:
             try:
-                info = ydl.extract_info(url, download=False)
-                duration = info.get('duration', 0) or 0
-
-                if duration > 600:
-                    return False, (
-                        "😕 Video Too Long\n"
-                        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-                        "Max duration: 10 minutes.\n"
-                        "This video is {0}:{1:02d}.\n"
-                        "Try a shorter video.".format(duration // 60, duration % 60)
-                    )
-
-                ydl.download([url])
-
-                file_path = _pick_downloaded_file(video_id)
-                if not file_path:
-                    logger.error(f"No downloaded file found for video_id: {video_id}")
-                    return False, (
-                        "😕 Download Failed\n"
-                        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-                        "The file couldn't be saved.\n"
-                        "Try a different video."
-                    )
-
-                file_size = os.path.getsize(file_path)
-                file_size_mb = round(file_size / (1024 * 1024), 1)
-
-                if file_size > 50 * 1024 * 1024:
-                    cleanup_video(file_path)
-                    return False, (
-                        "😕 File Too Large\n"
-                        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-                        f"Downloaded file is {file_size_mb}MB.\n"
-                        "Telegram limit is 50MB.\n"
-                        "Try a shorter video."
-                    )
-
-                views = info.get('view_count', 0) or 0
-                success_msg = (
-                    f"✅ Downloaded!\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"📽️ {info.get('title', 'Video')}\n"
-                    f"👤 {info.get('uploader', 'Unknown')}\n"
-                    f"⏱️ {duration//60}:{duration%60:02d}  •  📦 {file_size_mb}MB\n"
-                )
-                if views:
-                    success_msg += f"👀 {views:,} views\n"
-                success_msg += "\n🚀 Uploading to Telegram..."
-
-                return True, (file_path, success_msg)
-
+                return _download_video_with_client(
+                    url, video_id, output_template, client)
             except yt_dlp.utils.DownloadError as e:
+                last_err = e
                 error_msg = str(e).lower()
-                logger.error(f"yt-dlp DownloadError: {str(e)}")
-
-                # A /download that hits a hard YouTube block is itself proof
-                # of a wave — register it on the shared breaker so
-                # download_command queues this request for auto-retry
-                # (instead of showing a failure) and the MP3 path also
-                # treats YouTube as blocked. Genuine failures (private,
-                # age-restricted, unavailable...) leave the breaker alone.
+                logger.error(f"yt-dlp DownloadError (client={client}): {e}")
+                if _is_permanent_video_error(error_msg):
+                    break
                 if _is_block_error(e):
-                    _yt_trip_breaker(f"download: {type(e).__name__}")
-                    _LAST_DOWNLOAD_WAVE = True
+                    block_hits += 1
+                    logger.warning(f"[VIDEO] client={client} blocked by "
+                                   f"YouTube, trying next client")
 
-                if "private video" in error_msg or "private" in error_msg:
-                    reason = "This video is private."
-                elif "not a bot" in error_msg:
-                    reason = ("YouTube is temporarily blocking automated downloads "
-                              "(bot check). Try again in a few minutes.")
-                elif ("age restricted" in error_msg or "age-restricted" in error_msg
-                        or "confirm your age" in error_msg):
-                    reason = "This video is age-restricted."
-                elif "copyright" in error_msg:
-                    reason = "Blocked due to copyright."
-                elif "not available" in error_msg or "unavailable" in error_msg:
-                    reason = "Video is not available (may be region-locked or deleted)."
-                elif "sign in" in error_msg or "login" in error_msg:
-                    reason = "Requires authentication to access."
-                elif "429" in error_msg or "too many" in error_msg:
-                    reason = "YouTube rate limit. Wait a few minutes."
-                elif "requested format" in error_msg:
-                    reason = "No compatible format available. This is a YouTube restriction."
-                else:
-                    reason = "YouTube blocked the download."
+        # Every client failed (or a permanent error stopped the rotation).
+        # A /download that hits a hard YouTube block on ALL clients is
+        # itself proof of a wave — register it on the shared breaker so
+        # download_command queues this request for auto-retry (instead of
+        # showing a failure) and the MP3 path also treats YouTube as
+        # blocked.  Genuine failures (private, age-restricted,
+        # unavailable...) leave the breaker alone.
+        if block_hits >= len(_YT_CLIENT_ATTEMPTS):
+            _yt_trip_breaker("download: all player clients blocked")
+            _LAST_DOWNLOAD_WAVE = True
 
-                return False, (
-                    f"😕 Download Failed\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"Reason: {reason}\n\n"
-                    f"💡 Tips:\n"
-                    f"• Try a different video\n"
-                    f"• Shorter/older videos work better\n"
-                    f"• Unofficial uploads are easier to download"
-                )
+        error_msg = str(last_err).lower() if last_err else ""
+        if "private video" in error_msg or "private" in error_msg:
+            reason = "This video is private."
+        elif "not a bot" in error_msg:
+            reason = ("YouTube is temporarily blocking automated downloads "
+                      "(bot check). Try again in a few minutes.")
+        elif ("age restricted" in error_msg or "age-restricted" in error_msg
+                or "confirm your age" in error_msg):
+            reason = "This video is age-restricted."
+        elif "copyright" in error_msg:
+            reason = "Blocked due to copyright."
+        elif "not available" in error_msg or "unavailable" in error_msg:
+            reason = "Video is not available (may be region-locked or deleted)."
+        elif "sign in" in error_msg or "login" in error_msg:
+            reason = "Requires authentication to access."
+        elif "429" in error_msg or "too many" in error_msg:
+            reason = "YouTube rate limit. Wait a few minutes."
+        elif "requested format" in error_msg:
+            reason = "No compatible format available. This is a YouTube restriction."
+        else:
+            reason = "YouTube blocked the download."
+
+        return False, (
+            f"😕 Download Failed\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Reason: {reason}\n\n"
+            f"💡 Tips:\n"
+            f"• Try a different video\n"
+            f"• Shorter/older videos work better\n"
+            f"• Unofficial uploads are easier to download"
+        )
 
     except Exception as e:
         logger.error(f"Error downloading YouTube video: {str(e)}")
@@ -206,6 +260,7 @@ def download_youtube_video(url: str) -> Tuple[bool, str]:
             "• Try a different video\n"
             "• Wait a minute and retry"
         )
+
 
 # ── MP3 v2 ────────────────────────────────────────────────────────────────
 # Rebuilt 2026-09-24: the old engine downloaded candidates in search order
