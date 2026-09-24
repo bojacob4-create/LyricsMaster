@@ -251,8 +251,9 @@ def t_mp3_try_worker():
               payload.get("kind") == "audio"
               and payload.get("artist") == "A"
               and payload.get("song") == "S")
-        check("user sees home-downloader notice",
-              any("🏠 Home downloader is on it" in t for _, t in bot.sent))
+        check("silent handoff: no home-downloader chatter",
+              not any("🏠 Home downloader is on it" in t
+                      for _, t in bot.sent))
     finally:
         svc._api_send_message, yds.resolve_mp3_youtube_url = orig_send, orig_resolve
         restore()
@@ -341,8 +342,8 @@ def t_channel_post_fail_audio_transient():
         upd = FakeUpdate()
         upd.channel_post = FakePost("FAIL au3 error", -1001)
         handlers.worker_channel_post(upd, FakeContext(bot=bot))
-        check("snag notice sent",
-              any("hit a snag" in t for _, t in bot.sent))
+        check("silent fallback: no snag chatter",
+              not any("hit a snag" in t for _, t in bot.sent))
         check("fallback thread started",
               len(started) == 1
               and started[0][0] is handlers._mp3_local_fallback_thread
@@ -403,8 +404,8 @@ def t_deliver_mp3_after_worker_fail():
                                                 fail_code="error")
     finally:
         _th.Thread = orig_T
-    check("transient → snag notice",
-          any("hit a snag" in t for _, t in bot2.sent))
+    check("transient → silent (no snag chatter)",
+          not any("hit a snag" in t for _, t in bot2.sent))
     check("transient → fallback thread with artist/song",
           started and started[0][3:5] == ("A", "S"))
 

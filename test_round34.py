@@ -145,8 +145,8 @@ def t_download_worker_first():
               and calls[0][2].startswith("JOB "))
         check("JOB posted with MAIN token", calls and calls[0][0] == "main")
         edits = upd.message.processing.edits
-        check("user sees home-downloader notice",
-              edits and "🏠 Home downloader is on it…" in edits[0])
+        check("silent handoff: no home-downloader chatter",
+              edits == [])
         check("job recorded pending",
               sum(1 for e in svc._load_jobs().values()
                   if e.get("status") == "pending") == 1)

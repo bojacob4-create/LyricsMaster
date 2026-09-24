@@ -2843,14 +2843,10 @@ def download_command(update: Update, context: CallbackContext):
         if worker_enabled():
             job_id = post_job(chat_id, user_id, url)
             if job_id:
-                processing_message.edit_text(
-                    "🏠 Home downloader is on it…\n"
-                    "━━━━━━━━━━━━━━━━━━━━━\n\n"
-                    "Your streamer is downloading this over your home "
-                    "internet — the video will land here in a moment. 🎬\n\n"
-                    "If the streamer is offline, I'll download it myself "
-                    "instead — nothing for you to do. 📥"
-                )
+                # Silent handoff: the "📥 Downloading…" message above stays
+                # until the video lands (or the fallback path reports).
+                # The user asked not to see home-downloader chatter.
+                logger.info("[WORKER] video job %s → chat %s", job_id, chat_id)
                 return
             logger.info("[WORKER] post_job failed — using local download path")
 
@@ -2932,9 +2928,7 @@ def _deliver_video_local(bot, chat_id, user_id, url, fail_code=None):
                 with open(file_path, "rb") as f:
                     bot.send_video(
                         chat_id=chat_id, video=f,
-                        caption="🎉 Here's your video!\n"
-                                "🏠 (home downloader was offline — "
-                                "downloaded here instead)",
+                        caption="🎉 Here's your video!",
                         supports_streaming=True)
                 logger.info("[WORKER][FALLBACK] local download delivered "
                             "→ chat %s", chat_id)
@@ -3275,14 +3269,7 @@ def _mp3_try_worker(bot, chat_id, user_id, artist_q, song_q, raw):
             return False
         logger.info("[MP3][WORKER] audio job %s → chat %s: %s",
                     job_id, chat_id, url)
-        bot.send_message(
-            chat_id=chat_id,
-            text="🏠 Home downloader is on it…\n"
-                 "━━━━━━━━━━━━━━━━━━━━━\n\n"
-                 "Your streamer is fetching this over your home internet — "
-                 "the MP3 will land here in a moment. 🎧\n\n"
-                 "If the streamer is offline, I'll fetch it myself instead. 📥",
-        )
+        # Silent handoff — no home-downloader chatter for the user.
         return True
     except Exception as e:
         logger.warning("[MP3][WORKER] worker path failed: %s",
@@ -3313,11 +3300,9 @@ def _deliver_mp3_after_worker_fail(bot, entry, fail_code):
             logger.info("[MP3][WORKER][FALLBACK] permanent-fail (%s) → "
                         "honest notice → chat %s", fail_code, chat_id)
             return
-        bot.send_message(
-            chat_id=chat_id,
-            text="🏠 The home downloader hit a snag — fetching it here instead…\n"
-                 "I'll send the MP3 when it's ready. 🎧",
-        )
+        # Silent fallback: run the local path in the background. The user
+        # asked not to see home-downloader chatter — the MP3 (or the queued
+        # notice) is the only thing that lands in chat.
         t = threading.Thread(
             target=_mp3_local_fallback_thread,
             args=(bot, chat_id, user_id, artist, song),
