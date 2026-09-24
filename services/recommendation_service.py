@@ -1445,6 +1445,33 @@ STYLE_COMPAT: Dict[tuple, float] = {
     ('nu_disco', 'festival_edm'): 25,
     ('nu_disco', 'trap'): 8,
     ('nu_disco', 'country'): 3,
+    # ── Afrobeats / afro-fusion / amapiano family ──────────────────────────────
+    ('afrobeats', 'afrobeats'): 100,
+    ('afrobeats', 'afro_fusion'): 95,
+    ('afrobeats', 'amapiano'): 80,
+    ('afrobeats', 'dancehall'): 70,
+    ('afrobeats', 'dance_pop'): 55,
+    ('afrobeats', 'pop_rnb'): 55,
+    ('afrobeats', 'synth_pop'): 40,
+    ('afrobeats', 'smooth_rnb'): 45,
+    ('afro_fusion', 'afro_fusion'): 100,
+    ('afro_fusion', 'afrobeats'): 95,
+    ('afro_fusion', 'amapiano'): 78,
+    ('afro_fusion', 'dancehall'): 65,
+    ('afro_fusion', 'dance_pop'): 60,
+    ('afro_fusion', 'synth_pop'): 55,
+    ('afro_fusion', 'pop_rnb'): 50,
+    ('amapiano', 'amapiano'): 100,
+    ('amapiano', 'afrobeats'): 80,
+    ('amapiano', 'afro_fusion'): 78,
+    ('amapiano', 'dancehall'): 60,
+    ('amapiano', 'dance_pop'): 55,
+    ('amapiano', 'house'): 50,
+    ('dancehall', 'dancehall'): 100,
+    ('dancehall', 'afrobeats'): 70,
+    ('dancehall', 'afro_fusion'): 65,
+    ('dancehall', 'reggaeton'): 60,
+    ('dancehall', 'dance_pop'): 45,
 }
 
 
@@ -2353,6 +2380,9 @@ def _build_song_profile(artist: str, song: str, handler_mood: str, genre: str) -
         'genre':      genre,
         'mood':       mood,
         'style':      style,
+        'artist_style': artist_style,  # artist-level style kept as a secondary
+                                      # signal so a song's tags can't erase the
+                                      # artist's identity (e.g. Tyla's afro_fusion)
         'energy':     energy,
         'production': production,
         'prod_sig':   prod_sig,   # mood-free structural identity; used to gate pool expansion
@@ -2395,6 +2425,14 @@ def _score_candidate(candidate_artist: str, candidate_name: str,
 
     mood_score       = _mood_compat(c_mood, source['mood'])
     style_score      = _style_compat(c_style, source.get('style', 'unknown'))
+    # ── Artist-style blend ─────────────────────────────────────────────────
+    # The song's own tags pick the primary style, but the artist's style stays
+    # in the mix: a candidate matching EITHER gets credit.  This stops a
+    # one-off tag (e.g. 'synth_pop' on a Tyla track) from erasing the artist's
+    # identity ('afro_fusion') and pushing same-family candidates out.
+    _a_style = source.get('artist_style')
+    if _a_style and _a_style != source.get('style'):
+        style_score = max(style_score, _style_compat(c_style, _a_style))
     energy_score     = _energy_compat(c_energy, source.get('energy', 'mid'))
     production_score = _production_compat(c_production, source.get('production', 'mixed'))
     genre_score      = 100.0 if candidate_genre == source['genre'] else 20.0
@@ -2631,6 +2669,97 @@ def _detect_genre(artist: str, song: str, mood: str) -> str:
 
     mood_genres = MOOD_GENRE_WEIGHTS.get(mood, ['pop'])
     return mood_genres[0] if mood_genres else 'pop'
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Release-year freshness (iTunes) — era-aligns recommendations with the source
+# ──────────────────────────────────────────────────────────────────────────────
+
+_release_year_cache: Dict[tuple, tuple] = {}  # (artist, song) -> (ts, year|None)
+_RELEASE_YEAR_TTL = 7 * 24 * 3600
+_FRESHNESS_MAX_PENALTY = 30.0   # points off the blended score, at most
+_FRESHNESS_PER_YEAR = 3.0       # points per year of gap vs the source song
+
+
+def _norm_title(t: str) -> str:
+    t = (t or '').lower()
+    t = re.sub(r'\s*[\(\[].*?[\)\]]', '', t)  # strip (feat. …) / […] suffixes
+    return re.sub(r'\s+', ' ', t).strip()
+
+
+def _fetch_release_year(artist: str, song: str) -> Optional[int]:
+    """Release year of a track via iTunes Search. None when unknown/unreachable."""
+    key = (artist.lower().strip(), song.lower().strip())
+    now = time.time()
+    hit = _release_year_cache.get(key)
+    if hit and now - hit[0] < _RELEASE_YEAR_TTL:
+        return hit[1]
+    year = None
+    try:
+        r = requests.get(
+            'https://itunes.apple.com/search',
+            params={'term': f"{artist} {song}", 'media': 'music',
+                    'entity': 'song', 'limit': 10},
+            timeout=5,
+        )
+        if r.status_code == 200:
+            want_title = _norm_title(song)
+            want_artist = artist.lower().strip()
+            for res in r.json().get('results', []):
+                aname = (res.get('artistName') or '').lower()
+                tname = (res.get('trackName') or '')
+                if want_artist in aname and _norm_title(tname) == want_title:
+                    m = re.match(r'(\d{4})', res.get('releaseDate') or '')
+                    if m:
+                        year = int(m.group(1))
+                    break
+    except Exception:
+        pass
+    _release_year_cache[key] = (now, year)
+    return year
+
+
+def _fetch_release_years(pairs) -> Dict[tuple, Optional[int]]:
+    """Parallel release-year lookup for several (artist, song) pairs."""
+    from concurrent.futures import ThreadPoolExecutor
+    uniq = list(dict.fromkeys(
+        (a.lower().strip(), s.lower().strip()) for a, s in pairs))
+    missing = [p for p in uniq
+               if not (p in _release_year_cache and
+                       time.time() - _release_year_cache[p][0] < _RELEASE_YEAR_TTL)]
+    if missing:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            list(ex.map(lambda p: _fetch_release_year(p[0], p[1]), missing))
+    return {p: _release_year_cache[p][1] for p in uniq}
+
+
+def _apply_freshness(artist: str, song: str, scored) -> None:
+    """In-place era-alignment of blended scores using iTunes release years.
+
+    Candidates from a different era than the source song are penalised
+    proportionally to the year gap: old catalog tracks sink when the source
+    is new (and vice versa).  Unknown years stay neutral so missing data
+    never punishes a candidate.
+    """
+    if not scored:
+        return
+    source_year = _fetch_release_year(artist, song)
+    if not source_year:
+        return
+    pool = scored[:15]
+    years = _fetch_release_years([(c['artist'], c['name']) for _, c, _ in pool])
+    adjusted = 0
+    for i, (score, c, g) in enumerate(pool):
+        y = years.get((c['artist'].lower().strip(), c['name'].lower().strip()))
+        if y:
+            gap = abs(y - source_year)
+            if gap:
+                penalty = min(_FRESHNESS_MAX_PENALTY, _FRESHNESS_PER_YEAR * gap)
+                scored[i] = (score - penalty, c, g)
+                adjusted += 1
+    if adjusted:
+        logger.info(f"[REC] freshness: source year {source_year}, "
+                    f"era-adjusted {adjusted} candidates")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -3168,6 +3297,14 @@ def _get_lastfm_recommendations(artist: str, song: str,
         )
         return None
 
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    # ── Freshness: era-align the Last.fm pool with the source song ─────────
+    # (Apple / Last.fm chart sources are current by construction and skip this.)
+    try:
+        _apply_freshness(artist, song, scored)
+    except Exception as e:
+        logger.warning(f"[REC] freshness adjustment failed: {e}")
     scored.sort(key=lambda x: x[0], reverse=True)
 
     # Jitter top-12 pool for freshness, then deduplicate by artist
