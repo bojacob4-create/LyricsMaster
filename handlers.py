@@ -1433,6 +1433,7 @@ def recommend_command(update: Update, context: CallbackContext):
                     return
 
             top_songs = _fetch_artist_top_songs(artist_display)
+            trending = _fetch_artist_trending(artist_display)
             if top_songs:
                 _pending_recommend_artist[user_id] = {
                     'artist': artist_display,
@@ -1441,7 +1442,7 @@ def recommend_command(update: Update, context: CallbackContext):
                 update.message.reply_text(
                     f"🎧 Which {artist_display} song should I use to find similar songs?\n\n"
                     "Pick one below or type another song manually:",
-                    reply_markup=recommend_pick_buttons(artist_display, top_songs)
+                    reply_markup=recommend_pick_buttons(artist_display, top_songs, trending)
                 )
                 return
             update.message.reply_text(
@@ -1884,6 +1885,38 @@ _top_songs_cache = {}
 _TOP_SONGS_TTL = 24 * 3600
 
 
+def _chart_song_index() -> list:
+    """Today's Apple Top 100 as (artist, song) pairs, lowercased.
+
+    The chart fetch itself is cached ~6h inside live_charts, so this is cheap.
+    [] when the chart is unreachable.
+    """
+    try:
+        from services.live_charts import get_top_songs
+        idx = []
+        for s in get_top_songs(limit=100):
+            a = (s.get('artist') or '').strip().lower()
+            t = (s.get('song') or '').strip().lower()
+            if a and t:
+                idx.append((a, t))
+        return idx
+    except Exception as e:
+        logger.debug(f"chart index unavailable: {e}")
+        return []
+
+
+def _norm_song_title(t: str) -> str:
+    t = (t or '').lower().strip()
+    t = re.sub(r'\s*\([^)]*\)\s*', ' ', t)
+    t = re.sub(r'\s*\[[^]]*\]\s*', ' ', t)
+    return re.sub(r'\s+', ' ', t).strip()
+
+
+def _artist_matches_chart(chart_artist: str, query_artist: str) -> bool:
+    q = (query_artist or '').strip().lower()
+    return bool(q) and (q == chart_artist or q in chart_artist or chart_artist in q)
+
+
 def _fetch_artist_top_songs(artist_name: str) -> list:
     key = (artist_name or '').strip().lower()
     if not key:
@@ -1956,11 +1989,46 @@ def _fetch_artist_top_songs(artist_name: str) -> list:
                 logger.info(f"Using static top songs for '{artist_name}' (live sources missed)")
 
         if songs:
-            _top_songs_cache[key] = (now, songs)
+            # Trending-now boost: songs on today's chart go first and are
+            # flagged, so the card leads with what's hot right now — not
+            # just all-time most-played.
+            trending = set()
+            try:
+                idx = _chart_song_index()
+                if idx:
+                    aq = artist_name.strip().lower()
+                    charted, rest = [], []
+                    for s in songs:
+                        sn = _norm_song_title(s)
+                        hit = any(_artist_matches_chart(ca, aq) and _norm_song_title(ct) == sn
+                                  for ca, ct in idx)
+                        (charted if hit else rest).append(s)
+                    if charted:
+                        trending = set(charted)
+                        songs = charted + rest
+                        logger.info(f"{len(charted)} '{artist_name}' song(s) trending on today's chart: "
+                                    f"{', '.join(charted)}")
+            except Exception as e:
+                logger.debug(f"trending reorder failed for '{artist_name}': {e}")
+            _top_songs_cache[key] = (now, songs, trending)
         return songs
     except Exception as e:
         logger.warning(f"_fetch_artist_top_songs failed for '{artist_name}': {e}")
         return []
+
+
+def _fetch_artist_trending(artist_name: str) -> set:
+    """Names of this artist's songs that are on today's chart. Never raises."""
+    try:
+        key = (artist_name or '').strip().lower()
+        hit = _top_songs_cache.get(key)
+        if hit and len(hit) == 3 and (time.time() - hit[0]) < _TOP_SONGS_TTL:
+            return hit[2]
+        _fetch_artist_top_songs(artist_name)
+        hit = _top_songs_cache.get(key)
+        return hit[2] if hit and len(hit) == 3 else set()
+    except Exception:
+        return set()
 
 
 def _artist_songs_picker_command(update: Update, context: CallbackContext):
@@ -1971,7 +2039,8 @@ def _artist_songs_picker_command(update: Update, context: CallbackContext):
 
     top_songs = _fetch_artist_top_songs(artist_name)
     if top_songs:
-        markup = artist_summary_buttons(artist_name, top_songs)
+        markup = artist_summary_buttons(artist_name, top_songs,
+                                        _fetch_artist_trending(artist_name))
         update.message.reply_text(
             f"🎤 {artist_name}\n"
             "━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -2455,6 +2524,7 @@ def _build_fallback_artist_profile(query: str):
         lines.append("🔥 Pick a song below to explore:")
 
         top_songs = _fetch_artist_top_songs(display_name)
+        trending_now = _fetch_artist_trending(display_name)
 
         return {
             'name': display_name,
@@ -2487,12 +2557,15 @@ def artist_command(update: Update, context: CallbackContext):
 
         info = get_artist_info(query)
         if info:
-            update.message.reply_text(format_artist_info(info), reply_markup=artist_buttons(info['name'], info.get('top_songs', [])))
+            _live_songs = _fetch_artist_top_songs(info['name']) or info.get('top_songs', [])
+            update.message.reply_text(format_artist_info(info), reply_markup=artist_buttons(
+                info['name'], _live_songs, _fetch_artist_trending(info['name'])))
         else:
             profile = _build_fallback_artist_profile(query)
             if profile:
                 top_songs = profile.get('top_songs', [])
-                markup = artist_buttons(profile['name'], top_songs) if top_songs else None
+                markup = artist_buttons(profile['name'], top_songs,
+                                        _fetch_artist_trending(profile['name'])) if top_songs else None
                 update.message.reply_text(profile['text'], disable_web_page_preview=True, reply_markup=markup)
             else:
                 update.message.reply_text(
@@ -2592,7 +2665,9 @@ def _artist_summary_for_song(query: str, update, processing_msg):
         f"🌍 From: {info['country']}\n\n"
         "🔥 Pick a song below to explore:"
     )
-    markup = artist_summary_buttons(info['name'], info['top_songs'][:5])
+    _live_top = _fetch_artist_top_songs(info['name']) or info['top_songs'][:5]
+    markup = artist_summary_buttons(info['name'], _live_top,
+                                    _fetch_artist_trending(info['name']))
     processing_msg.edit_text(response, disable_web_page_preview=True, reply_markup=markup)
 
 

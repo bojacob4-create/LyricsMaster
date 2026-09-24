@@ -372,6 +372,58 @@ finally:
     _h.requests.get = _real_get
     _h._top_songs_cache.clear()
 
+# ── 10. Trending-now boost on artist top songs ─────────────────────────────
+
+print("== trending-now boost ==")
+_h._top_songs_cache.clear()
+_h.requests.get = _fake_lastfm
+_h._chart_song_index = lambda: [('tyla', 'new hit d'), ('tyla', 'water')]
+try:
+    songs = _h._fetch_artist_top_songs('Tyla')
+    trending = _h._fetch_artist_trending('Tyla')
+    check("charting songs are boosted first",
+          songs[:2] == ['New Hit D', 'New Hit A'] or songs[0] == 'New Hit D',
+          repr(songs))
+    check("trending set flags chart hits",
+          trending == {'New Hit D'}, repr(trending))
+    check("non-charting hits keep their order after",
+          songs[2:] == ['New Hit B', 'New Hit C', 'Old Classic'], repr(songs))
+finally:
+    _h.requests.get = _real_get
+    _h._top_songs_cache.clear()
+
+# no chart overlap -> order untouched, trending empty
+_h.requests.get = _fake_lastfm
+_h._chart_song_index = lambda: [('someone else', 'other song')]
+try:
+    songs = _h._fetch_artist_top_songs('Tyla')
+    check("no chart overlap keeps Last.fm order",
+          songs == ['New Hit A', 'New Hit B', 'New Hit C', 'Old Classic', 'New Hit D'],
+          repr(songs))
+    check("trending empty when nothing charts",
+          _h._fetch_artist_trending('Tyla') == set())
+finally:
+    _h.requests.get = _real_get
+    _h._top_songs_cache.clear()
+
+# chart unreachable -> graceful, no crash
+_h.requests.get = _fake_lastfm
+_h._chart_song_index = lambda: []
+try:
+    songs = _h._fetch_artist_top_songs('Tyla')
+    check("dead chart index still returns live songs",
+          len(songs) == 5, repr(songs))
+finally:
+    _h.requests.get = _real_get
+    _h._top_songs_cache.clear()
+
+# button labels mark trending songs
+import buttons as _b
+mk = _b.artist_summary_buttons('Tyla', ['New Hit D', 'New Hit B'], {'New Hit D'})
+labels = [row[0].text for row in mk.inline_keyboard]
+check("trending song gets fire label",
+      labels[:2] == ['🔥 New Hit D', '🎵 New Hit B'], repr(labels))
+
 _reset_mem()
 
 print(f"\n{PASS} passed, {FAIL} failed")
