@@ -68,7 +68,7 @@ from services.discovery_service import (
     MOOD_BUTTONS, normalize_mood, get_mood_mix,
     parse_extend_lines, get_recent_picks, blend_vibe, get_extend_recs,
     interpret_theme, match_theme, get_theme_songs_live, local_theme_topup,
-    DECADE_POOLS, normalize_decade, get_throwback,
+    DECADE_POOLS, normalize_decade, normalize_decade_strict, get_throwback,
     get_new_music, resolve_newmusic_genre, get_newmusic_genres,
 )
 from services.fun_service import (
@@ -5016,8 +5016,17 @@ def throwback_command(update: Update, context: CallbackContext):
             )
             return
 
-        decade = normalize_decade(arg)
-        picks = get_throwback(decade, 5)
+        decade = normalize_decade_strict(arg)
+        if not decade:
+            # Round 49: answer honestly instead of silently rolling a
+            # random decade for input like "70s".
+            update.message.reply_text(
+                "🕺 I cover the *80s, 90s, 2000s and 2010s* — pick one!",
+                parse_mode="Markdown",
+                reply_markup=decade_buttons(),
+            )
+            return
+        picks = get_throwback(decade, 5, user_id=user_id)
         if not picks:
             update.message.reply_text(
                 "😓 Couldn't dig up that decade right now.\n"
@@ -5031,8 +5040,8 @@ def throwback_command(update: Update, context: CallbackContext):
                  "━━━━━━━━━━━━━━━━━━━━━", ""]
         for i, s in enumerate(picks, 1):
             lines.append(f"*{i}.* {md(s['artist'])} — {md(s['song'])}")
-            if s.get('fact'):
-                lines.append(f"   💡 {s['fact']}")
+            if s.get('note'):
+                lines.append(f"   {s['note']}")
         lines += ["",
                   "━━━━━━━━━━━━━━━━━━━━━",
                   "🕺 /throwback — another decade"]

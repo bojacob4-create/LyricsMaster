@@ -42,6 +42,7 @@ from services.artist_service import (
     _get_live_genre_songs,
 )
 from services.quiz_service import get_quiz_songs
+from services.throwback_pool import THROWBACK_MINED
 
 logger = logging.getLogger(__name__)
 
@@ -1580,9 +1581,12 @@ DECADE_POOLS: Dict[str, List[Dict]] = {
          'fact': 'Their first US #1 single.'},
         {'artist': 'The Police', 'song': 'Every Breath You Take',
          'fact': 'Won the 1984 Grammy for Song of the Year.'},
-        {'artist': 'Cyndi Lauper', 'song': 'Girls Just Want to Have Fun'},
-        {'artist': 'Journey', 'song': "Don't Stop Believin'"},
-        {'artist': 'Tears for Fears', 'song': 'Everybody Wants to Rule the World'},
+        {'artist': 'Cyndi Lauper', 'song': 'Girls Just Want to Have Fun',
+         'fact': 'Originally written by Robert Hazard; Lauper turned it into a feminist anthem.'},
+        {'artist': 'Journey', 'song': "Don't Stop Believin'",
+         'fact': 'Became a phenomenon decades later via The Sopranos finale and Glee.'},
+        {'artist': 'Tears for Fears', 'song': 'Everybody Wants to Rule the World',
+         'fact': 'Their first US #1, from Songs from the Big Chair.'},
         {'artist': 'New Order', 'song': 'Blue Monday',
          'fact': 'The best-selling 12-inch single of all time.'},
         {'artist': 'Rick Astley', 'song': 'Never Gonna Give You Up',
@@ -1595,25 +1599,30 @@ DECADE_POOLS: Dict[str, List[Dict]] = {
          'fact': 'Named after a deodorant brand scrawled on Kurt Cobain\'s wall.'},
         {'artist': 'Whitney Houston', 'song': 'I Will Always Love You',
          'fact': 'Spent 14 weeks at US #1 — a record at the time.'},
-        {'artist': 'Backstreet Boys', 'song': 'I Want It That Way'},
+        {'artist': 'Backstreet Boys', 'song': 'I Want It That Way',
+         'fact': 'The lyrics famously make little sense \u2014 the band has admitted it.'},
         {'artist': 'Britney Spears', 'song': '...Baby One More Time',
          'fact': 'Her debut single, released when she was 16.'},
         {'artist': 'Oasis', 'song': 'Wonderwall',
          'fact': 'One of the most-streamed 90s songs in the world.'},
-        {'artist': 'Radiohead', 'song': 'Creep'},
+        {'artist': 'Radiohead', 'song': 'Creep',
+         'fact': 'The band grew to hate it and dropped it from setlists for years.'},
         {'artist': 'TLC', 'song': 'Waterfalls',
          'fact': 'The first #1 on the Billboard Hot 100 with an AIDS-awareness message.'},
         {'artist': 'Spice Girls', 'song': 'Wannabe',
          'fact': 'Recorded in under 30 minutes.'},
         {'artist': 'Eminem', 'song': 'My Name Is',
          'fact': 'His first major hit, produced by Dr. Dre.'},
-        {'artist': 'Lauryn Hill', 'song': 'Doo Wop (That Thing)'},
+        {'artist': 'Lauryn Hill', 'song': 'Doo Wop (That Thing)',
+         'fact': 'From the album that won the Grammy for Album of the Year.'},
         {'artist': 'Mariah Carey', 'song': 'Fantasy',
          'fact': 'Pioneered the pop/hip-hop sample collab with O.D.B.'},
-        {'artist': 'Green Day', 'song': 'Basket Case'},
+        {'artist': 'Green Day', 'song': 'Basket Case',
+         'fact': "Written about Billie Joe Armstrong's panic attacks."},
         {'artist': 'The Notorious B.I.G.', 'song': 'Juicy',
          'fact': 'Built on Mtume\'s "Juicy Fruit" — a rags-to-riches classic.'},
-        {'artist': 'Alanis Morissette', 'song': 'Ironic'},
+        {'artist': 'Alanis Morissette', 'song': 'Ironic',
+         'fact': 'Contains almost no actual irony \u2014 a debate that never died.'},
         {'artist': 'Celine Dion', 'song': 'My Heart Will Go On',
          'fact': "Written for Titanic; Dion didn't want to record it at first."},
         {'artist': 'Dr. Dre', 'song': "Nuthin' but a 'G' Thang",
@@ -1626,27 +1635,32 @@ DECADE_POOLS: Dict[str, List[Dict]] = {
          'fact': 'Her debut solo single — 8 weeks at US #1.'},
         {'artist': 'Eminem', 'song': 'Lose Yourself',
          'fact': 'First hip-hop song to win the Oscar for Best Original Song.'},
-        {'artist': 'Coldplay', 'song': 'Yellow'},
+        {'artist': 'Coldplay', 'song': 'Yellow',
+         'fact': 'Their breakthrough hit, from the debut album Parachutes.'},
         {'artist': 'Usher', 'song': 'Yeah!',
          'fact': 'Spent 12 weeks at #1, defining mid-2000s R&B.'},
         {'artist': 'Rihanna', 'song': 'Umbrella',
          'fact': 'Her breakout — 10 weeks at #1 in the UK.'},
-        {'artist': 'Amy Winehouse', 'song': 'Rehab'},
+        {'artist': 'Amy Winehouse', 'song': 'Rehab',
+         'fact': 'Won three Grammys including Record and Song of the Year.'},
         {'artist': 'The White Stripes', 'song': 'Seven Nation Army',
          'fact': 'Its riff became a global stadium chant.'},
         {'artist': 'Kanye West', 'song': 'Gold Digger',
          'fact': '10 weeks at US #1 in 2005.'},
-        {'artist': 'Justin Timberlake', 'song': 'Cry Me a River'},
+        {'artist': 'Justin Timberlake', 'song': 'Cry Me a River',
+         'fact': 'Won the Grammy for Best Male Pop Vocal Performance.'},
         {'artist': 'Alicia Keys', 'song': "Fallin'",
          'fact': 'Won Song of the Year at the 2002 Grammys.'},
-        {'artist': 'Linkin Park', 'song': 'In the End'},
+        {'artist': 'Linkin Park', 'song': 'In the End',
+         'fact': 'From Hybrid Theory, the best-selling debut album of the 21st century.'},
         {'artist': 'Shakira', 'song': 'Hips Don\'t Lie',
          'fact': 'One of the best-selling singles of the 2000s.'},
         {'artist': 'Gnarls Barkley', 'song': 'Crazy',
          'fact': 'First song to top the UK chart on downloads alone.'},
         {'artist': 'Lady Gaga', 'song': 'Poker Face',
          'fact': 'Topped charts in 20 countries.'},
-        {'artist': 'Kings of Leon', 'song': 'Sex on Fire'},
+        {'artist': 'Kings of Leon', 'song': 'Sex on Fire',
+         'fact': 'Won the Grammy for Best Rock Vocal Performance by a Duo or Group.'},
     ],
     '2010s': [
         {'artist': 'Adele', 'song': 'Rolling in the Deep',
@@ -1655,26 +1669,32 @@ DECADE_POOLS: Dict[str, List[Dict]] = {
          'fact': 'One of the most-streamed songs in Spotify history.'},
         {'artist': 'Drake', 'song': "God's Plan",
          'fact': 'Its video gave away nearly $1M to people in Miami.'},
-        {'artist': 'Billie Eilish', 'song': 'bad guy'},
+        {'artist': 'Billie Eilish', 'song': 'bad guy',
+         'fact': "Ended 'Old Town Road'\u2019s record 19-week run at #1."},
         {'artist': 'Lorde', 'song': 'Royals',
          'fact': 'Written when Lorde was just 15.'},
         {'artist': 'Pharrell Williams', 'song': 'Happy',
          'fact': 'Spent 10 weeks at US #1 in 2014.'},
         {'artist': 'Mark Ronson', 'song': 'Uptown Funk',
          'fact': '14 weeks at US #1 (ft. Bruno Mars).'},
-        {'artist': 'Sia', 'song': 'Chandelier'},
+        {'artist': 'Sia', 'song': 'Chandelier',
+         'fact': 'Its one-take dance video made 11-year-old Maddie Ziegler a star.'},
         {'artist': 'The Weeknd', 'song': 'Blinding Lights',
          'fact': "Billboard's all-time #1 Hot 100 song."},
         {'artist': 'Luis Fonsi', 'song': 'Despacito',
          'fact': 'First mostly-Spanish song to hit 1B YouTube views (ft. Daddy Yankee).'},
-        {'artist': 'Taylor Swift', 'song': 'Shake It Off'},
+        {'artist': 'Taylor Swift', 'song': 'Shake It Off',
+         'fact': 'Her first Billboard Hot 100 #1.'},
         {'artist': 'Bruno Mars', 'song': '24K Magic',
          'fact': 'Won Record of the Year at the 2018 Grammys.'},
-        {'artist': 'Kendrick Lamar', 'song': 'HUMBLE.'},
-        {'artist': 'Dua Lipa', 'song': 'New Rules'},
+        {'artist': 'Kendrick Lamar', 'song': 'HUMBLE.',
+         'fact': 'Won the Grammy for Best Rap Song.'},
+        {'artist': 'Dua Lipa', 'song': 'New Rules',
+         'fact': 'Her first UK #1 single.'},
         {'artist': 'Post Malone', 'song': 'rockstar',
          'fact': 'His first US #1 (ft. 21 Savage).'},
-        {'artist': 'Ariana Grande', 'song': 'thank u, next'},
+        {'artist': 'Ariana Grande', 'song': 'thank u, next',
+         'fact': "Broke Spotify's single-day streaming record on release."},
     ],
 }
 
@@ -1710,18 +1730,94 @@ def normalize_decade(text: str) -> str:
         return _rng.choice(list(DECADE_POOLS.keys()))
 
 
-def get_throwback(decade: str, n: int = 5) -> List[Dict]:
-    """Random n picks [{'artist','song','fact'}] — fully local, never raises."""
+def get_throwback(decade: str, n: int = 5,
+                user_id: Optional[int] = None) -> List[Dict]:
+    """Throwback picks [{'artist','song','note'}] — fully local, never raises.
+
+    Round 49: 2 hand-curated picks (with trivia facts) + 3 mined Billboard
+    year-end Hot 100 picks (with factual chart notes, e.g. "#3 on the 1985
+    year-end Hot 100").  Per-(user, decade) no-repeat memory: served songs
+    are not repeated until the pool cycles.  No network, no key, no cost.
+    """
     try:
         decade = normalize_decade(decade)
-        pool = DECADE_POOLS.get(decade, [])
-        if not pool:
+        curated = DECADE_POOLS.get(decade, [])
+        mined = THROWBACK_MINED.get(decade, [])
+        if not curated and not mined:
             return []
-        n = max(1, min(int(n or 5), len(pool)))
-        return [{'artist': s['artist'], 'song': s['song'],
-                 'fact': s.get('fact')} for s in _rng.sample(pool, n)]
+
+        def _pick(pool, want, tag):
+            seen = _THROWBACK_SEEN.setdefault((user_id, decade, tag), set())
+
+            def _key(s):
+                return (str(s.get("artist", "")).lower(),
+                        str(s.get("song", "")).lower())
+
+            fresh = [s for s in pool if _key(s) not in seen]
+            if len(fresh) < want:  # pool cycled — start over
+                seen.clear()
+                fresh = list(pool)
+            picks = _rng.sample(fresh, min(want, len(fresh)))
+            seen.update(_key(s) for s in picks)
+            return picks
+
+        picks = _pick(curated, 2, "curated")
+        picked_keys = {(str(s.get("artist", "")).lower(),
+                        str(s.get("song", "")).lower()) for s in picks}
+        for s in _pick(mined, max(0, 5 - len(picks)), "mined"):
+            k = (str(s.get("artist", "")).lower(),
+                 str(s.get("song", "")).lower())
+            if k not in picked_keys:
+                picks.append(s)
+                picked_keys.add(k)
+
+        out = []
+        for s in picks[:5]:
+            if s.get("fact"):
+                note = f"\U0001f4a1 {s['fact']}"
+            elif s.get("year") and s.get("rank"):
+                note = (f"\U0001f4ca #{s.get('rank')} on the "
+                        f"{s.get('year')} year-end Hot 100")
+            else:
+                note = "\U0001f57a Throwback gem"
+            out.append({"artist": s["artist"], "song": s["song"],
+                        "note": note})
+        return out
     except Exception:
         return []
+
+
+def normalize_decade_strict(text: str) -> Optional[str]:
+    """Like normalize_decade, but None when the input names no covered decade.
+
+    normalize_decade's silent-random fallback is kept for backward
+    compatibility; the /throwback handler uses this to answer honestly
+    ("I cover the 80s, 90s, 2000s and 2010s") instead of guessing.
+    """
+    try:
+        t = " ".join((text or "").lower().split())
+        for decade, aliases in _DECADE_ALIASES.items():
+            if t in aliases:
+                return decade
+        m = re.search(r"\b(19[89]\d|20[01]\d)\b", t)
+        if m:
+            year = int(m.group(1))
+            if 1980 <= year <= 1989:
+                return "80s"
+            if 1990 <= year <= 1999:
+                return "90s"
+            if 2000 <= year <= 2009:
+                return "2000s"
+            if 2010 <= year <= 2019:
+                return "2010s"
+        return None
+    except Exception:
+        return None
+
+
+# Per-(user_id, decade, pool-tag) keys of already-served throwback songs.
+# In-memory: repeats are avoided until a pool cycles, then it starts over.
+_THROWBACK_SEEN: Dict[tuple, set] = {}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
