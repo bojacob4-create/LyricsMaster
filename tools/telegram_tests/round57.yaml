@@ -1,0 +1,35 @@
+round: 57
+title: Share Card — branded story-format lyric cards.
+summary: |
+  New "🖼️ Share Card" button on the song dashboard renders a signature
+  1080x1920 story card: dark gradient template, chorus excerpt in bold
+  type, ambient glow tinted from the album art's dominant color, the album
+  artwork, and a QR code that deep-links to that exact song card
+  (t.me/MGLyricsbot?start=share_<token>). Cards are cached per song, so
+  re-shares are instant.
+tests:
+  - name: the card itself
+    section: The feature
+    command: /song Adele - Hello → tap "🖼️ Share Card"
+    expect: Bot replies with a photo (1080x1920 story format): dark "LYRICS MASTER" template, the "Hello from the other side…" chorus in big bold centered type, a warm glow behind the text, Adele's album art bottom-left, a QR code bottom-right, and "@MGLyricsbot · share the vibe" footer. Caption reads "🖼️ Adele — Hello" plus the share hint.
+    unit_only: false
+  - name: re-share is instant (cache)
+    section: The feature
+    command: Tap "🖼️ Share Card" again on the same song
+    expect: The same card arrives noticeably faster (served from cache, no "Creating…" delay).
+    unit_only: false
+  - name: QR deep link opens the song
+    section: Deep link
+    command: Scan the QR (or open its t.me link) on a phone
+    expect: Telegram opens @MGLyricsbot straight onto the Adele — Hello song dashboard (not just the welcome screen). Forward the card to a friend and their scan should land on the same song card.
+    unit_only: false
+  - name: a different song, different glow
+    section: Generalization
+    command: /song The Weeknd - Blinding Lights → tap "🖼️ Share Card"
+    expect: Same template and layout, but the ambient glow and accent bar take their tint from this song's album art — the signature look stays identical, only the color identity changes.
+    unit_only: false
+  - name: song without lyrics stays honest
+    section: Edge case
+    command: /song [an instrumental / no-lyrics track] — check its card
+    expect: The no-lyrics card has NO "🖼️ Share Card" button (there's no excerpt to print). Nothing broken, just absent.
+    unit_only: false
