@@ -53,7 +53,8 @@ from services.youtube_downloader_service import download_youtube_video, download
 from services.ai_info_service import get_person_info
 from services.artist_service import (
     get_artist_info, format_artist_info, get_trending_songs, format_trending,
-    get_top_by_genre, format_top_songs, get_available_genres, get_random_song
+    get_top_by_genre, format_top_songs, get_available_genres, get_random_song,
+    resolve_genre_key
 )
 from input_parser import parse_song_query, search_lyrics_with_fallback, clean_input
 from intent_router import detect_intent
@@ -4373,13 +4374,20 @@ def top_command(update: Update, context: CallbackContext):
             except Exception:
                 markup = None
             update.message.reply_text(format_top_songs(genre, songs), reply_markup=markup)
-        else:
+        elif resolve_genre_key(query) is None:
             genres = get_available_genres()
             genre_list = ', '.join(g.upper() if g in ('rnb', 'kpop') else g.title() for g in genres)
             update.message.reply_text(
                 f"😕 Genre \"{query}\" not found.\n\n"
                 f"Try one of these: {genre_list}\n\n"
                 "Example: /top afrobeats"
+            )
+        else:
+            # Known genre, but every live source failed — stay honest,
+            # never serve the static pool.
+            update.message.reply_text(
+                "📡 The live charts are unreachable right now.\n"
+                "Please try again in a moment! 🔄"
             )
 
         logger.info(f"Successfully sent top songs to user {user_id}")

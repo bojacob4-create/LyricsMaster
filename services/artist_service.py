@@ -369,21 +369,30 @@ def _note_random_pick(user_id, pick):
 _recent_random_picks = {}
 
 
-def get_top_by_genre(genre_query: str) -> Optional[tuple]:
-    genre_lower = genre_query.lower().strip()
+def resolve_genre_key(genre_query: str) -> Optional[str]:
+    """Resolve a user's genre input (incl. aliases) to a canonical key,
+    or None when it isn't a known genre."""
+    genre_lower = (genre_query or '').lower().strip()
     resolved = GENRE_ALIASES.get(genre_lower, genre_lower)
+    return resolved if resolved in GENRE_TOP_SONGS else None
 
-    if resolved not in GENRE_TOP_SONGS:
+
+def get_top_by_genre(genre_query: str) -> Optional[tuple]:
+    """Top songs for a genre — 100% live (Apple home chart + Last.fm).
+
+    Returns (genre, songs) or None when the genre is unknown OR every live
+    source failed. The static GENRE_TOP_SONGS pool is intentionally NOT
+    served here (it still backs quizzes etc.); callers show an honest
+    charts-unreachable message instead of stale picks.
+    """
+    resolved = resolve_genre_key(genre_query)
+    if not resolved:
         return None
 
     live = _get_live_genre_songs(resolved)
     if live:
         return resolved, live
-
-    songs = list(GENRE_TOP_SONGS[resolved])
-    import random as rng
-    rng.shuffle(songs)
-    return resolved, songs[:7]
+    return None
 
 
 def format_top_songs(genre: str, songs: List[Dict]) -> str:
@@ -403,8 +412,16 @@ def format_top_songs(genre: str, songs: List[Dict]) -> str:
 
     body = '\n\n'.join(lines)
 
-    is_live = any('Charting now' in s.get('note', '') for s in songs)
-    source_line = "Source: Apple Music Charts\n" if is_live else ""
+    has_apple = any('Apple Music' in s.get('note', '') for s in songs)
+    has_lastfm = any('Last.fm' in s.get('note', '') for s in songs)
+    if has_apple and has_lastfm:
+        source_line = "Sources: Apple Music Charts + Last.fm\n"
+    elif has_lastfm:
+        source_line = "Source: Last.fm\n"
+    elif has_apple:
+        source_line = "Source: Apple Music Charts\n"
+    else:
+        source_line = ""
 
     return (
         f"{emoji} Top {display_genre}\n"
@@ -534,25 +551,47 @@ def format_artist_info(info: Dict) -> str:
     )
 
 
-_chart_cache = {'raw': None, 'trending': None, 'timestamp': 0}
+# Per-country Apple chart cache: country code -> {'raw', 'trending', 'timestamp'}.
+# Each genre pulls its home chart (kpop -> Korea, afrobeats -> Nigeria, the
+# rest -> US) so every genre has a genuine "charting now" source.
+_chart_cache = {}
 CHART_CACHE_TTL = 3600
 
+# genre key -> (apple chart country, apple genre tag(s)).
 APPLE_GENRE_MAP = {
-    'pop': 'Pop',
-    'rap': 'Hip-Hop/Rap',
-    'rnb': 'R&B/Soul',
-    'rock': 'Alternative',
-    'country': 'Country',
-    'latin': 'Latin',
-    'kpop': 'K-Pop',
-    'soul': 'R&B/Soul',
+    'pop': ('us', 'Pop'),
+    'rap': ('us', 'Hip-Hop/Rap'),
+    'rnb': ('us', 'R&B/Soul'),
+    'rock': ('us', ['Rock', 'Alternative']),
+    'country': ('us', 'Country'),
+    'latin': ('us', 'Latin'),
+    'kpop': ('kr', 'K-Pop'),
+    'soul': ('us', 'R&B/Soul'),
+    'afrobeats': ('ng', 'Afrobeats'),
 }
 
+# genre key -> Last.fm tag. Fills thin Apple slices so a /top card is always
+# full AND always live — the static curated pool is never served here.
+LASTFM_GENRE_TAG = {
+    'pop': 'pop',
+    'rap': 'hip-hop',
+    'rnb': 'rnb',
+    'rock': 'rock',
+    'latin': 'latin',
+    'country': 'country',
+    'kpop': 'k-pop',
+    'soul': 'soul',
+    'afrobeats': 'afrobeats',
+}
+_genre_tag_cache = {}
+GENRE_TAG_TTL = 6 * 3600
 
-def _fetch_apple_chart() -> Optional[List[Dict]]:
+
+def _fetch_apple_chart(country: str = 'us') -> Optional[List[Dict]]:
+    """Fetch Apple's most-played Top 100 for a country ('us', 'kr', 'ng'...)."""
     try:
         r = session.get(
-            'https://rss.applemarketingtools.com/api/v2/us/music/most-played/100/songs.json',
+            f'https://rss.applemarketingtools.com/api/v2/{country}/music/most-played/100/songs.json',
             timeout=10
         )
         if r.status_code != 200:
@@ -578,20 +617,20 @@ def _fetch_apple_chart() -> Optional[List[Dict]]:
         return None
 
 
-def _get_cached_chart() -> Optional[List[Dict]]:
+def _get_cached_chart(country: str = 'us') -> Optional[List[Dict]]:
     import time
     now = time.time()
-    if _chart_cache['raw'] and (now - _chart_cache['timestamp']) < CHART_CACHE_TTL:
-        return _chart_cache['raw']
+    entry = _chart_cache.get(country)
+    if entry and entry['raw'] and (now - entry['timestamp']) < CHART_CACHE_TTL:
+        return entry['raw']
 
-    raw = _fetch_apple_chart()
+    raw = _fetch_apple_chart(country)
     if not raw:
         # One retry: the Apple RSS endpoint occasionally drops a single
-        # request — don't fall back to the static list on a lone blip.
-        raw = _fetch_apple_chart()
+        # request — don't give up on a lone blip.
+        raw = _fetch_apple_chart(country)
     if raw:
-        _chart_cache['raw'] = raw
-        _chart_cache['timestamp'] = now
+        new_entry = {'raw': raw, 'trending': None, 'timestamp': now}
         trending = []
         seen_artists = set()
         for s in raw:
@@ -600,14 +639,16 @@ def _get_cached_chart() -> Optional[List[Dict]]:
                 trending.append({'artist': s['artist'], 'song': s['song']})
                 if len(trending) >= 10:
                     break
-        _chart_cache['trending'] = trending
+        new_entry['trending'] = trending
+        _chart_cache[country] = new_entry
     return raw
 
 
 def get_trending_songs() -> tuple:
     raw = _get_cached_chart()
-    if raw and _chart_cache.get('trending'):
-        return _chart_cache['trending'], True
+    trending = _chart_cache.get('us', {}).get('trending')
+    if raw and trending:
+        return trending, True
 
     import random
     pool = list(TRENDING_SONGS)
@@ -615,30 +656,126 @@ def get_trending_songs() -> tuple:
     return pool[:8], False
 
 
-def _get_live_genre_songs(genre_key: str) -> Optional[List[Dict]]:
-    apple_genre = APPLE_GENRE_MAP.get(genre_key)
-    if not apple_genre:
-        return None
+def _fetch_lastfm_tag_tracks(tag: str, limit: int = 25) -> List[Dict]:
+    """Last.fm tag.getTopTracks — what the world's listeners are playing now.
 
-    raw = _get_cached_chart()
-    if not raw:
+    Same proven pattern as the /mood live tier. [] on any miss. Never raises.
+    """
+    import os as _os
+    try:
+        import requests as _requests
+    except Exception:
+        return []
+    api_key = _os.environ.get('LASTFM_API_KEY', '')
+    if not api_key:
+        return []
+    try:
+        r = _requests.get(
+            'https://ws.audioscrobbler.com/2.0/',
+            params={'method': 'tag.gettoptracks', 'tag': tag,
+                    'api_key': api_key, 'format': 'json', 'limit': limit},
+            timeout=8,
+            headers={'User-Agent': 'LyricsMasterBot/1.0'})
+        tracks = ((r.json() or {}).get('tracks') or {}).get('track') or []
+        out, seen = [], set()
+        for t in tracks:
+            if not isinstance(t, dict):
+                continue
+            a = str((t.get('artist') or {}).get('name') or '').strip()
+            name = str(t.get('name') or '').strip()
+            if not a or not name or len(name) > 60:
+                continue
+            k = (a.lower(), name.lower())
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append({'artist': a, 'song': name})
+        return out
+    except Exception as e:
+        logger.debug(f"Last.fm tag tracks error for '{tag}': {e}")
+        return []
+
+
+def _get_lastfm_genre_songs(genre_key: str, exclude_artists=frozenset(),
+                            exclude_songs=frozenset(),
+                            limit: int = 7) -> List[Dict]:
+    """Fill a thin Apple genre slice with live Last.fm tag tracks.
+
+    6h cache per tag. Dedupes against the Apple picks. Every song carries
+    note 'Trending on Last.fm'. [] when Last.fm is down/keyless. Never raises.
+    """
+    import time as _time
+    tag = LASTFM_GENRE_TAG.get(genre_key)
+    if not tag or limit <= 0:
+        return []
+    now = _time.time()
+    entry = _genre_tag_cache.get(tag)
+    if entry and (now - entry[0]) < GENRE_TAG_TTL:
+        tracks = entry[1]
+    else:
+        tracks = _fetch_lastfm_tag_tracks(tag)
+        _genre_tag_cache[tag] = (now, tracks)
+        while len(_genre_tag_cache) > 12:
+            _genre_tag_cache.pop(next(iter(_genre_tag_cache)))
+    out, seen_a, seen_s = [], set(exclude_artists), set(exclude_songs)
+    for t in tracks:
+        akey = t['artist'].lower()
+        skey = (akey, t['song'].lower())
+        if akey in seen_a or skey in seen_s:
+            continue
+        seen_a.add(akey)
+        seen_s.add(skey)
+        out.append({'artist': t['artist'], 'song': t['song'],
+                    'note': 'Trending on Last.fm'})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _get_live_genre_songs(genre_key: str) -> Optional[List[Dict]]:
+    """All-live genre top list.
+
+    Tier 1: the genre's home Apple chart slice (kpop -> Korea, afrobeats ->
+    Nigeria, rest -> US), up to 7, artists deduped.
+    Tier 2: Last.fm tag tracks top the card up to 7 when the slice is thin.
+    Returns None when EVERY live source fails — callers show an honest
+    charts-unreachable message; the static pool is never served here.
+    """
+    mapping = APPLE_GENRE_MAP.get(genre_key)
+    if not mapping:
         return None
+    country, tags = mapping
+    if isinstance(tags, str):
+        tags = [tags]
 
     songs = []
     seen_artists = set()
-    for item in raw:
-        if apple_genre in item.get('genres', []):
-            if item['artist'].lower() not in seen_artists:
-                seen_artists.add(item['artist'].lower())
-                songs.append({
-                    'artist': item['artist'],
-                    'song': item['song'],
-                    'note': 'Charting now on Apple Music',
-                })
-                if len(songs) >= 7:
-                    break
+    seen_songs = set()
+    raw = _get_cached_chart(country)
+    if raw:
+        for item in raw:
+            if not any(t in item.get('genres', []) for t in tags):
+                continue
+            akey = item['artist'].lower()
+            skey = (akey, item['song'].lower())
+            if akey in seen_artists or skey in seen_songs:
+                continue
+            seen_artists.add(akey)
+            seen_songs.add(skey)
+            songs.append({
+                'artist': item['artist'],
+                'song': item['song'],
+                'note': 'Charting now on Apple Music',
+            })
+            if len(songs) >= 7:
+                break
 
-    return songs if len(songs) >= 3 else None
+    if len(songs) < 7:
+        songs.extend(_get_lastfm_genre_songs(
+            genre_key, exclude_artists=seen_artists,
+            exclude_songs=seen_songs, limit=7 - len(songs)))
+
+    return songs if songs else None
 
 
 def format_trending(songs: List[Dict], is_live: bool = True) -> str:
