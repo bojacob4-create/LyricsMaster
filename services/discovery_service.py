@@ -1208,13 +1208,12 @@ def interpret_theme(text: str) -> Dict:
         return dict(safe)
 
 
-def match_theme(theme: Dict, n: int = 5) -> List[Dict]:
-    """Score local candidate songs against a theme — 100% local, no API calls.
+def _match_theme_scored(theme: Dict) -> Tuple[List[Tuple], str]:
+    """Score local candidates; return (sorted scored list, mood).
 
-    Candidates: RANDOM_SONGS_POOL + all GENRE_TOP_SONGS + get_quiz_songs().
-    Scoring: keyword overlap in the title (+artist), genre bonus, mood bonus.
-    Returns top n as [{'artist','song','reason'}] with the reason referencing
-    the theme.  Never raises.
+    scored entries: (score, candidate, kw_hits, genre_hit, mood_hit),
+    sorted by score desc.  Shared by match_theme and the round-48 live
+    top-up.  Never raises.
     """
     try:
         theme = theme or {}
@@ -1283,6 +1282,37 @@ def match_theme(theme: Dict, n: int = 5) -> List[Dict]:
 
         scored.sort(key=lambda s: (-s[0], s[1]['artist'].lower(),
                                    s[1]['song'].lower()))
+
+        return scored, mood
+    except Exception as e:
+        logger.debug(f"_match_theme_scored failed: {e}")
+        return [], ''
+
+
+def _about_reason(kw_hits, genre_hit, mood_hit, mood) -> str:
+    # Round 47 fix B: each song's reason states what THIS song
+    # actually matched — never a shared template asserting a
+    # match that didn't happen.
+    if kw_hits:
+        return f"Matches '{' & '.join(kw_hits[:3])}'"
+    if genre_hit:
+        return (f"{_GENRE_DISPLAY.get(genre_hit, genre_hit.title())} "
+                f"pick")
+    if mood_hit and mood:
+        return f"Fits the {mood} mood"
+    return "Picked for your theme"
+
+
+def match_theme(theme: Dict, n: int = 5) -> List[Dict]:
+    """Score local candidate songs against a theme — 100% local, no API calls.
+
+    Candidates: RANDOM_SONGS_POOL + all GENRE_TOP_SONGS + get_quiz_songs().
+    Scoring: keyword overlap in the title (+artist), genre bonus, mood bonus.
+    Returns top n as [{'artist','song','reason'}] with the reason referencing
+    the theme.  Never raises.
+    """
+    try:
+        scored, mood = _match_theme_scored(theme)
         n = max(1, int(n or 5))
 
         # Round 47 fix A: no signal at all (top score 0) means the theme
@@ -1292,25 +1322,229 @@ def match_theme(theme: Dict, n: int = 5) -> List[Dict]:
         if not scored or scored[0][0] <= 0:
             return []
 
-        def _reason(kw_hits, genre_hit, mood_hit) -> str:
-            # Round 47 fix B: each song's reason states what THIS song
-            # actually matched — never a shared template asserting a
-            # match that didn't happen.
-            if kw_hits:
-                return f"Matches '{' & '.join(kw_hits[:3])}'"
-            if genre_hit:
-                return (f"{_GENRE_DISPLAY.get(genre_hit, genre_hit.title())} "
-                        f"pick")
-            if mood_hit and mood:
-                return f"Fits the {mood} mood"
-            return "Picked for your theme"
-
         return [{'artist': c['artist'], 'song': c['song'],
-                 'reason': _reason(kh, gh, mh)}
+                 'reason': _about_reason(kh, gh, mh, mood)}
                 for _, c, kh, gh, mh in scored[:n]]
     except Exception as e:
         logger.debug(f"match_theme failed: {e}")
         return []
+
+# ──────────────────────────────────────────────────────────────────────────────
+# /about live path (round 48): OpenAI theme songs, verified via iTunes
+# ──────────────────────────────────────────────────────────────────────────────
+# Design note: Last.fm tag.getTopTracks was prototyped first and REJECTED —
+# tag quality varies wildly per theme ('party' is excellent, 'workout' is
+# gamed junk like LazyTown's "Bing Bang", 'gym' is metal-only) and the
+# endpoint exposes no popularity signal to re-rank with.  An LLM asked for
+# well-known theme songs, with every candidate existence-checked against
+# iTunes Search, gives consistently on-theme, mainstream, English results.
+_THEME_SONGS_CACHE: Dict[str, List[Dict]] = {}
+_THEME_SONGS_CACHE_MAX = 60
+_LLM_SONGS_TIMEOUT = 22
+_ITUNES_TIMEOUT = 6
+
+
+def _norm_search_text(s: str) -> str:
+    """Normalize for song-identity comparison: lowercase, drop
+    parentheticals/brackets/feat credits/punctuation, collapse spaces."""
+    try:
+        s = str(s or '').lower()
+        s = re.sub(r'\[.*?\]', '', s)
+        s = re.sub(r'\(.*?\)', '', s)
+        s = re.sub(r'\b(feat|ft|featuring)\b\.?', '', s)
+        s = re.sub(r'[^a-z0-9\s]', '', s)
+        return re.sub(r'\s+', ' ', s).strip()
+    except Exception:
+        return ''
+
+
+def _itunes_match(artist: str, title: str, ra: str, rt: str) -> bool:
+    """True when an iTunes result plausibly IS the queried song.
+
+    Guards the hallucination case: e.g. ("Britney Spears", "Work B**ch")
+    vs ("Elton John & Britney Spears", "Hold Me Closer") must NOT match.
+    """
+    try:
+        qa, qt = _norm_search_text(artist), _norm_search_text(title)
+        ia, it = _norm_search_text(ra), _norm_search_text(rt)
+        if not qa or not qt or not ia or not it:
+            return False
+        qtoks = [w for w in qt.split() if len(w) > 1]
+        itoks = set(it.split())
+        if not qtoks:
+            return False
+        if sum(1 for w in qtoks if w in itoks) / len(qtoks) < 0.6:
+            return False
+        if len(itoks) > len(qtoks) + 4:  # a much longer, different song
+            return False
+        qatoks = set(w for w in qa.split() if len(w) > 1)
+        iatoks = set(w for w in ia.split() if len(w) > 1)
+        return bool(qatoks & iatoks)
+    except Exception:
+        return False
+
+
+def _itunes_search(term: str) -> List[Dict]:
+    """Raw iTunes Search API call (entity=song, US store). Never raises."""
+    try:
+        import requests as _requests
+    except Exception:
+        return []
+    try:
+        r = _requests.get(
+            'https://itunes.apple.com/search',
+            params={'term': term, 'entity': 'song', 'country': 'US',
+                    'limit': 5},
+            timeout=_ITUNES_TIMEOUT,
+            headers={'User-Agent': 'LyricsMasterBot/1.0'})
+        return (r.json() or {}).get('results') or []
+    except Exception:
+        return []
+
+
+def _verify_theme_song(artist: str, title: str) -> Optional[Dict]:
+    """Existence-check a candidate song against iTunes.
+
+    Returns {'artist','song'} (the LLM's clean wording) when a result
+    genuinely matches, else None.  Skips karaoke/tribute junk.  Never raises.
+    """
+    try:
+        for res in _itunes_search(f'{artist} {title}')[:5]:
+            ra = str(res.get('artistName') or '')
+            rt = str(res.get('trackName') or '')
+            if any(j in rt.lower() for j in _JUNK_TITLE_BITS):
+                continue
+            if _itunes_match(artist, title, ra, rt):
+                return {'artist': artist.strip(), 'song': title.strip()}
+        return None
+    except Exception:
+        return None
+
+
+def _validate_theme_songs(data) -> List[Dict]:
+    """Validate/normalize the LLM's song list; [] if unusable."""
+    try:
+        songs = data.get('songs') if isinstance(data, dict) else None
+        if not isinstance(songs, list):
+            return []
+        out, seen = [], set()
+        for s in songs:
+            if not isinstance(s, dict):
+                continue
+            a = str(s.get('artist') or '').strip()
+            t = str(s.get('title') or '').strip()
+            why = str(s.get('why') or '').strip()
+            if not a or not t or len(a) > 80 or len(t) > 80:
+                continue
+            k = (a.lower(), t.lower())
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append({'artist': a, 'title': t, 'why': why[:80]})
+        return out
+    except Exception:
+        return []
+
+
+def _llm_theme_songs(theme: Dict, query: str) -> List[Dict]:
+    """Ask OpenAI for well-known songs fitting the theme.
+
+    Returns the validated RAW list (unverified — caller verifies via
+    iTunes).  [] when no client or on any failure.  Never raises.
+    """
+    try:
+        from services.nlp_router import _MODEL, _get_client
+        client = _get_client()
+        if client is None:
+            return []
+        theme = theme or {}
+        mood = str(theme.get('mood') or 'any')
+        kws = ', '.join(str(k) for k in (theme.get('keywords') or [])[:6])
+        genres = ', '.join(str(g) for g in (theme.get('genres') or []))
+        system = (
+            'You are a music recommender. Reply with JSON only (the word '
+            'JSON is required here): {"songs": [{"artist": "...", '
+            '"title": "...", "why": "..."}]}. '
+            f'List 8 well-known REAL songs for the theme "{query}" '
+            f'(mood: {mood}; keywords: {kws}; genres: {genres or "any"}). '
+            'English-language songs only, by real artists, no AI-generated '
+            'music. "why" is at most 10 words on why the song fits the '
+            'theme. Every entry must be a real released recording — never '
+            'invent titles or artists.')
+        resp = client.responses.create(
+            model=_MODEL,
+            input=[{'role': 'system', 'content': system},
+                   {'role': 'user', 'content': f'theme: {query}'}],
+            text={'format': {'type': 'json_object'}},
+            timeout=_LLM_SONGS_TIMEOUT)
+        return _validate_theme_songs(json.loads(resp.output_text))
+    except Exception as e:
+        logger.debug(f"_llm_theme_songs failed: {e}")
+        return []
+
+
+def get_theme_songs_live(theme: Dict, query: str, n: int = 5) -> List[Dict]:
+    """Live /about path: LLM theme songs, each existence-verified via iTunes.
+
+    Results carry the LLM's short "why" as the reason.  In-memory cache per
+    query (repeat themes never re-call).  [] when unavailable — the caller
+    falls back to local matching.  Never raises.
+    """
+    try:
+        key = ' '.join(str(query or '').lower().split())
+        if not key:
+            return []
+        n = max(1, int(n or 5))
+        if key in _THEME_SONGS_CACHE:
+            return [dict(s) for s in _THEME_SONGS_CACHE[key][:n]]
+        raw = _llm_theme_songs(theme, query)
+        if not raw:
+            return []
+        verified: List[Dict] = []
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            futs = {ex.submit(_verify_theme_song, s['artist'], s['title']): s
+                    for s in raw}
+            for fut, s in futs.items():  # insertion order = LLM rank order
+                try:
+                    v = fut.result(timeout=_ITUNES_TIMEOUT + 2)
+                except Exception:
+                    v = None
+                if v and len(verified) < n:
+                    verified.append({
+                        'artist': v['artist'], 'song': v['song'],
+                        'reason': s.get('why') or 'Fits your theme'})
+        _THEME_SONGS_CACHE[key] = verified
+        while len(_THEME_SONGS_CACHE) > _THEME_SONGS_CACHE_MAX:
+            _THEME_SONGS_CACHE.pop(next(iter(_THEME_SONGS_CACHE)))
+        return [dict(s) for s in verified]
+    except Exception as e:
+        logger.debug(f"get_theme_songs_live failed: {e}")
+        return []
+
+
+def local_theme_topup(theme: Dict, exclude: set, need: int) -> List[Dict]:
+    """Top up live /about results from the local scored pool.
+
+    Only songs with a real signal (score > 0) — never alphabetical filler.
+    Never raises.
+    """
+    try:
+        out: List[Dict] = []
+        scored, mood = _match_theme_scored(theme)
+        for score, c, kh, gh, mh in scored:
+            if score <= 0 or len(out) >= max(0, int(need or 0)):
+                break
+            k = (c['artist'].lower(), c['song'].lower())
+            if k in exclude:
+                continue
+            exclude.add(k)
+            out.append({'artist': c['artist'], 'song': c['song'],
+                        'reason': _about_reason(kh, gh, mh, mood)})
+        return out
+    except Exception as e:
+        logger.debug(f"local_theme_topup failed: {e}")
+        return []
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Throwback decades — fully local curated pools

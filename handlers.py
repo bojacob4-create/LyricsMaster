@@ -67,7 +67,7 @@ from intent_router import detect_intent
 from services.discovery_service import (
     MOOD_BUTTONS, normalize_mood, get_mood_mix,
     parse_extend_lines, get_recent_picks, blend_vibe, get_extend_recs,
-    interpret_theme, match_theme,
+    interpret_theme, match_theme, get_theme_songs_live, local_theme_topup,
     DECADE_POOLS, normalize_decade, get_throwback,
     get_new_music, resolve_newmusic_genre, get_newmusic_genres,
 )
@@ -4949,7 +4949,13 @@ def about_command(update: Update, context: CallbackContext):
             f"💭 Thinking about \"{query}\"… ✨"
         )
         theme = interpret_theme(query)
-        songs = match_theme(theme, 5)
+        # Round 48: live-first — LLM theme songs verified via iTunes, with
+        # the honest local matcher as fallback/top-up.  Never fully local
+        # filler: top-up only uses local songs with a real signal.
+        songs = get_theme_songs_live(theme, query, 5)
+        if len(songs) < 5:
+            seen = {(s['artist'].lower(), s['song'].lower()) for s in songs}
+            songs += local_theme_topup(theme, seen, 5 - len(songs))
         if not songs:
             processing_msg.edit_text(
                 "😓 I couldn't find songs for that theme.\n"
