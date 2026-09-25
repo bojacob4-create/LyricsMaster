@@ -1,0 +1,24 @@
+round: 56
+title: Recommendation display-casing normalization.
+summary: |
+  Source data sometimes arrives all-lowercase ("hate that i made you love me")
+  or ALL-UPPERCASE. The bot now title-cases those at the recommendation
+  pipeline exit; intentional mixed-case stylization is left untouched.
+  Covers the /recommend card, its song buttons, "More like this", and the
+  song-card "Similar Songs" button (all share one pipeline).
+tests:
+  - name: the reported case — re-run your screenshot query
+    section: The reported case
+    command: /recommend Taylor Swift - Love Story
+    expect: The 5 recommendations render with every artist and title in Title Case — "Ariana Grande — Hate That I Made You Love Me" if she appears (she did in your screenshot). No all-lowercase song line anywhere on the card, and each song button under "Recommended Songs" is title-cased too.
+    unit_only: false
+  - name: more like this stays clean
+    section: Generalization
+    command: /recommend Taylor Swift - Love Story → tap "🔄 More like this"
+    expect: 5 fresh picks (different artists), all Title Case on card and buttons. No lowercase leaks on the second serving either.
+    unit_only: false
+  - name: song-card similar songs shares the fix
+    section: Generalization
+    command: /song Adele - Hello → tap "🎧 Similar Songs"
+    expect: Same behavior — every recommended song title-cased on card and buttons. This proves the button path runs through the same normalized pipeline, not a separate one.
+    unit_only: false
