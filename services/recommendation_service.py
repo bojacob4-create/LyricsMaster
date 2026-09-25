@@ -7,6 +7,7 @@ import time
 import unicodedata
 from functools import lru_cache
 from typing import List, Dict, Optional
+from utils import normalize_display_case
 
 logger = logging.getLogger(__name__)
 
@@ -3696,6 +3697,18 @@ def _get_similar_songs_uncached(artist: str, song: str, mood: str,
                 f"{r.get('artist', '?')} - {r.get('name', '?')}"
                 for r in merged)
             logger.info(f"[REC] Picks for '{artist} - {song}': {_picks}")
+            # Round 56: normalize display casing once at the pipeline exit.
+            # All-lower/UPPER source artifacts ("hate that i made you love
+            # me") become Title Case; intentional mixed-case stylization is
+            # untouched. Covers the card, buttons, "more like this", the
+            # no-lyrics similar view, and stats logging — they all consume
+            # these dicts.
+            for r in merged:
+                if isinstance(r, dict):
+                    if r.get('artist'):
+                        r['artist'] = normalize_display_case(r['artist'])
+                    if r.get('name'):
+                        r['name'] = normalize_display_case(r['name'])
             return merged
 
         logger.info(f"[REC] All live sources empty for '{artist} - {song}'")
@@ -3748,7 +3761,13 @@ def format_recommendations(recommendations: List[Dict], based_on: str = None) ->
     lines = []
     for i, song in enumerate(recommendations, 1):
         emoji = ['🔥', '✨', '💫', '🎶', '⭐'][i - 1] if i <= 5 else '🎵'
-        lines.append(f"{emoji} {song['artist']} — {song['name']}")
+        # Round 56: normalize here too — the pipeline already normalizes,
+        # but any future caller handing format_recommendations raw source
+        # dicts gets clean titles as well (idempotent, so double application
+        # is a no-op).
+        lines.append(
+            f"{emoji} {normalize_display_case(song['artist'])} — "
+            f"{normalize_display_case(song['name'])}")
 
     body   = '\n'.join(lines)
     # Round 15: no text-command hints here — the message already ships

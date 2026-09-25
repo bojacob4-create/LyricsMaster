@@ -317,6 +317,26 @@ def _count_mood_hits(lyrics_lower: str, normalize: bool = False) -> Dict:
     return counts
 
 
+def normalize_display_case(s):
+    """Title-case strings that are uniformly cased (all-lowercase or
+    ALL-UPPERCASE) — typically source-data artifacts like
+    'hate that i made you love me'. Mixed-case strings are returned
+    untouched (intentional stylization is preserved). Apostrophe-safe:
+    "don't" -> "Don't", never "Don'T". Non-strings pass through.
+    Idempotent: normalizing twice is the same as once."""
+    if not isinstance(s, str) or not s:
+        return s
+    letters = [c for c in s if c.isalpha()]
+    if not letters:
+        return s
+    if all(c.islower() for c in letters) or all(c.isupper() for c in letters):
+        # [^\W\d_] = unicode letters, so "BEYONCÉ" -> "Beyoncé" (not "BeyoncÉ").
+        # Apostrophe group keeps "don't" -> "Don't" (never "Don'T").
+        return re.sub(r"[^\W\d_]+(?:['\u2019][^\W\d_]+)?",
+                      lambda m: m.group(0).capitalize(), s)
+    return s
+
+
 def detect_song_mood(lyrics: str) -> str:
     """Detect the mood of a song based on its lyrics.
 
