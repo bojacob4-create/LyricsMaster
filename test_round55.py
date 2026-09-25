@@ -278,6 +278,31 @@ def test_card_quiz_never_played():
     print("  no quiz history -> 'no games yet' (no 0/0)")
 
 
+def test_card_remainder_line():
+    _reset()
+    u = 5515
+    # 5 genres -> top-3 shown, tail named on its own line
+    _tagged(u, "pop", 34)
+    _tagged(u, "rnb", 27)
+    _tagged(u, "afrobeats", 16)
+    _tagged(u, "hiphop", 15)
+    _tagged(u, "country", 8)
+    text = _card_text(u)
+    assert "_…plus 23% across 2 more genres (Hip-Hop, Country)_" in text, text
+    assert "Rnb" not in text and "Hiphop" not in text, text
+    print("  tail line: plus 23% across 2 more genres (Hip-Hop, Country)")
+
+
+def test_card_no_remainder_line():
+    _reset()
+    u = 5516
+    _tagged(u, "pop", 2)
+    _tagged(u, "rnb", 1)
+    text = _card_text(u)
+    assert "more genre" not in text, text
+    print("  <=3 genres -> no tail line")
+
+
 # ── 7. _song_pairs helper ────────────────────────────────────────────────
 
 def test_song_pairs():

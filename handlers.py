@@ -5650,6 +5650,16 @@ def mystats_command(update: Update, context: CallbackContext):
             filled = max(1, min(10, pct // 10))
             bar = '🟩' * filled + '⬜' * (10 - filled)
             lines.append(f"• {genre_display_name(genre)} — {pct}% {bar}")
+        # Round 55b: name the truncated tail so the top-3 not summing to 100
+        # doesn't look like broken math.
+        rest = [(g, p) for g, p in stats.get('top', [])[3:] if p > 0]
+        if rest:
+            rest_pct = sum(p for _, p in rest)
+            shown = ", ".join(genre_display_name(g) for g, _ in rest[:2])
+            tail = "…" if len(rest) > 2 else ""
+            plural = "s" if len(rest) > 1 else ""
+            lines.append(f"_…plus {rest_pct}% across {len(rest)} more "
+                         f"genre{plural} ({shown}{tail})_")
         # Round 55: quiz accuracy as a fraction; distinct songs, not taps.
         answered = stats.get('quiz_answered', 0)
         correct = stats.get('quiz_correct', 0)

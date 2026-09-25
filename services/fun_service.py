@@ -707,8 +707,9 @@ def _taste_label(top: List[tuple], total: int, kinds=None) -> str:
 
 
 def get_music_stats(user_id: int) -> Dict:
-    """{'top': [(genre, pct_int), ...] (top 3, desc, pct of GENRE-TAGGED
-    interactions so they sum to ~100), 'total': int (all interactions),
+    """{'top': [(genre, pct_int), ...] (ALL genres, desc, pct of GENRE-TAGGED
+    interactions so they sum to ~100 — callers slice what they show),
+    'total': int (all interactions),
     'songs_explored': int (distinct songs served), 'quiz_correct': int,
     'quiz_answered': int, 'label': str}. Never raises."""
     try:
@@ -726,7 +727,7 @@ def get_music_stats(user_id: int) -> Dict:
         genre_total = sum(genres.values())
         if genre_total > 0:
             ranked = sorted(genres.items(), key=lambda kv: kv[1],
-                            reverse=True)[:3]
+                            reverse=True)
             top = [(g, int(round(c / genre_total * 100))) for g, c in ranked]
         return {"top": top, "total": total,
                 "songs_explored": len(songs) if isinstance(songs, dict) else 0,
