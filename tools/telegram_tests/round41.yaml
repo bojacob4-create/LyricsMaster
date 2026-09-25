@@ -41,7 +41,7 @@ tests:
     command: /playlist qwertyuiop
     expect: "😕 Couldn't find any songs for "qwertyuiop"." — no empty card, no crash
     unit_only: false
-  - name: "Tap any \U0001F3B5 song button under the playlist"
+  - name: Tap any 🎵 song button under the playlist
     section: buttons
     expect: The song dashboard opens (lyrics / MP3 / video buttons), matching that song
     unit_only: false
