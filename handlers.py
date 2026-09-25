@@ -56,6 +56,10 @@ from services.artist_service import (
     get_top_by_genre, format_top_songs, get_available_genres, get_random_song,
     resolve_genre_key
 )
+from services.playlist_service import (
+    parse_playlist_args, build_artist_playlist, format_playlist,
+    PLAYLIST_DEFAULT_COUNT, PLAYLIST_MAX_COUNT,
+)
 from input_parser import parse_song_query, search_lyrics_with_fallback, clean_input
 from intent_router import detect_intent
 
@@ -153,6 +157,7 @@ def start_command(update: Update, context: CallbackContext):
         "▫️ */throwback* — 80s / 90s / 2000s / 2010s gems\n"
         "▫️ */newmusic* — What's hot right now\n"
         "▫️ */top* — Top songs by genre\n"
+        "▫️ */playlist [artist] [1-15]* — All-time + new + trending mix\n"
         "▫️ */trending* — Trending songs now\n"
         "▫️ */artist* — Quick artist profile\n"
         "▫️ */wiki* — Artist Wikipedia info\n"
@@ -214,6 +219,7 @@ def help_command(update: Update, context: CallbackContext):
         "▫️ */throwback* — 80s / 90s / 2000s / 2010s gems 🕺\n"
         "▫️ */newmusic* — What's hot right now 🔥\n"
         "▫️ */top* — Top songs by genre\n"
+        "▫️ */playlist [artist] [1-15]* — All-time + new + trending mix\n"
         "▫️ */artist* — Quick artist profile\n"
         "▫️ */youtube* — Find the music video\n"
         "▫️ */wiki* — Artist Wikipedia info\n"
@@ -264,7 +270,7 @@ _KNOWN_COMMANDS = [
     'translate', 'analyze', 'stats', 'top', 'trending', 'random', 'quiz',
     'endquiz', 'throwback', 'mood', 'mp3', 'download',
     'subscribe', 'unsubscribe', 'daily', 'duel', 'emoji', 'mystats',
-    'badges', 'wiki', 'about', 'newmusic', 'extend', 'cancel',
+    'badges', 'wiki', 'about', 'newmusic', 'extend', 'cancel', 'playlist',
 ]
 # NOTE: 'decade' is intentionally absent — it is a callback-button action
 # (decade_buttons → throwback_command), not a slash command. Listing it
@@ -4396,6 +4402,67 @@ def top_command(update: Update, context: CallbackContext):
         logger.error(f"Error in top command for user {user_id}: {str(e)}")
         update.message.reply_text(
             "😓 Couldn't fetch top songs right now.\n"
+            "Please try again! 🔄"
+        )
+
+
+def playlist_command(update: Update, context: CallbackContext):
+    """Handle /playlist — artist playlist blending all-time + new + trending.
+
+    /playlist Tyla       -> 12 songs (default)
+    /playlist Tyla 13    -> 13 songs
+    /playlist Tyla 100   -> capped at 15, says so honestly
+    A trailing number that is really part of the artist name
+    ("Blink 182") is retried as the full string when the stripped
+    artist yields nothing.
+    """
+    user_id = update.effective_user.id
+    try:
+        args = context.args or []
+        artist, count, capped, full_fallback = parse_playlist_args(args)
+        logger.info(f"User {user_id} requested playlist: artist='{artist}' count={count}")
+
+        if not artist:
+            update.message.reply_text(
+                "🎧 Artist Playlist\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Usage: /playlist [artist] [number]\n\n"
+                "A mix of all-time favorites, new releases,\n"
+                "and what's trending now.\n\n"
+                "Examples:\n"
+                "• /playlist Tyla\n"
+                "• /playlist Tyla 13"
+            )
+            return
+
+        update.message.chat.send_action(action="typing")
+
+        display, songs, meta = build_artist_playlist(artist, count)
+        if not songs and full_fallback:
+            # The trailing number may be part of the artist name.
+            display, songs, meta = build_artist_playlist(full_fallback, count)
+
+        if not songs:
+            update.message.reply_text(
+                f"😕 Couldn't find any songs for \"{artist}\".\n"
+                "Check the spelling and try again!"
+            )
+            return
+
+        try:
+            markup = song_list_buttons(songs) if songs else None
+        except Exception:
+            markup = None
+        update.message.reply_text(
+            format_playlist(display, songs, capped=capped, meta=meta),
+            reply_markup=markup,
+        )
+        logger.info(f"Sent {len(songs)}-song playlist for '{display}' to user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error in playlist command for user {user_id}: {str(e)}")
+        update.message.reply_text(
+            "😓 Couldn't build that playlist right now.\n"
             "Please try again! 🔄"
         )
 

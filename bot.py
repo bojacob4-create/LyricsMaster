@@ -28,7 +28,7 @@ from handlers import (
     subscribe_daily_command, unsubscribe_daily_command,
     wiki_command,
     artist_command, trending_command,
-    song_command, top_command, random_command,
+    song_command, top_command, random_command, playlist_command,
     natural_language_handler, callback_query_handler,
     unknown_command_handler, cancel_command,
     # Round 4: discovery + fun
@@ -148,6 +148,7 @@ class TelegramBotWorker:
                 BotCommand("translate",   "🌍 Translate lyrics to any language"),
                 BotCommand("artist",      "🎤 Quick artist profile"),
                 BotCommand("top",         "🔝 Top songs by genre"),
+                BotCommand("playlist",    "🎧 Artist playlist: all-time + new + trending"),
                 BotCommand("random",      "🎲 Random song discovery"),
                 BotCommand("youtube",     "🎬 Find the music video"),
                 BotCommand("mp3",         "🎧 Get the song as an MP3"),
@@ -389,6 +390,7 @@ class TelegramBotWorker:
             dp.add_handler(CommandHandler("trending",    trending_command))
             dp.add_handler(CommandHandler("song",        song_command))
             dp.add_handler(CommandHandler("top",         top_command))
+            dp.add_handler(CommandHandler("playlist",    playlist_command))
             dp.add_handler(CommandHandler("random",      random_command))
             # Round 4: discovery + fun
             dp.add_handler(CommandHandler("mood",        mood_command))
