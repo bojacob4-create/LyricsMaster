@@ -708,7 +708,8 @@ def _taste_label(top: List[tuple], total: int, kinds=None) -> str:
 
 def get_music_stats(user_id: int) -> Dict:
     """{'top': [(genre, pct_int), ...] (ALL genres, desc, pct of GENRE-TAGGED
-    interactions so they sum to ~100 — callers slice what they show),
+    interactions, largest-remainder rounded so they sum to exactly 100 —
+    callers slice what they show),
     'total': int (all interactions),
     'songs_explored': int (distinct songs served), 'quiz_correct': int,
     'quiz_answered': int, 'label': str}. Never raises."""
@@ -728,7 +729,19 @@ def get_music_stats(user_id: int) -> Dict:
         if genre_total > 0:
             ranked = sorted(genres.items(), key=lambda kv: kv[1],
                             reverse=True)
-            top = [(g, int(round(c / genre_total * 100))) for g, c in ranked]
+            # Round 55b: largest-remainder — floor every genre, then hand the
+            # leftover points to the biggest fractional parts, so the shown
+            # percentages always sum to exactly 100 (never 99/101). Ties keep
+            # count-desc order (sorted() is stable).
+            exact = [(g, c / genre_total * 100) for g, c in ranked]
+            floors = [int(p) for _, p in exact]
+            leftover = 100 - sum(floors)
+            order = sorted(range(len(exact)),
+                           key=lambda i: exact[i][1] - floors[i],
+                           reverse=True)
+            for i in order[:leftover]:
+                floors[i] += 1
+            top = [(g, floors[i]) for i, (g, _) in enumerate(exact)]
         return {"top": top, "total": total,
                 "songs_explored": len(songs) if isinstance(songs, dict) else 0,
                 "quiz_correct": quiz_correct,

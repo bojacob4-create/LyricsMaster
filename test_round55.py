@@ -303,6 +303,37 @@ def test_card_no_remainder_line():
     print("  <=3 genres -> no tail line")
 
 
+# ── 8. largest-remainder: percentages always sum to exactly 100 ──────────
+
+def test_largest_remainder_sums_100():
+    _reset()
+    u = 5517
+    # the reporter's real counts: naive rounding sums to 101
+    for g, n in [("pop", 38), ("rnb", 31), ("afrobeats", 18),
+                 ("hiphop", 11), ("country", 9), ("electronic", 2),
+                 ("rock", 2), ("latin", 1), ("rap", 1)]:
+        _tagged(u, g, n)
+    ms = f.get_music_stats(u)
+    top = dict(ms["top"])
+    assert sum(top.values()) == 100, ms["top"]
+    # country (.96) outranks pop (.63) for the leftover point
+    assert top["pop"] == 33 and top["country"] == 8, ms["top"]
+    assert top["rnb"] == 27 and top["afrobeats"] == 16, ms["top"]
+    print("  real-world 101-case -> exactly 100 (pop 33, country 8)")
+
+
+def test_largest_remainder_three_way_tie():
+    _reset()
+    u = 5518
+    for g in ["pop", "rnb", "afrobeats"]:
+        _tagged(u, g, 1)
+    ms = f.get_music_stats(u)
+    pcts = [p for _, p in ms["top"]]
+    assert sum(pcts) == 100, pcts
+    assert sorted(pcts, reverse=True) == [34, 33, 33], pcts
+    print("  1/1/1 -> 34/33/33, sums to exactly 100")
+
+
 # ── 7. _song_pairs helper ────────────────────────────────────────────────
 
 def test_song_pairs():
