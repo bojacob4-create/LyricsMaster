@@ -5093,19 +5093,15 @@ def newmusic_command(update: Update, context: CallbackContext):
             return
 
         if is_live:
-            header = ("🔥 *Hot Right Now*\n"
-                      "Fresh releases first, then what's charting:")
-            footer_note = ("\n_Freshest first — "
-                           "🆕 marks releases from the last 60 days._")
+            header = "🔥 *Hot Right Now*"
         else:
+            # Honesty label stays: the only case where the card is NOT live.
             header = ("🔥 *Hot Right Now*\n"
                       "Popular picks while the live chart refreshes:")
-            footer_note = ("_🆕 marks releases from the last 60 days._"
-                           if any(s.get('is_new') for s in songs) else "")
         lines = [header, "━━━━━━━━━━━━━━━━━━━━━", ""]
         rank_emoji = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣']
-        # De-noise: a ↳ note shared by every song is stated once in the
-        # header already — only a differing note is worth rendering
+        # De-noise: a ↳ note identical across the whole card carries no
+        # information — only a differing note is worth rendering
         # (same contract as /top's dominant-note filter, round 42).
         common_note = _dominant_note(songs)
         for i, s in enumerate(songs, 1):
@@ -5117,8 +5113,6 @@ def newmusic_command(update: Update, context: CallbackContext):
                 lines.append(f"   ↳ {note}")
         lines += ["", "━━━━━━━━━━━━━━━━━━━━━",
                   "🔥 /newmusic — refresh  •  🎲 /random — surprise me"]
-        if footer_note:
-            lines.append(footer_note)
         update.message.reply_text(
             '\n'.join(lines),
             parse_mode='Markdown',

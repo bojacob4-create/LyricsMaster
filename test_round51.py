@@ -84,7 +84,11 @@ finally:
     d._get_live_genre_songs = _old_live
 
 # ── rotation over the no-genre trending path ────────────────────────
+# Round 53: the bare path now prefers the deep US chart; the old 10-song
+# trending slice is only the fallback.  Patch the deep chart (primary).
+_old_deep = d.get_us_chart_deep
 _old_trend = d.get_trending_songs
+d.get_us_chart_deep = lambda: list(LIVE12[:10])
 d.get_trending_songs = lambda: (list(LIVE12[:10]), True)
 try:
     d._NEWMUSIC_SEEN.clear()
@@ -95,6 +99,7 @@ try:
           not set(k(t1)) & set(k(t2))
           and k(t2) == [(f"Artist{i}", f"Song{i}") for i in range(5, 10)])
 finally:
+    d.get_us_chart_deep = _old_deep
     d.get_trending_songs = _old_trend
 
 # ── regression: is_new flags still attached ────────────────────────

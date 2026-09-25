@@ -39,6 +39,7 @@ from services.artist_service import (
     APPLE_GENRE_MAP,
     _recent_random_picks,
     get_trending_songs,
+    get_us_chart_deep,
     _get_live_genre_songs,
 )
 from services.quiz_service import get_quiz_songs
@@ -1873,6 +1874,23 @@ def _get_new_music_candidates(
                 picks = _rng.sample(pool, min(n, len(pool)))
                 return ([dict(s) for s in picks], False, resolved)
             return ([], False, resolved)
+
+        # Bare path: the FULL US chart, deduped by artist (~90 deep) — the
+        # same source as the old 10-song trending slice, so rotation finally
+        # has room (round 52 deepened the genre slices; this deepens the
+        # bare path the same way).  get_trending_songs()' contract is
+        # untouched — /trending keeps its exact behavior.
+        try:
+            deep = get_us_chart_deep()
+        except Exception:
+            deep = []
+        if deep:
+            out = []
+            for s in deep:
+                d = dict(s)
+                d['note'] = 'Charting now on Apple Music'
+                out.append(d)
+            return (out, True, "")
 
         try:
             songs, is_live = get_trending_songs()

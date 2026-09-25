@@ -744,6 +744,31 @@ def get_trending_songs() -> tuple:
     return pool[:8], False
 
 
+def get_us_chart_deep() -> List[Dict]:
+    """Full US Apple chart, deduped by artist (~90 songs).
+
+    Same source as the 10-song trending slice above, just deep — gives
+    /newmusic's bare path the same rotation room the genre slices got in
+    round 52.  Does NOT change get_trending_songs()' contract (used by
+    /trending).  [] when the chart fetch fails.  Never raises.
+    """
+    try:
+        raw = _get_cached_chart('us')
+    except Exception:
+        raw = None
+    out, seen = [], set()
+    for s in raw or []:
+        try:
+            key = str(s.get('artist', '')).lower().strip()
+            if key and key not in seen:
+                seen.add(key)
+                out.append({'artist': s.get('artist', ''),
+                            'song': s.get('song', '')})
+        except Exception:
+            continue
+    return out
+
+
 def _fetch_lastfm_tag_tracks(tag: str, limit: int = 25) -> List[Dict]:
     """Last.fm tag.getTopTracks — what the world's listeners are playing now.
 

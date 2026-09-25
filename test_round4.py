@@ -103,7 +103,9 @@ check("throwback: 5 picks", len(tb) == 5 and all(s.get("artist") and s.get("song
 # ── 5. /newmusic ──────────────────────────────────────────────────────────
 _old_trend = d.get_trending_songs
 _old_genre = d._get_live_genre_songs
+_old_deep = d.get_us_chart_deep  # round 53: bare path tries deep chart first
 d.get_trending_songs = lambda: ([], False)   # chart down
+d.get_us_chart_deep = lambda: []             # chart down
 d._get_live_genre_songs = _boom
 try:
     nm, live = d.get_new_music(None, 5)
@@ -114,6 +116,7 @@ try:
           len(nm2) == 5 and live2 is False, f"got {len(nm2)}, live={live2}")
 finally:
     d.get_trending_songs = _old_trend
+    d.get_us_chart_deep = _old_deep
     d._get_live_genre_songs = _old_genre
 
 # ── Fun service: redirect JSON to /tmp ────────────────────────────────────

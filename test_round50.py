@@ -78,8 +78,13 @@ try:
           f"cutoff={CUTOFF}")
 
     # ── get_new_music shape (stubbed chart + lookup) ──────────────
+    # Round 53: the bare path prefers the deep US chart; stub it (primary).
     d._itunes_earliest_release = fake_release
+    _old_deep = d.get_us_chart_deep
     _old_trend = d.get_trending_songs
+    d.get_us_chart_deep = lambda: (
+        [{"artist": "A", "song": "Brand New Hit"},
+         {"artist": "B", "song": "Old Classic"}])
     d.get_trending_songs = lambda: (
         [{"artist": "A", "song": "Brand New Hit"},
          {"artist": "B", "song": "Old Classic"}], True)
@@ -91,9 +96,11 @@ try:
               and songs[1]["is_new"] is False,
               str([(s["song"], s.get("is_new")) for s in songs]))
     finally:
+        d.get_us_chart_deep = _old_deep
         d.get_trending_songs = _old_trend
 
     # ── fallback path also annotated ──────────────────────────────
+    d.get_us_chart_deep = lambda: []
     d.get_trending_songs = lambda: ([], False)
     try:
         songs, is_live = d.get_new_music(None, 3)
@@ -101,6 +108,7 @@ try:
               is_live is False and len(songs) == 3
               and all("is_new" in s for s in songs))
     finally:
+        d.get_us_chart_deep = _old_deep
         d.get_trending_songs = _old_trend
 finally:
     d._itunes_earliest_release = _real
