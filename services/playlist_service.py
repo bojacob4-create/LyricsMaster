@@ -21,6 +21,7 @@ from itertools import zip_longest
 import requests
 
 from services.artist_service import _get_cached_chart
+from services.youtube_service import _clean_song_title
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,17 @@ def _tidy_caps(title):
         return re.sub(r"[A-Za-z]+('[A-Za-z]+)?",
                       lambda m: m.group(0).capitalize(), t)
     return t
+
+
+def _dedup_key(title):
+    """Dedup key: recording qualifiers stripped, then lowercased.
+
+    'Stan (Live At Wembley 2014)' and 'Stan' are the same song — the
+    round-28 cleaner strips the live qualifier so cross-slice duplicates
+    can't slip through exact-match dedup. Display titles are untouched;
+    only the key is normalized.
+    """
+    return _clean_song_title(title).lower().strip()
 
 
 def _lastfm_all_time(artist, limit):
@@ -217,7 +229,7 @@ def build_artist_playlist(artist_query, count):
         for nm in names:
             if len(out) >= quota:
                 break
-            key = (nm or '').strip().lower()
+            key = _dedup_key(nm)
             if not key or key in seen:
                 continue
             seen.add(key)
@@ -236,7 +248,7 @@ def build_artist_playlist(artist_query, count):
                              (trending, NOTE_TRENDING),
                              ([t for t, _ in new_pairs], NOTE_NEW)):
         for nm in pool_names:
-            key = (nm or '').strip().lower()
+            key = _dedup_key(nm)
             if key and key not in seen:
                 seen.add(key)
                 leftovers.append({'artist': display,
