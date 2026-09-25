@@ -1063,7 +1063,9 @@ _THEME_SYSTEM = (
     'lowercase words from the theme, no stopwords), and "genres" (array of '
     'zero or more of: afrobeats, pop, rap, rnb, rock, latin, country, soul, '
     'kpop). Example: {"mood": "relaxed", "keywords": ["fresh", "start", '
-    '"new", "beginnings"], "genres": []}'
+    '"new", "beginnings"], "genres": []}. If the input is gibberish, '
+    'meaningless, or not a recognizable theme, mood, or occasion, reply '
+    'with mood "none", no keywords, and no genres.'
 )
 
 _KNOWN_GENRES = set(GENRE_TOP_SONGS.keys())
@@ -1115,7 +1117,12 @@ def _validate_theme(data) -> Optional[Dict]:
     try:
         if not isinstance(data, dict):
             return None
-        mood = normalize_mood(str(data.get('mood') or '')) or 'relaxed'
+        # Round 48b: the model replies mood "none" for gibberish/meaningless
+        # input — honor it as no mood.  (The old `or 'relaxed'` default would
+        # resurrect a guessed mood and let calm-titled songs score.)
+        raw_mood = str(data.get('mood') or '').lower().strip()
+        mood = None if raw_mood == 'none' else (
+            normalize_mood(raw_mood) or 'relaxed')
         kws = [str(k).lower().strip() for k in (data.get('keywords') or [])
                if str(k).strip()]
         kws = [k for k in kws if k not in _STOPWORDS][:6]

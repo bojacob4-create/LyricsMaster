@@ -176,6 +176,51 @@ finally:
 import inspect as _inspect
 check("prompt: instructs the LLM to refuse gibberish",
       '{"songs": []}' in _inspect.getsource(d._llm_theme_songs))
+check("prompt: theme parser refuses gibberish with mood none",
+      'mood "none"' in d._THEME_SYSTEM)
+
+# ── gibberish end-to-end: theme parser says none -> no local signal ──
+check("validate: mood none -> None",
+      d._validate_theme({"mood": "none", "keywords": [],
+                         "genres": []})["mood"] is None)
+check("validate: real moods still normalize",
+      d._validate_theme({"mood": "party", "keywords": ["dance"],
+                         "genres": []})["mood"] == "party")
+
+
+class _FakeResp:
+    def __init__(self, text):
+        self.output_text = text
+
+
+class _FakeResponses:
+    def __init__(self, text):
+        self._text = text
+
+    def create(self, **kw):
+        return _FakeResp(self._text)
+
+
+class _FakeClient:
+    def __init__(self, text):
+        self.responses = _FakeResponses(text)
+
+
+_old_client = nlp._get_client
+nlp._get_client = lambda: _FakeClient(
+    '{"mood": "none", "keywords": ["hdhhdhheeh"], "genres": []}')
+try:
+    theme = d.interpret_theme("hdhhdhheeh")
+    check("e2e gibberish: theme has no mood",
+          theme.get("mood") is None, str(theme))
+    scored, _ = d._match_theme_scored(theme)
+    check("e2e gibberish: no local song scores",
+          not scored or scored[0][0] <= 0,
+          str(scored[0][:3] if scored else None))
+    check("e2e gibberish: top-up empty",
+          d.local_theme_topup(theme, set(), 5) == [])
+finally:
+    nlp._get_client = _old_client
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
