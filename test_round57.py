@@ -88,6 +88,15 @@ check_true("chromatic accent stays chromatic",
 check_true("accent is a 3-tuple",
            isinstance(ac, tuple) and len(ac) == 3)
 
+# ── v3: QR blends into the card (no heavy white tile) ─────────────────────
+png_qr = sc.render_share_card("Adele", "Hello", ["line one"], None,
+                              "https://t.me/MGLyricsbot?start=share_x")
+im_qr = Image.open(io.BytesIO(png_qr)).convert("RGB")
+crop = im_qr.crop((100, 1330, 440, 1700))  # QR zone, left bottom
+px = list(crop.getdata())
+avg = sum(sum(p) // 3 for p in px) / len(px)
+check_true("qr zone stays dark (no white block)", avg < 130)
+
 # ── Render ─────────────────────────────────────────────────────────────────
 art = Image.new("RGB", (600, 600), (40, 80, 200))
 png = sc.render_share_card("Adele", "Hello", ["line one", "line two"], art,

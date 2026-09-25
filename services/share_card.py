@@ -368,9 +368,9 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
     img.alpha_composite(glow2, (W // 2 - 475, 1050))
 
     # Brand mark (no emoji — DejaVu has no color-emoji glyphs).
-    brand = _font(_FONT_BOLD, 30)
+    brand = _font(_FONT_BOLD, 26)
     spaced = " ".join("LYRICS MASTER")
-    _ctext(draw, W // 2, 150, spaced, brand, (168, 168, 184), shadow=False)
+    _ctext(draw, W // 2, 152, spaced, brand, (126, 126, 140), shadow=False)
 
     # Excerpt, auto-fit into the central zone.
     font, wrapped = _fit_excerpt(draw, excerpt_lines, max_w=920, max_h=660)
@@ -402,34 +402,38 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
             _ctext(draw, W // 2, ay, ln, tf, (205, 205, 218))
             ay += 58
 
-    # Bottom zone (kept above y~1760 so story UIs don't cover it),
-    # split by a vertical divider: QR left, album art right.
+    # Bottom zone (kept above y~1760 so story UIs don't cover it):
+    # QR code floating light on the left, album art anchoring the right.
+    # No divider — whitespace keeps the section open and fluid.
     zone_y = 1310
-    divider_top, divider_bottom = zone_y + 10, zone_y + 430
-    draw.line([W // 2, divider_top, W // 2, divider_bottom],
-              fill=accent + (110,), width=3)
 
-    # QR tile (left) with a vibrant border.
+    # QR (left): white modules drawn straight onto the card — no white
+    # tile, no border, so it blends into the dark gradient. A soft dark
+    # halo sits behind it so scanners always see strong contrast,
+    # whatever color glow is underneath.
     qr = qrcode.QRCode(box_size=10, border=2)
     qr.add_data(deep_link)
     qr.make(fit=True)
-    qimg = qr.make_image(fill_color="black",
-                         back_color="white").convert("RGB")
-    qimg = qimg.resize((292, 292), Image.NEAREST)
-    tile = Image.new("RGB", (332, 332), (255, 255, 255))
-    tile.paste(qimg, (20, 20))
-    tile_r = _rounded(tile, 34)
-    # Vibrant border: accent rounded-rect behind the white tile.
-    border = Image.new("RGBA", (348, 348), (0, 0, 0, 0))
-    ImageDraw.Draw(border).rounded_rectangle(
-        [0, 0, 348, 348], radius=40, fill=accent + (255,))
-    qx, qy = 270 - 174, zone_y + 20
-    img.alpha_composite(border, (qx, qy))
-    img.alpha_composite(tile_r, (qx + 8, qy + 8))
+    matrix = qr.get_matrix()  # includes the quiet-zone border
+    n = len(matrix)
+    box = max(2, 250 // n)
+    size = box * n
+    art_cy = zone_y + 14 + 180  # vertical center of the album art
+    qy0 = int(art_cy - size / 2)
+    qx0 = 270 - size // 2
+    halo = _radial_glow(470, (0, 0, 0), peak_alpha=120).filter(
+        ImageFilter.GaussianBlur(55))
+    img.alpha_composite(halo, (270 - 235, int(art_cy) - 235))
+    for r in range(n):
+        for c in range(n):
+            if matrix[r][c]:
+                draw.rectangle([qx0 + c * box, qy0 + r * box,
+                                qx0 + (c + 1) * box, qy0 + (r + 1) * box],
+                               fill=(246, 246, 250))
 
-    cap = _font(_FONT_REG, 30)
-    _ctext(draw, 270, qy + 372, "Scan to open this song", cap,
-           (150, 150, 164), shadow=False)
+    cap = _font(_FONT_REG, 28)
+    _ctext(draw, 270, qy0 + size + 16, "Scan to open this song", cap,
+           (140, 140, 154), shadow=False)
 
     # Album art (right) with a vibrant glow shadow behind it.
     if artwork_img is not None:
