@@ -1824,7 +1824,8 @@ _THROWBACK_SEEN: Dict[tuple, set] = {}
 # New music — Apple chart (1-hour cached) with honest curated fallback
 # ──────────────────────────────────────────────────────────────────────────────
 def get_new_music(genre: Optional[str] = None,
-                  n: int = 5) -> Tuple[List[Dict], bool]:
+                  n: int = 5,
+                  user_id: Optional[int] = None) -> Tuple[List[Dict], bool]:
     """([{'artist','song','note','is_new'}], is_live).
 
     Uses artist_service.get_trending_songs() (live Apple chart, 1-hour cache)
@@ -1834,14 +1835,20 @@ def get_new_music(genre: Optional[str] = None,
     is_live=False — the 'note' always labels the source honestly.
     Every song also carries 'is_new' (released within NEWMUSIC_NEW_YEARS),
     resolved via free iTunes releaseDate lookups.  Never raises.
+
+    Repeated calls with the same user_id rotate through the live slice
+    (per-genre no-repeat memory, cycling when exhausted) instead of
+    serving the identical top-5 every time within the chart cache window.
+    Without a user_id the first window is served, as before.
     """
-    songs, is_live = _get_new_music_raw(genre, n)
+    songs, is_live = _get_new_music_raw(genre, n, user_id)
     return _annotate_new_flags(songs), is_live
 
 
 def _get_new_music_raw(genre: Optional[str] = None,
-                       n: int = 5) -> Tuple[List[Dict], bool]:
-    """Inner chart/pool fetch for get_new_music (no recency annotation)."""
+                       n: int = 5,
+                       user_id: Optional[int] = None) -> Tuple[List[Dict], bool]:
+    """Inner fetch; live paths rotate per user, pool fallbacks stay random."""
     try:
         n = max(1, int(n or 5))
     except Exception:
@@ -1856,7 +1863,9 @@ def _get_new_music_raw(genre: Optional[str] = None,
                 except Exception:
                     live = None
                 if live:
-                    return ([dict(s) for s in live[:n]], True)
+                    cands = [dict(s) for s in live]
+                    return (_newmusic_rotate(cands, user_id, resolved, n),
+                            True)
             pool = GENRE_TOP_SONGS.get(resolved)
             if pool:
                 picks = _rng.sample(pool, min(n, len(pool)))
@@ -1870,13 +1879,13 @@ def _get_new_music_raw(genre: Optional[str] = None,
         songs = songs or []
         if songs:
             out = []
-            for s in songs[:n]:
+            for s in songs:
                 d = dict(s)
                 d.setdefault('note',
                              'Charting now on Apple Music' if is_live
                              else 'Popular right now')
                 out.append(d)
-            return (out, bool(is_live))
+            return (_newmusic_rotate(out, user_id, "", n), bool(is_live))
 
         # Chart empty/down: curated fallback, honestly labeled.
         picks = _rng.sample(TRENDING_SONGS, min(n, len(TRENDING_SONGS)))
@@ -1955,6 +1964,48 @@ def _annotate_new_flags(songs: List[Dict]) -> List[Dict]:
         for s in songs:
             s.setdefault("is_new", False)
     return songs
+
+
+# ── /newmusic rotation (round 51) ────────────────────────────────────────
+# Per-(user, genre) no-repeat rotation over the live slice: repeated calls
+# serve the next unseen window in chart order, cycling when exhausted.
+# Memory resets after _NEWMUSIC_ROT_TTL (the chart cache window), so a
+# refreshed chart starts over at the top.  Medals keep meaning "order of
+# what's shown" — the existing contract for these lists.
+_NEWMUSIC_ROT_TTL = 3600
+_NEWMUSIC_SEEN: Dict[tuple, tuple] = {}  # (user_id, genre) -> (ts, [keys])
+
+
+def _newmusic_key(s: Dict) -> tuple:
+    return (str(s.get("artist", "")).lower().strip(),
+            str(s.get("song", "")).lower().strip())
+
+
+def _newmusic_rotate(songs: List[Dict], user_id: Optional[int],
+                     genre_key: Optional[str], n: int) -> List[Dict]:
+    """Next n unseen songs in order; cycles when the slice is exhausted."""
+    import time as _t
+    songs = list(songs or [])
+    if not songs or not user_id:
+        return songs[:n]
+    now = _t.time()
+    mem_key = (user_id, str(genre_key or "").lower().strip())
+    ts, seen = _NEWMUSIC_SEEN.get(mem_key, (0, []))
+    if now - ts > _NEWMUSIC_ROT_TTL:
+        ts, seen = now, []
+    seen_set = set(seen)
+    unseen = [s for s in songs if _newmusic_key(s) not in seen_set]
+    if len(unseen) < n:
+        # Cycle: remaining unseen first, then start over in chart order.
+        unseen = unseen + [s for s in songs
+                           if _newmusic_key(s) in seen_set]
+        seen = []
+    picks = unseen[:n]
+    _NEWMUSIC_SEEN[mem_key] = (
+        ts, (seen + [_newmusic_key(s) for s in picks])[-60:])
+    if len(_NEWMUSIC_SEEN) > 500:
+        _NEWMUSIC_SEEN.pop(next(iter(_NEWMUSIC_SEEN)))
+    return picks
 
 
 def resolve_newmusic_genre(genre: Optional[str]) -> Optional[str]:

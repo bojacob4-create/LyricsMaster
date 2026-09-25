@@ -5070,7 +5070,7 @@ def newmusic_command(update: Update, context: CallbackContext):
     try:
         genre = " ".join(context.args or []).strip() or None
         update.message.chat.send_action(action="typing")
-        songs, is_live = get_new_music(genre, 5)
+        songs, is_live = get_new_music(genre, 5, user_id)
         if not songs:
             # Round 39: tell "unknown genre" apart from "charts are down" —
             # get_new_music returns ([], False) for both, and blaming the

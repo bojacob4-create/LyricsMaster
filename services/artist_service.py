@@ -763,8 +763,8 @@ def _get_live_genre_songs(genre_key: str) -> Optional[List[Dict]]:
     """All-live genre top list.
 
     Tier 1: the genre's home Apple chart slice (kpop -> Korea, afrobeats ->
-    Nigeria, rest -> US), up to 7, artists deduped.
-    Tier 2: Last.fm tag tracks top the card up to 7 when the slice is thin.
+    Nigeria, rest -> US), up to 12, artists deduped.
+    Tier 2: Last.fm tag tracks top the card up to 12 when the slice is thin.
     Returns None when EVERY live source fails — callers show an honest
     charts-unreachable message; the static pool is never served here.
     """
@@ -794,13 +794,13 @@ def _get_live_genre_songs(genre_key: str) -> Optional[List[Dict]]:
                 'song': item['song'],
                 'note': 'Charting now on Apple Music',
             })
-            if len(songs) >= 7:
+            if len(songs) >= 12:
                 break
 
     if len(songs) < 7:
         songs.extend(_get_lastfm_genre_songs(
             genre_key, exclude_artists=seen_artists,
-            exclude_songs=seen_songs, limit=7 - len(songs)))
+            exclude_songs=seen_songs, limit=12 - len(songs)))
 
     return songs if songs else None
 
