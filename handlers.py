@@ -1,4 +1,5 @@
 import logging
+import io
 import os
 import re
 import requests
@@ -149,6 +150,25 @@ def _award_badge_line(user_id: int, badge_id: str) -> str:
 def start_command(update: Update, context: CallbackContext):
     """Send a message when the command /start is issued."""
     logger.info(f"User {update.effective_user.id} started the bot")
+
+    # Round 57: share-card deep links — t.me/MGLyricsbot?start=share_<token>
+    # reopen the exact song card the QR was generated for.
+    _args = context.args or []
+    if _args and _args[0].startswith("share_"):
+        _token = _args[0][len("share_"):]
+        try:
+            from services.share_card import lookup_share_token
+            _q = lookup_share_token(_token)
+        except Exception:
+            _q = None
+        if _q:
+            logger.info(
+                f"User {update.effective_user.id} arrived via share link "
+                f"(token {_token}): '{_q}'")
+            context.args = _q.split()
+            song_command(update, context)
+            return
+        # Unknown/expired token: fall through to the normal welcome.
 
     user_first_name = update.effective_user.first_name
     # Round 15: /start now covers every command (it used to hide half the
@@ -1688,6 +1708,7 @@ def callback_query_handler(update: Update, context: CallbackContext):
         'song': song_command,
         'similar_nl': similar_nolyrics_command,
         'similar_more_nl': similar_more_nolyrics_command,
+        'sharecard': share_card_command,
         'top': top_command,
         'random': random_command,
         'wiki': wiki_command,
@@ -4201,6 +4222,88 @@ def similar_nolyrics_command(update: Update, context: CallbackContext):
         update.message.reply_text(
             "😓 Something went wrong.\nPlease try again! 🔄"
         )
+
+
+def share_card_command(update: Update, context: CallbackContext):
+    """Handle the '🖼️ Share Card' button — render a branded story-format
+    lyric card (round 57). Cards are cached per song token, so re-shares
+    are instant."""
+    user_id = update.effective_user.id
+    try:
+        query = " ".join(context.args).strip()
+        logger.info(f"User {user_id} share-card request: '{query}'")
+        parts = parse_song_query(query)
+        if parts:
+            artist, song = parts[0]
+        else:
+            artist, song = None, query
+        if not (artist or song):
+            update.message.reply_text(
+                "😕 I couldn't tell which song to make a card for.")
+            return
+
+        update.message.chat.send_action(action="upload_photo")
+        status_msg = update.message.reply_text("🎨 Creating your share card…")
+
+        from services.share_card import (
+            get_share_token, build_share_link, card_cache_path,
+            extract_excerpt, fetch_artwork, render_share_card,
+        )
+        token = get_share_token(artist or song, song or artist)
+        caption_of = lambda a, s: (
+            f"🖼️ {a} — {s}\n"
+            "Share it anywhere — the QR opens this song in @MGLyricsbot ✨")
+        cached = card_cache_path(token)
+        if os.path.exists(cached):
+            status_msg.delete()
+            with open(cached, "rb") as f:
+                update.message.reply_photo(
+                    photo=f, caption=caption_of(artist or song, song or artist))
+            logger.info(f"[sharecard] cache hit for '{query}' (token {token})")
+            return
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            lyr_fut = pool.submit(search_lyrics_with_fallback, query)
+            art_fut = pool.submit(_itunes_track_lookup, artist, song)
+            r_artist, r_song, lyrics, _status = lyr_fut.result()
+            try:
+                art_meta = art_fut.result()
+            except Exception:
+                art_meta = None
+
+        if not lyrics:
+            status_msg.edit_text(
+                "😕 I need lyrics to make a share card for this one.\n"
+                "Try a song with full lyrics! 🎵")
+            return
+
+        use_artist = r_artist or artist or ""
+        use_song = r_song or song or ""
+        excerpt = extract_excerpt(lyrics)
+        if not excerpt:
+            status_msg.edit_text(
+                "😕 I couldn't pull a clean excerpt from these lyrics.")
+            return
+        art_img = fetch_artwork((art_meta or {}).get("artwork"))
+        png = render_share_card(use_artist, use_song, excerpt, art_img,
+                                build_share_link(token))
+        with open(cached, "wb") as f:
+            f.write(png)
+        status_msg.delete()
+        update.message.reply_photo(photo=io.BytesIO(png),
+                                   caption=caption_of(use_artist, use_song))
+        try:
+            log_interaction(user_id, "sharecard")
+        except Exception as _e:
+            logger.debug(f"round57 stats hook failed: {_e}")
+        logger.info(
+            f"[sharecard] served card for '{use_artist} - {use_song}' "
+            f"(token {token})")
+    except Exception as e:
+        logger.error(f"Error in share-card for user {user_id}: {e}",
+                     exc_info=True)
+        update.message.reply_text(
+            "😓 Couldn't create the share card — try again in a moment! 🎨")
 
 
 def similar_more_nolyrics_command(update: Update, context: CallbackContext):

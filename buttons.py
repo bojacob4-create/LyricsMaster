@@ -99,6 +99,9 @@ def song_dashboard_buttons(query):
         [
             InlineKeyboardButton("🎧 MP3", callback_data=_cb("mp3", query)),
         ],
+        [
+            InlineKeyboardButton("🖼️ Share Card", callback_data=_cb("sharecard", query)),
+        ],
     ])
 
 

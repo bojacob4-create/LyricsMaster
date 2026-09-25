@@ -30,4 +30,6 @@ dependencies = [
     "uwsgi>=2.0.28",
     "apscheduler>=3.6.3",
     "openai>=2.29.0",
+    "pillow>=11.0.0",
+    "qrcode>=7.4.2",
 ]
