@@ -395,6 +395,28 @@ def get_top_by_genre(genre_query: str) -> Optional[tuple]:
     return None
 
 
+def _dominant_note(songs: List[Dict]) -> str:
+    """Most common per-song note; ties break by first appearance.
+
+    A song's ↳ note is only worth rendering when it differs from this —
+    the same note repeated under every song is noise (the Sources header
+    already states it once). Missing/blank notes count as ''.
+    """
+    counts: Dict[str, int] = {}
+    order: List[str] = []
+    for s in songs or []:
+        n = (s.get('note') or '').strip()
+        if n not in counts:
+            counts[n] = 0
+            order.append(n)
+        counts[n] += 1
+    best, best_n = '', -1
+    for n in order:
+        if counts[n] > best_n:
+            best, best_n = n, counts[n]
+    return best
+
+
 def format_top_songs(genre: str, songs: List[Dict]) -> str:
     genre_emojis = {
         'afrobeats': '🌍', 'pop': '🎤', 'rap': '🎙️', 'rnb': '💜',
@@ -406,9 +428,14 @@ def format_top_songs(genre: str, songs: List[Dict]) -> str:
 
     lines = []
     rank_emojis = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣']
+    common = _dominant_note(songs)
     for i, song in enumerate(songs):
         rank = rank_emojis[i] if i < len(rank_emojis) else '🎵'
-        lines.append(f"{rank} {song['artist']} — {song['song']}\n   ↳ {song['note']}")
+        note = (song.get('note') or '').strip()
+        if note and note != common:
+            lines.append(f"{rank} {song['artist']} — {song['song']}\n   ↳ {note}")
+        else:
+            lines.append(f"{rank} {song['artist']} — {song['song']}")
 
     body = '\n\n'.join(lines)
 
@@ -702,7 +729,7 @@ def _get_lastfm_genre_songs(genre_key: str, exclude_artists=frozenset(),
     """Fill a thin Apple genre slice with live Last.fm tag tracks.
 
     6h cache per tag. Dedupes against the Apple picks. Every song carries
-    note 'Trending on Last.fm'. [] when Last.fm is down/keyless. Never raises.
+    note 'Popular on Last.fm'. [] when Last.fm is down/keyless. Never raises.
     """
     import time as _time
     tag = LASTFM_GENRE_TAG.get(genre_key)
@@ -726,7 +753,7 @@ def _get_lastfm_genre_songs(genre_key: str, exclude_artists=frozenset(),
         seen_a.add(akey)
         seen_s.add(skey)
         out.append({'artist': t['artist'], 'song': t['song'],
-                    'note': 'Trending on Last.fm'})
+                    'note': 'Popular on Last.fm'})
         if len(out) >= limit:
             break
     return out
@@ -781,10 +808,11 @@ def _get_live_genre_songs(genre_key: str) -> Optional[List[Dict]]:
 def format_trending(songs: List[Dict], is_live: bool = True) -> str:
     lines = []
     rank_emojis = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
+    common = _dominant_note(songs)
     for i, song in enumerate(songs):
         rank = rank_emojis[i] if i < len(rank_emojis) else '🎵'
-        note = song.get('note', '')
-        if note:
+        note = (song.get('note') or '').strip()
+        if note and note != common:
             lines.append(f"{rank} {song['artist']} — {song['song']}\n   ↳ {note}")
         else:
             lines.append(f"{rank} {song['artist']} — {song['song']}")

@@ -1,0 +1,41 @@
+round: 42
+title: /top de-noising + Last.fm label honesty.
+summary: |
+  Per-song ↳ notes now render only when they differ from the most common
+  note (shared helper, ties break by first appearance). Last.fm fill note
+  renamed 'Trending on Last.fm' -> 'Popular on Last.fm'. Missing note keys
+  can never crash the formatters.
+tests:
+  - name: dominant helper unit checks (7)
+    section: _dominant_note
+    command: ""
+    expect: all-same / 6-1 / 1-6 / tie->first-seen / empty / missing-key / blank-vs-labeled
+    unit_only: true
+  - name: /top soul has no repeated notes
+    section: /top rendering
+    command: /top soul
+    expect: |
+      No "↳ Charting now on Apple Music" under songs 1-6.
+      Only the Last.fm song (if any) keeps a sub-line, reading "↳ Popular on Last.fm".
+      Header still shows "Sources: Apple Music Charts + Last.fm".
+      Rank order and songs unchanged.
+    unit_only: false
+  - name: /top pop all-one-source shows zero sub-lines
+    section: /top rendering
+    command: /top pop
+    expect: |
+      No "↳" lines at all when every song shares one source.
+      Header states the source once ("Source: Apple Music Charts").
+    unit_only: false
+  - name: Last.fm fill label reads Popular
+    section: /top rendering
+    command: /top latin
+    expect: |
+      Any Last.fm-filled song shows "↳ Popular on Last.fm".
+      The old "Trending on Last.fm" text appears nowhere.
+    unit_only: false
+  - name: /trending unchanged
+    section: /trending
+    command: /trending
+    expect: Output looks exactly as before (no sub-lines, same header).
+    unit_only: false

@@ -158,15 +158,17 @@ def _card(songs):
 
 
 _apple = [{'artist': 'A', 'song': 'S', 'note': 'Charting now on Apple Music'}]
-_lfm = [{'artist': 'A', 'song': 'S', 'note': 'Trending on Last.fm'}]
+_lfm = [{'artist': 'A', 'song': 'S', 'note': 'Popular on Last.fm'}]
 check("source line: apple only",
       "Source: Apple Music Charts" in _card(_apple))
 check("source line: last.fm only", "Source: Last.fm" in _card(_lfm))
 check("source line: blended",
       "Sources: Apple Music Charts + Last.fm" in _card(_apple + _lfm))
-check("per-song notes shown",
-      "Charting now on Apple Music" in _card(_apple + _lfm)
-      and "Trending on Last.fm" in _card(_apple + _lfm))
+check("per-song note: only the differing note renders (1-1 tie -> first-seen wins)",
+      "↳ Charting now on Apple Music" not in _card(_apple + _lfm)
+      and "↳ Popular on Last.fm" in _card(_apple + _lfm))
+check("per-song notes: all-same source renders zero sub-lines",
+      "↳" not in _card(_apple))
 
 # ── live smoke test (real network; skips cleanly if charts unreachable) ───
 for _g in ['kpop', 'afrobeats', 'latin', 'pop']:
@@ -179,7 +181,7 @@ for _g in ['kpop', 'afrobeats', 'latin', 'pop']:
         print(f"SKIP (charts unreachable): live smoke {_g}")
         continue
     _genre, _songs = _res
-    _live_notes = ('Charting now on Apple Music', 'Trending on Last.fm')
+    _live_notes = ('Charting now on Apple Music', 'Popular on Last.fm')
     check(f"live smoke {_g}: all songs live",
           len(_songs) > 0 and all(s.get('note') in _live_notes for s in _songs))
     if _g in ('kpop', 'afrobeats'):
