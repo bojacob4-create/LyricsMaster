@@ -17,12 +17,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from services import artist_service as a
 
 TMP = tempfile.mkdtemp(prefix="r54_snaps_")
-a._chart_snap_dir = lambda: TMP  # isolate from real history
+a._history_base_dir = lambda: TMP  # isolate from real history
 a._CHART_SNAP_KEEP = 14
 
 
-def _write_snap(date, songs):
-    with open(os.path.join(TMP, f"{date}.json"), "w",
+def _write_snap(date, songs, sub="us"):
+    d = os.path.join(TMP, sub)
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, f"{date}.json"), "w",
               encoding="utf-8") as f:
         json.dump({"date": date,
                    "songs": [{"artist": ar, "song": so}
@@ -34,8 +36,16 @@ def _songs(prefix, n):
 
 
 def _clear():
-    for f in os.listdir(TMP):
-        os.remove(os.path.join(TMP, f))
+    for root, dirs, files in os.walk(TMP):
+        for f in files:
+            if f.endswith(".json"):
+                os.remove(os.path.join(root, f))
+
+
+def _us_files():
+    d = os.path.join(TMP, "us")
+    return sorted(f for f in os.listdir(d) if f.endswith(".json")) \
+        if os.path.isdir(d) else []
 
 
 def test_snapshot_write_and_shape():
@@ -43,9 +53,10 @@ def test_snapshot_write_and_shape():
     raw = [{"artist": "A", "song": "S1"}, {"artist": "B", "song": "S2"}]
     a._snapshot_us_chart(raw)
     a._snapshot_us_chart(raw)  # idempotent per day
-    files = [f for f in os.listdir(TMP) if f.endswith(".json")]
+    files = _us_files()
     assert len(files) == 1, f"expected 1 daily file, got {files}"
-    data = json.load(open(os.path.join(TMP, files[0]), encoding="utf-8"))
+    data = json.load(open(os.path.join(TMP, "us", files[0]),
+                          encoding="utf-8"))
     assert data["date"] == datetime.date.today().strftime("%Y-%m-%d")
     assert data["songs"] == raw
     print("  snapshot: 1 dated file/day, correct shape")
@@ -113,7 +124,7 @@ def test_prune_keeps_14():
         d = (today - datetime.timedelta(days=i)).strftime("%Y-%m-%d")
         _write_snap(d, _songs("P", 3))
     a._snapshot_us_chart([{"artist": "A", "song": "S"}])
-    files = sorted(f for f in os.listdir(TMP) if f.endswith(".json"))
+    files = _us_files()
     assert len(files) == 14, f"expected 14 files, got {len(files)}"
     assert files[0] == (today - datetime.timedelta(days=13)).strftime(
         "%Y-%m-%d") + ".json"
@@ -184,6 +195,47 @@ def test_handler_fallback_honest():
     assert "Climber tracking begins" in text, "honest cold-start line lost"
     assert kw.get("parse_mode") is None, "fallback must not use Markdown"
     print("  handler: cold start falls back with honest label")
+
+
+def test_genre_snapshot_hook():
+    _clear()
+    orig_fetch = a._fetch_apple_genre_chart
+    calls = []
+
+    def fake_fetch(gid, country='us', limit=100):
+        calls.append((gid, country))
+        return [{"artist": "GA", "song": "GS1"},
+                {"artist": "GB", "song": "GS2"}]
+
+    a._fetch_apple_genre_chart = fake_fetch
+    a._genre_chart_cache.clear()
+    try:
+        songs = a._get_cached_genre_chart('14', 'us')   # fresh -> snapshot
+        assert songs and len(songs) == 2
+        songs2 = a._get_cached_genre_chart('14', 'us')  # cache hit
+        assert songs2 == songs
+        assert len(calls) == 1, "cache hit must not refetch"
+    finally:
+        a._fetch_apple_genre_chart = orig_fetch
+        a._genre_chart_cache.clear()
+    gdir = os.path.join(TMP, "genre", "us_14")
+    files = sorted(f for f in os.listdir(gdir) if f.endswith(".json"))
+    assert len(files) == 1, f"expected 1 genre snapshot, got {files}"
+    data = json.load(open(os.path.join(gdir, files[0]), encoding="utf-8"))
+    assert data["songs"][0] == {"artist": "GA", "song": "GS1"}
+    print("  genre hook: fresh fetch snapshots once; cache hit is silent")
+
+
+def test_country_snapshot_generalized():
+    _clear()
+    a._snapshot_country_chart('kr', [{"artist": "K", "song": "KS"}])
+    kdir = os.path.join(TMP, "kr")
+    files = [f for f in os.listdir(kdir) if f.endswith(".json")]
+    assert len(files) == 1
+    # us snapshots still land in the us dir get_chart_climbers reads
+    a._snapshot_country_chart('us', [{"artist": "U", "song": "US"}])
+    assert len(_us_files()) == 1
+    print("  country snapshots: kr + us dirs independent")
 
 
 if __name__ == "__main__":

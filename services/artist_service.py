@@ -655,6 +655,8 @@ def _get_cached_genre_chart(genre_id: str,
         songs = _fetch_apple_genre_chart(genre_id, country)  # one retry
     if songs:
         _genre_chart_cache[key] = {'songs': songs, 'timestamp': now}
+        # Feed future genre-climber velocity (/trending v2).
+        _snapshot_genre_chart(country, genre_id, songs)
     return songs
 
 
@@ -729,9 +731,8 @@ def _get_cached_chart(country: str = 'us') -> Optional[List[Dict]]:
                     break
         new_entry['trending'] = trending
         _chart_cache[country] = new_entry
-        if country == 'us':
-            # Feed /trending velocity: one dated snapshot per day, on disk.
-            _snapshot_us_chart(raw)
+        # Feed /trending velocity: one dated snapshot per day, on disk.
+        _snapshot_country_chart(country, raw)
     return raw
 
 
@@ -782,31 +783,40 @@ def get_us_chart_deep() -> List[Dict]:
 _CHART_SNAP_KEEP = 14  # days of history retained
 
 
-def _chart_snap_dir() -> str:
+def _history_base_dir() -> str:
     import os
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(os.path.dirname(repo), 'chart_history', 'us')
+    return os.path.join(os.path.dirname(repo), 'chart_history')
 
 
-def _snapshot_us_chart(raw) -> None:
-    """Persist one dated US-chart snapshot.  Idempotent per day, prunes
-    old files.  Never raises — chart serving must not depend on this."""
+def _chart_snap_dir() -> str:
+    import os
+    return os.path.join(_history_base_dir(), 'us')
+
+
+def _genre_snap_dir(country: str, genre_id: str) -> str:
+    import os
+    safe = ''.join(c if c.isalnum() else '_' for c in
+                   f'{country}_{genre_id}') or 'unknown'
+    return os.path.join(_history_base_dir(), 'genre', safe)
+
+
+def _write_daily_snapshot(snap_dir: str, songs) -> bool:
+    """Atomic one-file-per-day snapshot + 14-day prune.  Never raises."""
     try:
         import os
         import json
         import datetime
-        d = datetime.datetime.now().strftime('%Y-%m-%d')
-        snap_dir = _chart_snap_dir()
+        clean = [{'artist': str(s.get('artist', '')),
+                  'song': str(s.get('song', ''))} for s in songs or []]
+        if not clean:
+            return False
         os.makedirs(snap_dir, exist_ok=True)
-        songs = [{'artist': str(s.get('artist', '')),
-                  'song': str(s.get('song', ''))} for s in raw or []]
-        if not songs:
-            return
+        d = datetime.datetime.now().strftime('%Y-%m-%d')
         tmp = os.path.join(snap_dir, f'.{d}.json.tmp')
         with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump({'date': d, 'songs': songs}, f, ensure_ascii=False)
+            json.dump({'date': d, 'songs': clean}, f, ensure_ascii=False)
         os.replace(tmp, os.path.join(snap_dir, f'{d}.json'))
-        # Prune: keep the newest _CHART_SNAP_KEEP daily files.
         files = sorted(f for f in os.listdir(snap_dir)
                        if f.endswith('.json') and not f.startswith('.'))
         for old in files[:-_CHART_SNAP_KEEP]:
@@ -814,8 +824,27 @@ def _snapshot_us_chart(raw) -> None:
                 os.remove(os.path.join(snap_dir, old))
             except Exception:
                 pass
+        return True
     except Exception:
-        pass
+        return False
+
+
+def _snapshot_country_chart(country: str, raw) -> None:
+    """Persist one dated country-chart snapshot (us/kr/ng/...)."""
+    import os
+    _write_daily_snapshot(os.path.join(_history_base_dir(),
+                                       country or 'us'), raw)
+
+
+def _snapshot_genre_chart(country: str, genre_id: str, songs) -> None:
+    """Persist one dated Apple genre-chart snapshot."""
+    _write_daily_snapshot(_genre_snap_dir(country, genre_id), songs)
+
+
+def _snapshot_us_chart(raw) -> None:
+    """Persist one dated US-chart snapshot.  Idempotent per day, prunes
+    old files.  Never raises — chart serving must not depend on this."""
+    _snapshot_country_chart('us', raw)
 
 
 def _load_snapshots():
