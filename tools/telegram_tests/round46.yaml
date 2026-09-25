@@ -1,0 +1,35 @@
+round: 46
+title: /extend mood filtering — no high-energy titles in soft moods.
+summary: |
+  Your exact reported case: "I Wanna Dance with Somebody" appeared in a
+  Relaxed /extend set. Soft moods (sad/relaxed/focus) now reject candidates
+  with hype words in the title (dance/party/club/...), unless the title is
+  soft-qualified ("Slow Dancing in the Dark" is spared).
+tests:
+  - name: the reported case — relaxed set has no dance songs
+    section: The reported case
+    command: |
+      Extend
+      SZA Snooze
+      The Weeknd Blinding Lights
+      Daniel Caesar Get You
+    expect: Header reads R&B • Relaxed. None of the 5 recommendations is a dance/party/club song — "I Wanna Dance with Somebody" must NOT appear. Run it 2-3 times; the pool is shuffled.
+    unit_only: false
+  - name: sad set stays mellow
+    section: Generalization
+    command: |
+      /extend
+      Adele Someone Like You
+      Sam Smith Stay With Me
+      Billie Eilish Ocean Eyes
+    expect: Vibe is sad/relaxed. No dance/party songs in the recommendations.
+    unit_only: false
+  - name: happy set may still serve hype
+    section: No over-filtering
+    command: |
+      /extend
+      Dua Lipa Levitating
+      Bruno Mars Uptown Funk
+      Pharrell Williams Happy
+    expect: Vibe is happy/upbeat. Dance/party-titled songs are ALLOWED here — the filter only protects soft moods.
+    unit_only: false
