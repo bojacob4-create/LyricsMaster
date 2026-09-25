@@ -54,7 +54,7 @@ from services.ai_info_service import get_person_info
 from services.artist_service import (
     get_artist_info, format_artist_info, get_trending_songs, format_trending,
     get_top_by_genre, format_top_songs, get_available_genres, get_random_song,
-    resolve_genre_key
+    resolve_genre_key, _dominant_note,
 )
 from services.playlist_service import (
     parse_playlist_args, build_artist_playlist, format_playlist,
@@ -5104,12 +5104,17 @@ def newmusic_command(update: Update, context: CallbackContext):
                            if any(s.get('is_new') for s in songs) else "")
         lines = [header, "━━━━━━━━━━━━━━━━━━━━━", ""]
         rank_emoji = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣']
+        # De-noise: a ↳ note shared by every song is stated once in the
+        # header already — only a differing note is worth rendering
+        # (same contract as /top's dominant-note filter, round 42).
+        common_note = _dominant_note(songs)
         for i, s in enumerate(songs, 1):
             r = rank_emoji[i - 1] if i <= len(rank_emoji) else '🎵'
             badge = "🆕 " if s.get('is_new') else ""
             lines.append(f"{r} {badge}{md(s['artist'])} — {md(s['song'])}")
-            if s.get('note'):
-                lines.append(f"   ↳ {s['note']}")
+            note = (s.get('note') or '').strip()
+            if note and note != common_note:
+                lines.append(f"   ↳ {note}")
         lines += ["", "━━━━━━━━━━━━━━━━━━━━━",
                   "🔥 /newmusic — refresh  •  🎲 /random — surprise me"]
         if footer_note:
