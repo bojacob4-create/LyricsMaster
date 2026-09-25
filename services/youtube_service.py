@@ -18,6 +18,55 @@ def _normalize(text: str) -> str:
     return re.sub(r'[^a-z0-9\s]', '', text.lower()).strip()
 
 
+_ATTR_SEPS = (' - ', ' – ', ' — ', '|')
+
+
+def _strip_bracket_tail(text: str) -> str:
+    """Drop a trailing bracketed segment: 'Lonely (Official Video)' -> 'Lonely'."""
+    return re.sub(r'\s*[\(\[].*$', '', text or '').strip()
+
+
+def _title_credits_other_artist(video_title: str, artist: str, song: str) -> bool:
+    """True when a video title explicitly credits a DIFFERENT artist.
+
+    Only fires on explicit attribution structure ('ARTIST - Title',
+    'Title - ARTIST', 'Title by ARTIST') whose credited names share no
+    token with the requested artist.  A title with no attribution
+    structure ('Lonely (Official Music Video)') never fires, so
+    channel-only matches keep working exactly as before.
+
+    Generalizes the round-13c reaction-video reject: instead of listing
+    bad title patterns, reject any positive claim of the wrong artist.
+    (Round 43: 'Marlon Craft - Lonely' was served as STARGUIDE's video
+    on a title-only match.)
+    """
+    artist_tokens = set(_normalize(artist).split())
+    if not artist_tokens:
+        return False
+    song_tokens = set(_normalize(song).split())
+    t = video_title or ''
+
+    def _tok(s: str) -> set:
+        return set(_normalize(s).split())
+
+    for sep in _ATTR_SEPS:
+        if sep in t:
+            head, tail = t.split(sep, 1)
+            head, tail = _strip_bracket_tail(head), _strip_bracket_tail(tail)
+            if not head:
+                return False
+            if artist_tokens & _tok(head):
+                return False  # attribution agrees with the request
+            if song_tokens & _tok(head):
+                # 'Song - ARTIST' shape: the tail must credit our artist
+                return not (artist_tokens & _tok(tail))
+            return True  # head credits someone/something else entirely
+    m = re.search(r'\bby\b\s+(.+)', t, flags=re.IGNORECASE)
+    if m:
+        return not (artist_tokens & _tok(_strip_bracket_tail(m.group(1))))
+    return False
+
+
 def _extract_candidates(html: str) -> List[Dict]:
     candidates = []
     match = re.search(r'var ytInitialData = ({.*?});', html)
@@ -65,6 +114,12 @@ def _score_candidate(candidate: Dict, artist: str, song: str) -> int:
     channel = _normalize(candidate['channel'])
     artist_n = _normalize(artist)
     song_n = _normalize(song)
+
+    # Round 43: a title that explicitly credits a different artist
+    # ('Marlon Craft - Lonely' for a STARGUIDE query) is never our video,
+    # no matter how well the song title matches.  Hard reject.
+    if artist_n and _title_credits_other_artist(candidate['title'], artist, song):
+        return -100
 
     score = 0
 

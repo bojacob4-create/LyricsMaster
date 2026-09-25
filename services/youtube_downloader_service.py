@@ -10,6 +10,8 @@ import string
 import glob as globmod
 import requests
 
+from services.youtube_service import _title_credits_other_artist
+
 logger = logging.getLogger(__name__)
 
 def sanitize_filename(filename: str) -> str:
@@ -949,6 +951,11 @@ def _score_candidate(title: str, uploader: str, duration: int,
     a = _norm_title(artist)
     u = _norm_title(uploader or '')
     if not s:
+        return -1e9
+
+    # Round 43: a title explicitly crediting a different artist is never
+    # our track (same guard as the watch-link scorer — one shared rule).
+    if a and _title_credits_other_artist(title, artist, song):
         return -1e9
 
     score = 0.0

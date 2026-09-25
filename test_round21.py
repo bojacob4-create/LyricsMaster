@@ -45,7 +45,7 @@ def _cb_actions(markup):
 t = _no_lyrics_card_text('Chloe Flower', 'Song for Snow', 'Classical', 'Candid', 'focus')
 check("card: title line", "🎵 *Song for Snow*" in t)
 check("card: artist line", "👤 Chloe Flower" in t)
-check("card: no-lyrics note", "No lyrics — instrumental track" in t)
+check("card: no-lyrics note", "No lyrics found for this track" in t)  # round-43: honest, not "instrumental"
 check("card: album line", "💿 Album: Candid" in t)
 check("card: genre line", "🎭 Genre: Classical" in t)
 check("card: mood line", "Spotted in your" in t and "Focus Mix" in t)

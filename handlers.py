@@ -4014,7 +4014,9 @@ def _no_lyrics_card_text(disp_artist, disp_title, genre, album, ctx_mood):
         f"🎵 *{md(disp_title)}*",
         f"👤 {md(disp_artist)}",
         "",
-        "🎼 No lyrics — instrumental track 🎶",
+        "🎼 No lyrics found for this track",
+        # Round 43: the old text claimed "instrumental track" — a guess
+        # stated as fact.  We only know the providers have no lyrics.
         "",
     ]
     if album:
