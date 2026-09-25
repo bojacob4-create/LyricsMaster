@@ -74,6 +74,20 @@ check("chromatic passthrough", sc.clamp_glow_color((200, 30, 30)),
 img = Image.new("RGB", (100, 100), (40, 80, 200))
 check("dominant solid", sc.dominant_color(img), (40, 80, 200))
 
+# ── v2: vibrant accent ─────────────────────────────────────────────────────
+img_c = Image.new("RGB", (100, 100), (180, 100, 46))
+check("vibrant picks saturated", sc.vibrant_color(img_c), (180, 100, 46))
+img_g = Image.new("RGB", (100, 100), (128, 128, 128))
+check("vibrant falls back on gray", sc.vibrant_color(img_g), (128, 128, 128))
+ac = sc.accent_color((128, 128, 128))
+mx, mn = max(ac), min(ac)
+check_true("gray accent gains saturation", (mx - mn) > 40)
+ac2 = sc.accent_color((200, 30, 30))
+check_true("chromatic accent stays chromatic",
+           ac2[0] > ac2[1] and ac2[0] > ac2[2])
+check_true("accent is a 3-tuple",
+           isinstance(ac, tuple) and len(ac) == 3)
+
 # ── Render ─────────────────────────────────────────────────────────────────
 art = Image.new("RGB", (600, 600), (40, 80, 200))
 png = sc.render_share_card("Adele", "Hello", ["line one", "line two"], art,
