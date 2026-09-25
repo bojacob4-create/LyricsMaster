@@ -53,6 +53,7 @@ from services.youtube_downloader_service import download_youtube_video, download
 from services.ai_info_service import get_person_info
 from services.artist_service import (
     get_artist_info, format_artist_info, get_trending_songs, format_trending,
+    get_chart_climbers, format_climbers,
     get_top_by_genre, format_top_songs, get_available_genres, get_random_song,
     resolve_genre_key, _dominant_note,
 )
@@ -3839,17 +3840,35 @@ def artist_command(update: Update, context: CallbackContext):
 
 
 def trending_command(update: Update, context: CallbackContext):
-    """Handle the /trending command."""
+    """Handle the /trending command — biggest chart climbers (velocity).
+
+    True trending = what's rising, not what's on top.  When chart history
+    is too thin for honest velocity (cold start), falls back to the static
+    top-10 with an honest label instead of fake climbers.
+    """
     user_id = update.effective_user.id
     try:
         logger.info(f"User {user_id} requested trending songs")
         update.message.chat.send_action(action="typing")
-        songs, is_live = get_trending_songs()
+        climbers, window = get_chart_climbers(10)
+        if climbers:
+            text = format_climbers(climbers, window)
+            songs = [{'artist': c['artist'], 'song': c['song']}
+                     for c in climbers]
+            parse_mode = 'Markdown'
+        else:
+            songs, is_live = get_trending_songs()
+            text = format_trending(songs, is_live)
+            text += ("\n\n📊 Climber tracking begins once I've "
+                     "watched the chart for a day.")
+            # format_trending predates Markdown; keep its exact rendering.
+            parse_mode = None
         try:
             markup = song_list_buttons(songs) if songs else None
         except Exception:
             markup = None
-        update.message.reply_text(format_trending(songs, is_live), reply_markup=markup)
+        update.message.reply_text(text, parse_mode=parse_mode,
+                                  reply_markup=markup)
 
     except Exception as e:
         logger.error(f"Error in trending command for user {user_id}: {str(e)}")

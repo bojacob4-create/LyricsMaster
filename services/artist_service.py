@@ -729,6 +729,9 @@ def _get_cached_chart(country: str = 'us') -> Optional[List[Dict]]:
                     break
         new_entry['trending'] = trending
         _chart_cache[country] = new_entry
+        if country == 'us':
+            # Feed /trending velocity: one dated snapshot per day, on disk.
+            _snapshot_us_chart(raw)
     return raw
 
 
@@ -767,6 +770,146 @@ def get_us_chart_deep() -> List[Dict]:
         except Exception:
             continue
     return out
+
+
+# ── /trending velocity ("Climbers", round 54) ─────────────────────────────
+# True trending = velocity, not position.  There is no chart-history API, so
+# the bot builds its own: every fresh US-chart fetch persists one dated
+# snapshot to disk (outside the git repo, survives VM reboots).  Velocity is
+# the position delta vs the snapshot ~7 days ago (oldest available >=1 day).
+# Cold start: until two snapshots >=24h apart exist, there is honestly no
+# velocity to show — the handler falls back to the static top-10.
+_CHART_SNAP_KEEP = 14  # days of history retained
+
+
+def _chart_snap_dir() -> str:
+    import os
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(os.path.dirname(repo), 'chart_history', 'us')
+
+
+def _snapshot_us_chart(raw) -> None:
+    """Persist one dated US-chart snapshot.  Idempotent per day, prunes
+    old files.  Never raises — chart serving must not depend on this."""
+    try:
+        import os
+        import json
+        import datetime
+        d = datetime.datetime.now().strftime('%Y-%m-%d')
+        snap_dir = _chart_snap_dir()
+        os.makedirs(snap_dir, exist_ok=True)
+        songs = [{'artist': str(s.get('artist', '')),
+                  'song': str(s.get('song', ''))} for s in raw or []]
+        if not songs:
+            return
+        tmp = os.path.join(snap_dir, f'.{d}.json.tmp')
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump({'date': d, 'songs': songs}, f, ensure_ascii=False)
+        os.replace(tmp, os.path.join(snap_dir, f'{d}.json'))
+        # Prune: keep the newest _CHART_SNAP_KEEP daily files.
+        files = sorted(f for f in os.listdir(snap_dir)
+                       if f.endswith('.json') and not f.startswith('.'))
+        for old in files[:-_CHART_SNAP_KEEP]:
+            try:
+                os.remove(os.path.join(snap_dir, old))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _load_snapshots():
+    """[(date, [songs])] sorted oldest-first.  [] on any problem."""
+    import os
+    import json
+    import datetime
+    out = []
+    try:
+        snap_dir = _chart_snap_dir()
+        files = sorted(f for f in os.listdir(snap_dir)
+                       if f.endswith('.json') and not f.startswith('.'))
+        for fn in files:
+            try:
+                with open(os.path.join(snap_dir, fn), 'r',
+                          encoding='utf-8') as f:
+                    data = json.load(f)
+                d = datetime.datetime.strptime(
+                    data.get('date') or fn[:-5], '%Y-%m-%d').date()
+                songs = data.get('songs') or []
+                if songs:
+                    out.append((d, songs))
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return out
+
+
+def get_chart_climbers(n: int = 10):
+    """Biggest chart climbers: ([{artist,song,move}], window_label).
+
+    move is '▲34' or 'NEW'.  window_label is e.g. 'vs 7 days ago'.
+    Returns ([], None) when history is too thin for honest velocity
+    (cold start) or nothing climbed.  Never raises.
+    """
+    try:
+        import datetime
+        snaps = _load_snapshots()
+        if len(snaps) < 2:
+            return [], None
+        latest_date, latest = snaps[-1]
+        old_enough = [(d, s) for d, s in snaps[:-1]
+                      if (latest_date - d).days >= 1]
+        if not old_enough:
+            return [], None
+        ref_date, ref = min(
+            old_enough, key=lambda t: abs((latest_date - t[0]).days - 7))
+        days = (latest_date - ref_date).days
+        ref_pos = {}
+        for i, s in enumerate(ref):
+            k = (str(s.get('artist', '')).lower().strip(),
+                 str(s.get('song', '')).lower().strip())
+            ref_pos.setdefault(k, i + 1)
+        scored = []
+        for i, s in enumerate(latest):
+            k = (str(s.get('artist', '')).lower().strip(),
+                 str(s.get('song', '')).lower().strip())
+            pos = i + 1
+            rp = ref_pos.get(k)
+            if rp is None:
+                move_n, move = 101 - pos, 'NEW'
+            else:
+                move_n, move = rp - pos, f'▲{rp - pos}'
+            if move_n > 0:
+                scored.append((move_n, pos, s, move))
+        scored.sort(key=lambda t: (-t[0], t[1]))
+        out = [{'artist': str(s.get('artist', '')),
+                'song': str(s.get('song', '')),
+                'move': m} for _, _, s, m in scored[:n]]
+        if not out:
+            return [], None
+        label = ('vs 7 days ago' if days == 7
+                 else f'vs {days} day{"s" if days != 1 else ""} ago')
+        return out, label
+    except Exception:
+        return [], None
+
+
+def format_climbers(climbers: List[Dict], window_label: str) -> str:
+    """Render the velocity ranking.  Order IS the content — no rotation."""
+    from utils import escape_markdown as _md
+    medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣',
+              '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
+    lines = ['📈 *Trending — Biggest Climbers*',
+             f'_{window_label}_',
+             '━━━━━━━━━━━━━━━━━━━━━', '']
+    for i, c in enumerate(climbers):
+        badge = '🆕' if c.get('move') == 'NEW' else c.get('move', '')
+        rank = medals[i] if i < len(medals) else '🎵'
+        lines.append(f"{rank} {badge} {_md(c['artist'])} — {_md(c['song'])}")
+    lines += ['', '━━━━━━━━━━━━━━━━━━━━━',
+              '🎵 Pick a song below to explore:']
+    return '\n'.join(lines)
 
 
 def _fetch_lastfm_tag_tracks(tag: str, limit: int = 25) -> List[Dict]:
