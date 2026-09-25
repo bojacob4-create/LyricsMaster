@@ -160,5 +160,22 @@ try:
 finally:
     nlp._get_client = _old_client
 
+# ── gibberish theme: LLM returns no songs -> live path yields [] ────
+_real_llm = d._llm_theme_songs
+d._llm_theme_songs = lambda theme, query: []
+d._THEME_SONGS_CACHE.clear()
+try:
+    check("live: gibberish (LLM []) -> []",
+          d.get_theme_songs_live({"mood": None,
+                                  "keywords": ["hdhhdhheeh"], "genres": []},
+                                 "hdhhdhheeh", 5) == [])
+finally:
+    d._llm_theme_songs = _real_llm
+    d._THEME_SONGS_CACHE.clear()
+
+import inspect as _inspect
+check("prompt: instructs the LLM to refuse gibberish",
+      '{"songs": []}' in _inspect.getsource(d._llm_theme_songs))
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

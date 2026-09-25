@@ -1470,7 +1470,9 @@ def _llm_theme_songs(theme: Dict, query: str) -> List[Dict]:
             'English-language songs only, by real artists, no AI-generated '
             'music. "why" is at most 10 words on why the song fits the '
             'theme. Every entry must be a real released recording — never '
-            'invent titles or artists.')
+            'invent titles or artists. If the theme text is gibberish, '
+            'meaningless, or not a recognizable theme, mood, or occasion, '
+            'reply with {"songs": []}.')
         resp = client.responses.create(
             model=_MODEL,
             input=[{'role': 'system', 'content': system},
