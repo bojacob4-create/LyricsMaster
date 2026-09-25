@@ -745,17 +745,15 @@ def clarification_message(result: Dict) -> str:
 def low_confidence_message() -> str:
     """
     Return a user-facing message for low-confidence results (< 0.4).
-    Asks the user to be more specific with the 'Artist - Song' format.
+    Asks the user to be more specific.  Round 45: no longer demands the
+    strict 'Artist - Song' format — the bot accepts natural queries too.
     """
     return (
         "🎵 I wasn't able to understand your request.\n\n"
-        "Please use the format:\n"
-        "`Artist - Song`\n\n"
-        "Examples:\n"
-        "• `The Weeknd - Blinding Lights`\n"
-        "• `SZA - Kill Bill`\n"
-        "• `OneRepublic - Counting Stars`\n\n"
+        "Just send a song — natural words are fine:\n"
+        "• `The Weeknd Blinding Lights`\n"
+        "• `SZA - Kill Bill`\n\n"
         "Or use a command directly:\n"
-        "`/lyrics Artist - Song`\n"
-        "`/recommend Artist - Song`"
+        "`/lyrics SZA Kill Bill`\n"
+        "`/recommend The Weeknd Blinding Lights`"
     )

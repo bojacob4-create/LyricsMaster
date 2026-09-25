@@ -65,8 +65,10 @@ check("extend: vibe label", bool(vibe.get("label")))
 d.get_similar_songs = _boom
 try:
     recs = d.get_extend_recs(parsed, 5)
-    check("extend: offline recs -> 5 with reasons",
-          len(recs) == 5 and all(r.get("reason") for r in recs), f"got {len(recs)}")
+    check("extend: offline recs -> 5, no vibe-repeating reasons (round 45)",
+          len(recs) == 5 and all("Fits your" not in (r.get("reason") or "")
+                                 and "Matches your" not in (r.get("reason") or "")
+                                 for r in recs), f"got {recs}")
     given = {(s["artist"].lower(), s["song"].lower()) for s in parsed}
     check("extend: input songs excluded",
           not any((r["artist"].lower(), r["name"].lower()) in given for r in recs))

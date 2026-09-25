@@ -744,6 +744,14 @@ def natural_language_handler(update: Update, context: CallbackContext):
         )
         return
 
+    # ── Round 45: bare "Extend" (no slash) routes to /extend ─────────────────
+    # Users keep typing the word as if it were the command; a first line of
+    # exactly "extend" (any case) is treated as /extend so they get the song
+    # prompt instead of the "I wasn't able to understand" fallback.
+    if _is_bare_extend(text):
+        extend_command(update, context)
+        return
+
     # ── Round 4a: pending /extend song list (multi-line "Artist - Title") ───
     # Must run before the regex router, which would otherwise treat the
     # lines as a new song request.
@@ -4788,12 +4796,30 @@ def _send_mood_mix(update, user_id: int, mood: str):
 
 # ── 2. /extend ────────────────────────────────────────────────────────────
 
+_BARE_EXTEND_RE = re.compile(r'(?i)^\s*extend\s*$')
+
+
+def _is_bare_extend(text: str) -> bool:
+    """True when the message's first line is exactly 'extend' (any case).
+
+    Round 45: users type the word as if it were the /extend command.
+    Only the whole first line counts — 'extend my playlist' is not a hit.
+    Never raises.
+    """
+    try:
+        return bool(_BARE_EXTEND_RE.match((text or '').split('\n', 1)[0]))
+    except Exception:
+        return False
+
+
 def extend_command(update: Update, context: CallbackContext):
     """Handle /extend — 'finish my playlist' from 3 songs."""
     user_id = update.effective_user.id
     try:
         full = update.message.text or ''
-        body = re.sub(r'^/extend(@\w+)?\s*', '', full).strip()
+        # Round 45: also strip a bare "Extend" first line (no slash) —
+        # the router sends those here too.
+        body = re.sub(r'(?i)^(?:/extend(@\w+)?|extend)\s*', '', full).strip()
 
         if body:
             songs = parse_extend_lines(body)

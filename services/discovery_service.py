@@ -909,10 +909,11 @@ def get_extend_recs(songs: List[Dict], n: int = 5) -> List[Dict]:
     """Vibe-blended recommendations — PRIMARY is fully local (works offline).
 
     Filters GENRE_TOP_SONGS[blended genre] + genre-matched RANDOM_SONGS_POOL
-    entries, excluding the input songs, each with a reason referencing the
-    vibe.  Enhancement: optionally tops up with get_similar_songs results
-    (hard timeout; ignored when the API is down).  Returns
-    [{'artist','name','reason'}]; [] on failure.  Never raises.
+    entries, excluding the input songs.  Per-song reasons carry only the
+    distinctive pool note (or nothing) — the vibe itself is stated once in
+    the message header (round 45).  Enhancement: optionally tops up with
+    get_similar_songs results (hard timeout; ignored when the API is down).
+    Returns [{'artist','name','reason'}]; [] on failure.  Never raises.
     """
     try:
         songs = [s for s in (songs or []) if isinstance(s, dict)]
@@ -921,7 +922,7 @@ def get_extend_recs(songs: List[Dict], n: int = 5) -> List[Dict]:
         n = max(1, int(n or 5))
         vibe = blend_vibe(songs) or {'genre': 'pop', 'mood': 'relaxed',
                                      'label': 'Pop • Relaxed'}
-        genre, mood, label = vibe['genre'], vibe['mood'], vibe['label']
+        genre, mood = vibe['genre'], vibe['mood']
 
         excluded = set()
         for s in songs:
@@ -936,9 +937,11 @@ def get_extend_recs(songs: List[Dict], n: int = 5) -> List[Dict]:
         for e in GENRE_TOP_SONGS.get(genre, []):
             if _is_excluded_song(e['artist'], e['song'], excluded):
                 continue
-            note = e.get('note') or f'a top {genre} pick'
+            # Round 45: the vibe is stated once in the message header —
+            # per-song reasons carry only the distinctive note (or none).
+            note = (e.get('note') or '').strip()
             cands.append({'artist': e['artist'], 'name': e['song'],
-                          'reason': f"Fits your {label} vibe — {note}"})
+                          'reason': note})
         for e in RANDOM_SONGS_POOL:
             if ARTIST_GENRE_MAP.get(e['artist'].lower(), 'pop') != genre:
                 continue
@@ -948,7 +951,7 @@ def get_extend_recs(songs: List[Dict], n: int = 5) -> List[Dict]:
                    for c in cands):
                 continue
             cands.append({'artist': e['artist'], 'name': e['song'],
-                          'reason': f"Matches your {label} vibe"})
+                          'reason': ''})
         _rng.shuffle(cands)
         out = cands[:n]
 
@@ -967,8 +970,7 @@ def get_extend_recs(songs: List[Dict], n: int = 5) -> List[Dict]:
                     continue
                 seen.add(_key(s['artist'], s['name']))
                 out.append({'artist': s['artist'], 'name': s['name'],
-                            'reason': s.get('reason') or
-                            f"Fits your {label} vibe"})
+                            'reason': s.get('reason') or ''})
         return out
     except Exception as e:
         logger.debug(f"get_extend_recs failed: {e}")
