@@ -392,7 +392,7 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
     zone_top, zone_h = 240, 500
     y = zone_top + (zone_h - total_h) // 2
     for ln in wrapped:
-        _ctext(draw, W // 2, y, ln, font, (248, 248, 252))
+        _ctext(draw, W // 2, y, ln, font, (245, 241, 234))
         y += line_h
 
     # Accent divider in the vibrant color.
@@ -407,12 +407,12 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
     if artist:
         af = _font(_FONT_BOLD, 48)
         for ln in _wrap(draw, artist, af, 920)[:1]:
-            _ctext(draw, W // 2, ay, ln, af, (245, 245, 250))
+            _ctext(draw, W // 2, ay, ln, af, (247, 243, 237))
             ay += 62
     if title:
         tf = _font(_FONT_REG, 40)
         for ln in _wrap(draw, title, tf, 920)[:1]:
-            _ctext(draw, W // 2, ay, ln, tf, (205, 205, 218))
+            _ctext(draw, W // 2, ay, ln, tf, (210, 204, 196))
             ay += 56
 
     # Bottom zone: QR code floating light on the left, album art anchoring
