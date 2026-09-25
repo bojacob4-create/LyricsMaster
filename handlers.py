@@ -78,7 +78,7 @@ from services.fun_service import (
     get_daily_status, record_daily_play, make_daily_questions,
     mark_daily_started,
     get_emoji_puzzle, check_emoji_guess,
-    log_interaction, get_music_stats,
+    log_interaction, get_music_stats, genre_display_name,
     BADGES, award_badge, get_user_badges, auto_award_from_stats,
 )
 from services.quiz_service import _correct_display
@@ -101,6 +101,21 @@ def _safe_genre(artist_name: str) -> str:
         return _detect_genre_fast(artist_name or '')
     except Exception:
         return 'pop'
+
+
+def _song_pairs(items, artist_key='artist', title_key='name'):
+    """(artist, title) pairs from served song dicts for stats — never raises."""
+    pairs = []
+    for s in items or []:
+        try:
+            if not isinstance(s, dict):
+                continue
+            a, t = s.get(artist_key), s.get(title_key)
+            if a or t:
+                pairs.append((a, t))
+        except Exception:
+            pass
+    return pairs
 
 
 def _new_badge_lines(user_id: int) -> list:
@@ -372,9 +387,12 @@ def quiz_answer(update: Update, context: CallbackContext):
         is_correct, feedback = check_answer(user_id, answer)
 
         # Round 4: track correct answers + milestone badges (local only)
+        # Round 55: also track wrong answers for quiz accuracy in /mystats.
         try:
             if is_correct:
                 log_interaction(user_id, 'quiz_correct')
+            else:
+                log_interaction(user_id, 'quiz_wrong')
             for _bl in _new_badge_lines(user_id):
                 feedback += f"\n{_bl}"
         except Exception as _e:
@@ -2086,8 +2104,10 @@ def recommend_command(update: Update, context: CallbackContext):
         ]
         logger.info(f"Successfully sent recommendations to user {user_id}")
         # Round 4: taste stats (local only)
+        # Round 55: also log served songs for honest "songs explored".
         try:
-            log_interaction(user_id, 'recommend', genre=_safe_genre(use_artist))
+            log_interaction(user_id, 'recommend', genre=_safe_genre(use_artist),
+                            songs=_song_pairs(recommendations))
         except Exception as _e:
             logger.debug(f"round4 stats hook failed: {_e}")
 
@@ -4256,6 +4276,12 @@ def song_command(update: Update, context: CallbackContext):
             return
 
         display_title = f"{artist} - {song}" if artist and song else (artist or song)
+        # Round 55: a resolved song lookup is genuine exploration — log it.
+        try:
+            log_interaction(user_id, 'song', genre=_safe_genre(artist),
+                            songs=[(artist, song)])
+        except Exception as _e:
+            logger.debug(f"round55 song stats hook failed: {_e}")
 
         _tan0 = time.time()
         # Round-13d/e: a song opened from a mood mix inherits the mix's mood
@@ -4609,8 +4635,10 @@ def random_command(update: Update, context: CallbackContext):
         )
         logger.info(f"Successfully sent random song to user {user_id}")
         # Round 4: taste stats + milestone badges (local, never breaks picks)
+        # Round 55: log the served song for honest "songs explored".
         try:
-            log_interaction(user_id, 'random', genre=_safe_genre(artist_name))
+            log_interaction(user_id, 'random', genre=_safe_genre(artist_name),
+                            songs=[(artist_name, song_name)])
             for _bl in _new_badge_lines(user_id):
                 update.message.reply_text(_bl, parse_mode='Markdown')
         except Exception as _e:
@@ -4799,7 +4827,10 @@ def _send_mood_mix(update, user_id: int, mood: str):
               "━━━━━━━━━━━━━━━━━━━━━",
               "🎧 /mood — another mood  •  🎲 /random — surprise me"]
     try:
-        log_interaction(user_id, 'recommend', genre=_safe_genre(songs[0]['artist']))
+        # Round 55: log served mix songs for honest "songs explored".
+        log_interaction(user_id, 'recommend',
+                        genre=_safe_genre(songs[0]['artist']),
+                        songs=_song_pairs(songs))
     except Exception:
         pass
     update.message.reply_text(
@@ -4920,7 +4951,8 @@ def _send_extend_results(update, user_id: int, songs: list, intro: str):
               "🎶 /extend — try another set"]
     try:
         log_interaction(user_id, 'recommend',
-                        genre=vibe.get('genre') or _safe_genre(recs[0]['artist']))
+                        genre=vibe.get('genre') or _safe_genre(recs[0]['artist']),
+                        songs=_song_pairs(recs))
     except Exception:
         pass
     update.message.reply_text(
@@ -5000,7 +5032,8 @@ def about_command(update: Update, context: CallbackContext):
         try:
             genres = theme.get('genres') or []
             log_interaction(user_id, 'recommend',
-                            genre=genres[0] if genres else None)
+                            genre=genres[0] if genres else None,
+                            songs=_song_pairs(songs, title_key='song'))
         except Exception:
             pass
         processing_msg.edit_text(
@@ -5613,11 +5646,21 @@ def mystats_command(update: Update, context: CallbackContext):
                  stats.get('label', ''), "",
                  "*Top genres:*"]
         for genre, pct in stats.get('top', [])[:3]:
-            bar = '🟩' * max(1, pct // 20) + '⬜' * (5 - max(1, pct // 20))
-            lines.append(f"• {genre.title()} — {pct}% {bar}")
+            # Round 55: 10-block bar (1 per 10%) so close genres stay distinct.
+            filled = max(1, min(10, pct // 10))
+            bar = '🟩' * filled + '⬜' * (10 - filled)
+            lines.append(f"• {genre_display_name(genre)} — {pct}% {bar}")
+        # Round 55: quiz accuracy as a fraction; distinct songs, not taps.
+        answered = stats.get('quiz_answered', 0)
+        correct = stats.get('quiz_correct', 0)
+        if answered > 0:
+            acc = int(round(correct / answered * 100))
+            quiz_line = f"✅ Quiz: *{correct}/{answered}* ({acc}%)"
+        else:
+            quiz_line = "✅ Quiz: *no games yet*"
         lines += ["",
-                  f"🎵 Songs explored: *{stats.get('total', 0)}*",
-                  f"✅ Quiz correct: *{stats.get('quiz_correct', 0)}*",
+                  f"🎵 Songs explored: *{stats.get('songs_explored', 0)}*",
+                  quiz_line,
                   "",
                   "━━━━━━━━━━━━━━━━━━━━━",
                   "🏅 /badges — see your achievements"]

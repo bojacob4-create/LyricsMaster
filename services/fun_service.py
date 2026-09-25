@@ -32,6 +32,7 @@ import json
 import logging
 import os
 import random
+import re
 import string
 import time
 from datetime import date, timedelta
@@ -622,12 +623,35 @@ def check_emoji_guess(puzzle: Dict, guess: str) -> bool:
 # ── Music stats ────────────────────────────────────────────────────────────
 # 100% local: counts interactions per user and derives a playful taste label.
 
+# Display names for stored genre keys — plain .title() mangles these.
+_GENRE_DISPLAY = {
+    'rnb': 'R&B',
+    'hiphop': 'Hip-Hop',
+    'kpop': 'K-Pop',
+}
+
+
+def genre_display_name(genre) -> str:
+    """Human-readable genre name for a stored lowercase genre key."""
+    g = (genre or '').strip().lower()
+    return _GENRE_DISPLAY.get(g, g.title())
+
+
+def _norm_song_key(artist, title) -> str:
+    """Normalized 'artist — title' key so re-served songs dedupe. '' if empty."""
+    a = re.sub(r'\s+', ' ', (artist or '').strip().lower())
+    t = re.sub(r'\s+', ' ', (title or '').strip().lower())
+    return f'{a} — {t}' if (a or t) else ''
+
+
 def log_interaction(user_id: int, kind: str, genre: str = None,
-                    correct: bool = None) -> None:
+                    correct: bool = None, songs=None) -> None:
     """Log one interaction.
 
-    kinds: 'random', 'recommend', 'quiz_start', 'quiz_correct', 'duel',
-    'daily', 'emoji'. Never raises.
+    kinds: 'random', 'recommend', 'song', 'quiz_start', 'quiz_correct',
+    'quiz_wrong', 'duel', 'daily', 'emoji'. songs: optional iterable of
+    (artist, title) pairs the bot served — each counts once toward the
+    per-user distinct "songs explored" set. Never raises.
     """
     try:
         data = _load_json(STATS_PATH)
@@ -643,28 +667,50 @@ def log_interaction(user_id: int, kind: str, genre: str = None,
         quiz_correct = int(entry.get("quiz_correct", 0) or 0)
         if kind == "quiz_correct":
             quiz_correct += 1
+        song_map = entry.get("songs") or {}
+        if not isinstance(song_map, dict):
+            song_map = {}
+        if songs:
+            for _a, _t in songs:
+                _k = _norm_song_key(_a, _t)
+                if _k:
+                    song_map[_k] = song_map.get(_k, 0) + 1
         total = int(entry.get("total", 0) or 0) + 1
         data[key] = {"genres": genres, "kinds": kinds,
-                     "quiz_correct": quiz_correct, "total": total}
+                     "quiz_correct": quiz_correct, "total": total,
+                     "songs": song_map}
         _save_json(STATS_PATH, data)
     except Exception as e:
         logger.warning(f"log_interaction failed: {e}")
 
 
-def _taste_label(top: List[tuple], total: int) -> str:
+def _taste_label(top: List[tuple], total: int, kinds=None) -> str:
+    kinds = kinds or {}
     if total == 0 or not top:
         return "🌱 New listener — your taste profile is growing!"
     genre, pct = top[0]
     if genre == "afrobeats" and pct >= 60:
         return "🌍 Afrobeats explorer"
+    # A balanced top two is a blend, not a single-genre identity.
+    if len(top) >= 2:
+        genre2, pct2 = top[1]
+        if pct2 >= 20 and (pct - pct2) <= 10:
+            return (f"🎧 {genre_display_name(genre)} × "
+                    f"{genre_display_name(genre2)} blend")
     if pct >= 40:
-        return f"🎧 {genre.title()} lover"
+        return f"🎧 {genre_display_name(genre)} lover"
+    answered = int(kinds.get("quiz_correct", 0) or 0) + int(
+        kinds.get("quiz_wrong", 0) or 0)
+    if answered >= 10 and answered / max(total, 1) >= 0.5:
+        return "🎯 Quiz shark"
     return "🎶 Musical omnivore"
 
 
 def get_music_stats(user_id: int) -> Dict:
-    """{'top': [(genre, pct_int), ...] (top 3, desc), 'total': int,
-    'quiz_correct': int, 'label': str}. Never raises."""
+    """{'top': [(genre, pct_int), ...] (top 3, desc, pct of GENRE-TAGGED
+    interactions so they sum to ~100), 'total': int (all interactions),
+    'songs_explored': int (distinct songs served), 'quiz_correct': int,
+    'quiz_answered': int, 'label': str}. Never raises."""
     try:
         data = _load_json(STATS_PATH)
         entry = data.get(str(user_id)) or {}
@@ -672,17 +718,25 @@ def get_music_stats(user_id: int) -> Dict:
             entry = {}
         total = int(entry.get("total", 0) or 0)
         quiz_correct = int(entry.get("quiz_correct", 0) or 0)
+        kinds = entry.get("kinds") or {}
+        quiz_wrong = int(kinds.get("quiz_wrong", 0) or 0)
+        songs = entry.get("songs") or {}
         genres = entry.get("genres") or {}
         top = []
-        if total > 0 and genres:
+        genre_total = sum(genres.values())
+        if genre_total > 0:
             ranked = sorted(genres.items(), key=lambda kv: kv[1],
                             reverse=True)[:3]
-            top = [(g, int(round(c / total * 100))) for g, c in ranked]
-        return {"top": top, "total": total, "quiz_correct": quiz_correct,
-                "label": _taste_label(top, total)}
+            top = [(g, int(round(c / genre_total * 100))) for g, c in ranked]
+        return {"top": top, "total": total,
+                "songs_explored": len(songs) if isinstance(songs, dict) else 0,
+                "quiz_correct": quiz_correct,
+                "quiz_answered": quiz_correct + quiz_wrong,
+                "label": _taste_label(top, total, kinds)}
     except Exception as e:
         logger.warning(f"get_music_stats failed: {e}")
-        return {"top": [], "total": 0, "quiz_correct": 0,
+        return {"top": [], "total": 0, "songs_explored": 0,
+                "quiz_correct": 0, "quiz_answered": 0,
                 "label": "🌱 New listener — your taste profile is growing!"}
 
 
