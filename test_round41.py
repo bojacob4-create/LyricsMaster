@@ -175,7 +175,7 @@ text = PS.format_playlist(display, songs, capped=False,
                            meta={'short': {'new': 2}, 'rebalanced': True})
 check("shortfall notice names the slice", "new releases" in text)
 
-# ── studio-first ordering in the new slice ──────────────────────────────
+# ── studio-only new slice ─────────────────────────────────────────────────
 check("live qualifier is a soft variant",
       PS._is_soft_variant("Stan (Live At Wembley 2014)"))
 check("dash live qualifier is a soft variant",
@@ -234,14 +234,38 @@ finally:
     PS.requests.get = _real_get
 
 ordered = [t for t, _ in new_pairs]
-check("studio-first: clean songs lead", ordered[0] == 'Houdini')
-check("studio-first: variants follow newest-first",
-      ordered[1:] == ['Stan (Live At Wembley 2014)',
-                      'Mockingbird (Remastered 2026)'])
-check("studio-first: karaoke dropped",
+check("studio-only: clean song kept", ordered == ['Houdini'])
+check("studio-only: live variant dropped",
+      not any('wembley' in t.lower() for t in ordered))
+check("studio-only: remaster dropped",
+      not any('remastered' in t.lower() for t in ordered))
+check("studio-only: karaoke dropped",
       not any('karaoke' in t.lower() for t in ordered))
-check("studio-first: variant survives as fallback",
-      'Stan (Live At Wembley 2014)' in ordered)
+
+# End-to-end: an artist whose only "new" releases are variants gets no
+# 🆕 picks — the list fills honestly from the other slices.
+def _fake_itunes_variants_only(url, params=None, timeout=None):
+    return _FakeResp({'results': [
+        {'artistName': 'Eminem',
+         'trackName': 'Stan (Live At Wembley 2014)',
+         'releaseDate': '2026-08-25T07:00:00Z', 'kind': 'song'},
+    ]})
+
+
+PS.requests.get = _fake_itunes_variants_only
+PS._lastfm_all_time = lambda artist, limit: ['Stan', 'Lose Yourself',
+                                             'Mockingbird',
+                                             'My Name Is'][:limit]
+PS._chart_trending = lambda artist, limit: []
+try:
+    display, songs, meta = PS.build_artist_playlist('eminem', 6)
+finally:
+    PS.requests.get = _real_get
+notes = [s['note'] for s in songs]
+check("no new-release notes when only variants exist",
+      all(n != PS.NOTE_NEW for n in notes))
+check("playlist still fills from other slices",
+      len(songs) == 4 and all(n == PS.NOTE_ALL_TIME for n in notes))
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 sys.exit(1 if FAIL else 0)

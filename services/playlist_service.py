@@ -211,17 +211,15 @@ def _itunes_new_songs(artist, limit):
             seen.add(key)
             picks.append((tname, date))
         picks.sort(key=lambda p: p[1], reverse=True)
-        # Prefer canonical studio recordings: demote live/cover/remix
-        # variants to the back of the line, drop karaoke/tribute junk
-        # outright. A real variant still beats an empty slice, so it stays
-        # as fallback rather than being skipped.
-        clean, variants = [], []
-        for t, d in picks:
-            if _is_junk_variant(t):
-                continue
-            (variants if _is_soft_variant(t) else clean).append((t, d))
+        # Studio recordings only: live/cover/remix/remaster variants and
+        # karaoke/tribute junk are dropped outright. A thin-but-honest
+        # slice beats a padded one — shortfalls rebalance downstream and
+        # the per-song notes stay truthful about provenance.
+        picks = [pd for pd in picks
+                 if not _is_junk_variant(pd[0])
+                 and not _is_soft_variant(pd[0])]
         canonical = max(name_votes, key=name_votes.get) if name_votes else None
-        return canonical, (clean + variants)[:limit]
+        return canonical, picks[:limit]
     except Exception as e:
         logger.debug(f"playlist iTunes miss for '{artist}': {e}")
         return None, []
