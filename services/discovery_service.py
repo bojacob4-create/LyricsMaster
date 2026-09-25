@@ -1069,6 +1069,47 @@ _THEME_SYSTEM = (
 _KNOWN_GENRES = set(GENRE_TOP_SONGS.keys())
 
 
+# Common theme -> related words (round 47).  Applied to interpret_theme's
+# output on BOTH the OpenAI and local paths, so conceptual themes
+# ("gym", "heartbreak") can hit pool titles via their relatives
+# ("workout", "goodbye").  Kept small and high-precision: only
+# unambiguous relatives, capped at 6 keywords total.
+_THEME_SYNONYMS = {
+    'gym': ['workout', 'exercise', 'pump'],
+    'workout': ['gym', 'exercise', 'pump'],
+    'party': ['celebrate', 'celebration', 'dance'],
+    'summer': ['sunshine', 'sunny', 'beach'],
+    'heartbreak': ['heartbroken', 'goodbye', 'tears'],
+    'love': ['lover', 'loving', 'heart'],
+    'sad': ['tears', 'cry', 'lonely'],
+    'happy': ['joy', 'celebrate', 'sunshine'],
+    'night': ['midnight', 'evening', 'tonight'],
+    'morning': ['sunrise', 'wake'],
+    'dance': ['dancing', 'party'],
+    'wedding': ['bride', 'marry'],
+    'christmas': ['santa', 'holiday', 'merry'],
+    'rain': ['raindrops', 'storm'],
+}
+
+
+def _expand_theme_keywords(keywords) -> List[str]:
+    """Expand theme keywords with _THEME_SYNONYMS; deduped, max 6."""
+    try:
+        out: List[str] = []
+        for k in keywords or []:
+            k = str(k).lower().strip()
+            if k and k not in out:
+                out.append(k)
+            for s in _THEME_SYNONYMS.get(k, ()):
+                if s not in out:
+                    out.append(s)
+            if len(out) >= 6:
+                break
+        return out[:6]
+    except Exception:
+        return [str(k) for k in (keywords or [])][:6]
+
+
 def _validate_theme(data) -> Optional[Dict]:
     """Validate/normalize an OpenAI theme response; None if unusable."""
     try:
@@ -1098,6 +1139,9 @@ def _theme_keyword_fallback(text: str) -> Dict:
             break
 
     # Mood: vote by keyword hits, tie-break in MOOD_BUTTONS order.
+    # No votes -> None (NOT a default mood): match_theme must not award its
+    # mood bonus for a mood the user never expressed (round 47 — a defaulted
+    # 'relaxed' let gibberish themes score via calm-titled songs).
     votes: Dict[str, int] = {}
     for kw, mood in _MOOD_KEYWORDS_SORTED:
         if kw in tl:
@@ -1106,7 +1150,7 @@ def _theme_keyword_fallback(text: str) -> Dict:
         order = [m for _, m in MOOD_BUTTONS]
         mood = max(votes, key=lambda k: (votes[k], -order.index(k)))
     else:
-        mood = 'relaxed'
+        mood = None
 
     # Genres: hint-word scan.
     genres: List[str] = []
@@ -1148,12 +1192,16 @@ def interpret_theme(text: str) -> Dict:
                 )
                 parsed = _validate_theme(json.loads(resp.output_text))
                 if parsed:
+                    # Round 47: synonym expansion on both paths.
+                    parsed['keywords'] = _expand_theme_keywords(
+                        parsed.get('keywords'))
                     _THEME_CACHE[key] = parsed
                     return dict(parsed)
         except Exception as e:
             logger.debug(f"interpret_theme OpenAI enhancement failed: {e}")
 
         parsed = _theme_keyword_fallback(raw)
+        parsed['keywords'] = _expand_theme_keywords(parsed.get('keywords'))
         _THEME_CACHE[key] = parsed
         return dict(parsed)
     except Exception:
@@ -1209,35 +1257,57 @@ def match_theme(theme: Dict, n: int = 5) -> List[Dict]:
         scored = []
         for c in cands:
             score = 0
+            kw_hits: List[str] = []   # round 47: per-song truthful reasons
             title_l = c['song'].lower()
             words = set(re.findall(r"[a-z0-9']+", title_l))
             for kw in keywords:
                 if kw in words:
                     score += 3          # whole-word title hit
+                    kw_hits.append(kw)
                 elif kw in title_l:
                     score += 2          # substring title hit
+                    kw_hits.append(kw)
                 elif kw in c['artist'].lower():
                     score += 1          # artist hit
-            if genres and ARTIST_GENRE_MAP.get(c['artist'].lower(), 'pop') in genres:
-                score += 2
-            if mood and _title_mood(c['song']) == mood:
+                    kw_hits.append(kw)
+            genre_hit: Optional[str] = None
+            if genres:
+                g = ARTIST_GENRE_MAP.get(c['artist'].lower(), 'pop')
+                if g in genres:
+                    score += 2
+                    genre_hit = g
+            mood_hit = bool(mood and _title_mood(c['song']) == mood)
+            if mood_hit:
                 score += 1
-            scored.append((score, c))
+            scored.append((score, c, kw_hits, genre_hit, mood_hit))
 
         scored.sort(key=lambda s: (-s[0], s[1]['artist'].lower(),
                                    s[1]['song'].lower()))
         n = max(1, int(n or 5))
 
-        if keywords:
-            short = ' '.join(keywords[:3])
-            reason = f"Matches '{short}': {' & '.join(keywords[:4])}"
-        elif mood:
-            reason = f"Fits the {mood} mood"
-        else:
-            reason = "Picked for your theme"
+        # Round 47 fix A: no signal at all (top score 0) means the theme
+        # matched nothing — return [] so the caller shows the honest
+        # "couldn't find songs for that theme" message instead of serving
+        # five alphabetical songs with a false "Matches" claim.
+        if not scored or scored[0][0] <= 0:
+            return []
 
-        return [{'artist': c['artist'], 'song': c['song'], 'reason': reason}
-                for _, c in scored[:n]]
+        def _reason(kw_hits, genre_hit, mood_hit) -> str:
+            # Round 47 fix B: each song's reason states what THIS song
+            # actually matched — never a shared template asserting a
+            # match that didn't happen.
+            if kw_hits:
+                return f"Matches '{' & '.join(kw_hits[:3])}'"
+            if genre_hit:
+                return (f"{_GENRE_DISPLAY.get(genre_hit, genre_hit.title())} "
+                        f"pick")
+            if mood_hit and mood:
+                return f"Fits the {mood} mood"
+            return "Picked for your theme"
+
+        return [{'artist': c['artist'], 'song': c['song'],
+                 'reason': _reason(kh, gh, mh)}
+                for _, c, kh, gh, mh in scored[:n]]
     except Exception as e:
         logger.debug(f"match_theme failed: {e}")
         return []
