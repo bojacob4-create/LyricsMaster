@@ -1,0 +1,47 @@
+round: 41
+title: /playlist — artist playlist (all-time + new + trending)
+summary: |
+  New /playlist [artist] [number] command. Builds a mixed playlist from
+  three live slices (no Spotify): Last.fm all-time top tracks, newest
+  iTunes releases, and the artist's songs in the live US Apple Top 100.
+  Default 12, max 15, every song tappable.
+tests:
+  - name: usage with no artist
+    section: command
+    command: /playlist
+    expect: Usage card showing "/playlist [artist] [number]" with Tyla examples
+    unit_only: false
+  - name: default 12 songs
+    section: command
+    command: /playlist Tyla
+    expect: "🎧 Tyla — Your Playlist" with 12 numbered songs, each with a note (⭐ All-time favorite / 🆕 New release / 🔥 Trending now), song buttons below, no 📏 notice
+    unit_only: false
+  - name: explicit count 13
+    section: command
+    command: /playlist Tyla 13
+    expect: Same card with exactly 13 songs
+    unit_only: false
+  - name: crazy number capped honestly
+    section: edge cases
+    command: /playlist Tyla 100
+    expect: 15 songs plus "📏 15 is the max that works in chat — here's your 15."
+    unit_only: false
+  - name: max 15 has no cap notice
+    section: edge cases
+    command: /playlist Tyla 15
+    expect: 15 songs, no 📏 notice
+    unit_only: false
+  - name: number in artist name still works
+    section: edge cases
+    command: /playlist Blink 182
+    expect: "🎧 Blink 182 — Your Playlist" with their songs (not an error about artist "Blink")
+    unit_only: false
+  - name: unknown artist is honest
+    section: edge cases
+    command: /playlist qwertyuiop
+    expect: "😕 Couldn't find any songs for "qwertyuiop"." — no empty card, no crash
+    unit_only: false
+  - name: "Tap any \U0001F3B5 song button under the playlist"
+    section: buttons
+    expect: The song dashboard opens (lyrics / MP3 / video buttons), matching that song
+    unit_only: false
