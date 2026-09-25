@@ -1,0 +1,81 @@
+round: 40
+title: /top is 100% live for all 9 genres
+summary: |
+  /top now serves live charts for every supported genre — the static fallback is gone.
+  K-pop pulls Korea's Apple Music chart, afrobeats pulls Nigeria's, the rest use the US chart,
+  and Last.fm fills any thin slices. Every song carries its own provenance label.
+tests:
+  - name: kpop is fully live
+    command: /top kpop
+    expect: |
+      7 songs, every one tagged "Charting now on Apple Music".
+      Source line reads "Source: Apple Music Charts".
+    note: Korea is kpop's home chart.
+  - name: afrobeats is fully live
+    command: /top afrobeats
+    expect: |
+      7 songs, every one tagged "Charting now on Apple Music".
+      Source line reads "Source: Apple Music Charts".
+    note: Nigeria is afrobeats' home chart.
+  - name: latin blends both live sources
+    command: /top latin
+    expect: |
+      7 songs mixing Apple Music chart entries with Last.fm trending tracks.
+      Each song carries its own provenance label, and the source line reads
+      "Sources: Apple Music Charts + Last.fm".
+  - name: every genre serves 7 live songs
+    command: /top pop
+    steps:
+      - Repeat for /top rap, /top rnb, /top rock, /top country, /top soul
+    expect: |
+      7 songs every time, no repeated artist inside one list,
+      each song labeled with its live provenance.
+  - name: unknown genre still answered
+    command: /top polka
+    expect: |
+      A "genre not found" style reply listing the 9 supported genres —
+      never a stale static list, never blaming the charts.
+  - name: resolve pop
+    unit_only: true
+  - name: resolve alias hip-hop -> rap
+    unit_only: true
+  - name: resolve alias k-pop -> kpop
+    unit_only: true
+  - name: resolve alias r&b -> rnb
+    unit_only: true
+  - name: resolve case-insensitive
+    unit_only: true
+  - name: resolve unknown -> None
+    unit_only: true
+  - name: resolve empty -> None
+    unit_only: true
+  - name: 9 genres
+    unit_only: true
+  - name: genre present
+    unit_only: true
+  - name: kpop -> Korea chart
+    unit_only: true
+  - name: afrobeats -> Nigeria chart
+    unit_only: true
+  - name: pop -> US chart
+    unit_only: true
+  - name: kpop tag is K-Pop
+    unit_only: true
+  - name: afrobeats tag is Afrobeats
+    unit_only: true
+  - name: rock matches Rock + Alternative
+    unit_only: true
+  - name: apple-full behavior (mocked sources)
+    unit_only: true
+  - name: thin-slice blending (mocked sources)
+    unit_only: true
+  - name: apple-down falls back to last.fm only
+    unit_only: true
+  - name: all sources down returns None, never static pool
+    unit_only: true
+  - name: dedup by artist
+    unit_only: true
+  - name: live smoke all songs live
+    unit_only: true
+  - name: live smoke served by home chart
+    unit_only: true
