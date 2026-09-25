@@ -92,7 +92,7 @@ check_true("accent is a 3-tuple",
 png_qr = sc.render_share_card("Adele", "Hello", ["line one"], None,
                               "https://t.me/MGLyricsbot?start=share_x")
 im_qr = Image.open(io.BytesIO(png_qr)).convert("RGB")
-crop = im_qr.crop((100, 1330, 440, 1700))  # QR zone, left bottom
+crop = im_qr.crop((120, 960, 420, 1240))  # QR zone, left bottom
 px = list(crop.getdata())
 avg = sum(sum(p) // 3 for p in px) / len(px)
 check_true("qr zone stays dark (no white block)", avg < 130)
@@ -102,20 +102,20 @@ art = Image.new("RGB", (600, 600), (40, 80, 200))
 png = sc.render_share_card("Adele", "Hello", ["line one", "line two"], art,
                            "https://t.me/MGLyricsbot?start=share_x")
 im = Image.open(io.BytesIO(png))
-check("render size", im.size, (1080, 1920))
+check("render size", im.size, (1080, 1350))
 check_true("render is PNG", png[:8] == b"\x89PNG\r\n\x1a\n")
 
 png2 = sc.render_share_card("Adele", "Hello", ["line one"], None,
                             "https://t.me/MGLyricsbot?start=share_x")
 check("no-artwork render size",
-      Image.open(io.BytesIO(png2)).size, (1080, 1920))
+      Image.open(io.BytesIO(png2)).size, (1080, 1350))
 
 png3 = sc.render_share_card(
     "Red Hot Chili Peppers",
     "Californication (Remastered Deluxe Edition Bonus Track Version)",
     ["a", "b", "c", "d", "e"], art, "https://t.me/x")
 check("long title no crash",
-      Image.open(io.BytesIO(png3)).size, (1080, 1920))
+      Image.open(io.BytesIO(png3)).size, (1080, 1350))
 
 # ── Tokens ─────────────────────────────────────────────────────────────────
 _orig_token_file = sc._TOKEN_FILE
