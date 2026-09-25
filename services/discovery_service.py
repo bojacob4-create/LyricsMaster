@@ -17,6 +17,7 @@ term search -> listener favorites); the pool is fallback/shortfall only.
 
 import json
 import logging
+import difflib
 import random as _rng
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -759,8 +760,14 @@ _DASH_RE = re.compile(r'\s*[-\u2013\u2014]\s*')  # hyphen, en dash, em dash
 def parse_extend_lines(text: str) -> List[Dict]:
     """Parse "Artist - Title" lines (also en/em dashes) into [{'artist','song'}].
 
-    Strips quotes/whitespace; skips garbage lines (no separator, empty side,
-    or lines that are too short to be a real entry).  Never raises.
+    Lines without a dash fall back to the bot-wide song-query parser, so
+    natural lines ("Tyla water") work exactly like they do everywhere else
+    in the bot (round 44).  The fallback only accepts a split whose artist
+    is a known artist, which both picks the right split for typos
+    ("Rema clam down" -> artist "Rema") and rejects prose lines.
+
+    Strips quotes/whitespace; skips garbage lines (empty side, or lines
+    that are too short to be a real entry).  Never raises.
     """
     try:
         out = []
@@ -770,6 +777,9 @@ def parse_extend_lines(text: str) -> List[Dict]:
                 continue
             parts = _DASH_RE.split(line, maxsplit=1)
             if len(parts) != 2:
+                entry = _parse_dashless_extend_line(line)
+                if entry:
+                    out.append(entry)
                 continue
             artist, song = parts[0].strip().strip('"\'“”‘’'), parts[1].strip().strip('"\'“”‘’')
             if len(artist) < 2 or len(song) < 2:
@@ -781,6 +791,51 @@ def parse_extend_lines(text: str) -> List[Dict]:
         return out
     except Exception:
         return []
+
+
+def _parse_dashless_extend_line(line: str) -> Optional[Dict]:
+    """Parse a dash-less "Artist Title" line via the shared query parser.
+
+    Returns the first candidate split whose artist is a known artist, else
+    None.  The known-artist gate picks the right split for typos
+    ("Rema clam down" -> "Rema"/"clam down", not "Rema clam"/"down")
+    and rejects prose lines ("junk line no dash").  Never raises.
+    """
+    try:
+        from input_parser import parse_song_query  # deferred: avoid import cycle
+        for artist, song in parse_song_query(line) or []:
+            a, s = (artist or '').strip(), (song or '').strip()
+            if len(a) >= 2 and len(s) >= 2 and a.lower() in ARTIST_GENRE_MAP:
+                return {'artist': a, 'song': s}
+        return None
+    except Exception:
+        return None
+
+
+def _song_keys_match(a1: str, t1: str, a2: str, t2: str) -> bool:
+    """Same song? Exact key match, or same artist + typo-level title match.
+
+    Catches input typos ("clam down" vs "Calm Down") that used to defeat
+    the /extend input-exclusion and get the user's own song recommended
+    back (round 44).  Never raises.
+    """
+    try:
+        if (a1, t1) == (a2, t2):
+            return True
+        if not a1 or a1 != a2 or not t1 or not t2:
+            return False
+        return difflib.SequenceMatcher(None, t1, t2).ratio() >= 0.85
+    except Exception:
+        return False
+
+
+def _is_excluded_song(artist: str, song: str, excluded) -> bool:
+    """True if (artist, song) matches any key in `excluded` (fuzzy)."""
+    a = (artist or '').lower().strip()
+    t = (song or '').lower().strip()
+    if not a or not t:
+        return False
+    return any(_song_keys_match(a, t, e[0], e[1]) for e in excluded)
 
 
 def get_recent_picks(user_id: int, n: int = 3) -> List[Dict]:
@@ -879,7 +934,7 @@ def get_extend_recs(songs: List[Dict], n: int = 5) -> List[Dict]:
 
         cands: List[Dict] = []
         for e in GENRE_TOP_SONGS.get(genre, []):
-            if _key(e['artist'], e['song']) in excluded:
+            if _is_excluded_song(e['artist'], e['song'], excluded):
                 continue
             note = e.get('note') or f'a top {genre} pick'
             cands.append({'artist': e['artist'], 'name': e['song'],
@@ -887,7 +942,7 @@ def get_extend_recs(songs: List[Dict], n: int = 5) -> List[Dict]:
         for e in RANDOM_SONGS_POOL:
             if ARTIST_GENRE_MAP.get(e['artist'].lower(), 'pop') != genre:
                 continue
-            if _key(e['artist'], e['song']) in excluded:
+            if _is_excluded_song(e['artist'], e['song'], excluded):
                 continue
             if any(_key(c['artist'], c['name']) == _key(e['artist'], e['song'])
                    for c in cands):
@@ -908,10 +963,9 @@ def get_extend_recs(songs: List[Dict], n: int = 5) -> List[Dict]:
             for s in live:
                 if len(out) >= n:
                     break
-                k = _key(s['artist'], s['name'])
-                if k in seen:
+                if _is_excluded_song(s['artist'], s['name'], seen):
                     continue
-                seen.add(k)
+                seen.add(_key(s['artist'], s['name']))
                 out.append({'artist': s['artist'], 'name': s['name'],
                             'reason': s.get('reason') or
                             f"Fits your {label} vibe"})
