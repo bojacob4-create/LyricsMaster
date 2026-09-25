@@ -1371,3 +1371,28 @@ def get_new_music(genre: Optional[str] = None,
     except Exception as e:
         logger.debug(f"get_new_music failed: {e}")
         return ([], False)
+
+
+def resolve_newmusic_genre(genre: Optional[str]) -> Optional[str]:
+    """Canonical genre key for /newmusic, or None if unknown (round 39).
+
+    Lets the command tell "unknown genre" apart from "charts are down" —
+    get_new_music returns ([], False) for both.
+    """
+    if not genre or not str(genre).strip():
+        return None
+    g = str(genre).lower().strip()
+    resolved = GENRE_ALIASES.get(g, g)
+    if resolved in APPLE_GENRE_MAP or resolved in GENRE_TOP_SONGS:
+        return resolved
+    return None
+
+
+def get_newmusic_genres() -> list:
+    """Sorted canonical genre keys /newmusic understands (round 39)."""
+    known = set()
+    for g in list(GENRE_ALIASES) + list(APPLE_GENRE_MAP) + list(GENRE_TOP_SONGS):
+        r = GENRE_ALIASES.get(g, g)
+        if r in APPLE_GENRE_MAP or r in GENRE_TOP_SONGS:
+            known.add(r)
+    return sorted(known)

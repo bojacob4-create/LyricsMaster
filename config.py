@@ -15,8 +15,6 @@ class Config:
         "pool_pre_ping": True,
     }
 
-    # Telegram configuration
-    TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 
     # Production settings
     DEBUG = False

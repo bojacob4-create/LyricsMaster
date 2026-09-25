@@ -64,12 +64,13 @@ from services.discovery_service import (
     parse_extend_lines, get_recent_picks, blend_vibe, get_extend_recs,
     interpret_theme, match_theme,
     DECADE_POOLS, normalize_decade, get_throwback,
-    get_new_music,
+    get_new_music, resolve_newmusic_genre, get_newmusic_genres,
 )
 from services.fun_service import (
     create_duel, join_duel, get_duel_questions,
     record_duel_answer, duel_standings, delete_duel,
     get_daily_status, record_daily_play, make_daily_questions,
+    mark_daily_started,
     get_emoji_puzzle, check_emoji_guess,
     log_interaction, get_music_stats,
     BADGES, award_badge, get_user_badges, auto_award_from_stats,
@@ -296,6 +297,13 @@ def quiz_command(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     try:
         logger.debug(f"Starting quiz for user {user_id}")
+        # Round 39: start_quiz returns the existing session when one is
+        # active — don't present it as a fresh start ("Let's Go!"), or the
+        # user thinks /quiz restarted their game.
+        already_playing = bool(
+            active_quizzes.get(user_id)
+            and active_quizzes[user_id].get("state") == "active"
+        )
         quiz_data = start_quiz(user_id, mode="multiple_choice")
         if not quiz_data:
             update.message.reply_text(
@@ -304,13 +312,20 @@ def quiz_command(update: Update, context: CallbackContext):
             )
             return
 
-        response = (
-            "🎮 Lyrics Quiz — Let's Go!\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "I'll show you lyrics from famous songs.\n"
-            "Reply with A, B, C, or D to guess the song.\n"
-            "Use /endquiz to finish early.\n\n"
-        )
+        if already_playing:
+            response = (
+                "🎮 You're already in a quiz — no restart, don't worry!\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Here's your current question:\n\n"
+            )
+        else:
+            response = (
+                "🎮 Lyrics Quiz — Let's Go!\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "I'll show you lyrics from famous songs.\n"
+                "Reply with A, B, C, or D to guess the song.\n"
+                "Use /endquiz to finish early.\n\n"
+            )
         response += format_quiz_question(quiz_data["current_question"], quiz_data)
 
         # Round 4: stats + first-quiz badge
@@ -4799,6 +4814,17 @@ def _send_extend_results(update, user_id: int, songs: list, intro: str):
 
 # ── 3. /about ─────────────────────────────────────────────────────────────
 
+def _clean_about_query(query: str) -> str:
+    """Strip a leading 'songs about' from an /about query (round 39).
+
+    The no-args help suggests "/about songs about starting over" — without
+    this the header renders "Songs about songs about starting over".
+    Matching still uses the full query; only the display header is cleaned.
+    """
+    cleaned = re.sub(r'(?i)^\s*songs?\s+about\s+', '', query or '').strip()
+    return cleaned or query
+
+
 def about_command(update: Update, context: CallbackContext):
     """Handle /about — find songs by theme/meaning."""
     user_id = update.effective_user.id
@@ -4829,7 +4855,9 @@ def about_command(update: Update, context: CallbackContext):
             return
 
         keywords = ', '.join(theme.get('keywords', [])[:5])
-        header = f"💭 *Songs about {query}*" if len(query) < 40 else "💭 *Theme match*"
+        header_query = _clean_about_query(query)
+        header = (f"💭 *Songs about {header_query}*"
+                  if len(header_query) < 40 else "💭 *Theme match*")
         lines = [header, "━━━━━━━━━━━━━━━━━━━━━", ""]
         if keywords:
             lines.append(f"Reading it as: {keywords}")
@@ -4926,10 +4954,24 @@ def newmusic_command(update: Update, context: CallbackContext):
         update.message.chat.send_action(action="typing")
         songs, is_live = get_new_music(genre, 5)
         if not songs:
-            update.message.reply_text(
-                "😓 Couldn't fetch the charts right now.\n"
-                "Please try again! 🔄"
-            )
+            # Round 39: tell "unknown genre" apart from "charts are down" —
+            # get_new_music returns ([], False) for both, and blaming the
+            # charts for a bad genre is misleading (mirrors /top).
+            if genre and not resolve_newmusic_genre(genre):
+                genres = get_newmusic_genres()
+                genre_list = ', '.join(
+                    g.upper() if g in ('rnb', 'kpop') else g.title()
+                    for g in genres)
+                update.message.reply_text(
+                    f"😕 Genre \"{genre}\" not found.\n\n"
+                    f"Try one of these: {genre_list}\n\n"
+                    "Example: /newmusic pop"
+                )
+            else:
+                update.message.reply_text(
+                    "😓 Couldn't fetch the charts right now.\n"
+                    "Please try again! 🔄"
+                )
             return
 
         if is_live:
@@ -5197,6 +5239,10 @@ def daily_command(update: Update, context: CallbackContext):
             return
 
         active_daily[user_id] = {'questions': questions, 'idx': 0, 'score': 0}
+        # Round 39: starting counts as playing — mark it NOW so a second
+        # /daily (or /daily -> /cancel -> /daily) can't re-roll the questions.
+        # Streaks are still only computed when the game finishes.
+        mark_daily_started(user_id)
         streak_line = ""
         if status.get('streak', 0) > 0:
             streak_line = f"\n🔥 You're on a *{status['streak']}*-day streak — keep it going!"

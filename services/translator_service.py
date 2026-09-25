@@ -1,65 +1,80 @@
-from googletrans import Translator
-from typing import Optional
+"""Translation service — requests-based Google Translate (gtx endpoint).
+
+Round 39: replaced googletrans with a direct requests call to
+translate.googleapis.com. googletrans's Translator() crashed at __init__ on
+this host because httpx couldn't parse the NO_PROXY env var ('[::1]' ->
+InvalidURL), and even bypassed, direct TLS to Google is blocked here —
+traffic must go through the egress proxy. requests handles the proxy fine
+(every other backend in this bot proves it), and a live probe confirmed
+the gtx endpoint answers through it.
+
+Public interface is unchanged: translate_text, translate_chunk,
+translate_to_arabic, get_language_code, get_language_display,
+get_supported_languages_text, SUPPORTED_LANGUAGES, LANGUAGE_DISPLAY_NAMES.
+"""
 import logging
 import time
+from typing import Optional
+
+import requests
 
 logger = logging.getLogger(__name__)
 
-def get_translator():
-    """Initialize translator with retries."""
-    retries = 3
-    for i in range(retries):
+# Undocumented but stable Google Translate endpoint used by browser clients.
+_GTX_URL = "https://translate.googleapis.com/translate_a/single"
+_GTX_TIMEOUT = 15
+# This egress IP is throttled by Google on bursts: retry 429/5xx with backoff.
+_GTX_MAX_ATTEMPTS = 3
+_GTX_BACKOFFS = (2, 4)  # seconds before attempt 2 and 3
+# Pause between chunks of a multi-chunk translation to stay under the burst
+# limit (a song is several rapid requests otherwise).
+_CHUNK_PAUSE = 0.5
+
+
+def _gtx_translate(text: str, dest_lang: str) -> Optional[str]:
+    """Translate one chunk via the gtx endpoint. Returns None on any failure."""
+    if not text or not text.strip():
+        return None
+    last_err = None
+    for attempt in range(_GTX_MAX_ATTEMPTS):
         try:
-            translator = Translator()
-            # Test the translator
-            test_result = translator.translate('test', dest='ar')
-            if test_result and test_result.text:
-                logger.info("Translator initialized successfully")
-                return translator
-            logger.warning("Translator returned empty result during test")
+            resp = requests.get(
+                _GTX_URL,
+                params={
+                    "client": "gtx",
+                    "sl": "auto",
+                    "tl": dest_lang,
+                    "dt": "t",
+                    "q": text,
+                },
+                timeout=_GTX_TIMEOUT,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            # data[0] is a list of [translated, original, ...] segments.
+            segments = data[0] if isinstance(data, list) and data else []
+            parts = [seg[0] for seg in segments
+                     if isinstance(seg, list) and seg and seg[0]]
+            result = "".join(parts).strip()
+            return result or None
+        except requests.HTTPError as e:
+            last_err = e
+            status = e.response.status_code if e.response is not None else None
+            if status in (429, 500, 502, 503) and attempt < _GTX_MAX_ATTEMPTS - 1:
+                wait = _GTX_BACKOFFS[attempt]
+                logger.warning(
+                    f"gtx translate got {status}, retrying in {wait}s "
+                    f"(attempt {attempt + 1})")
+                time.sleep(wait)
+                continue
+            logger.error(f"gtx translate HTTP failed (dest={dest_lang}): {e}")
+            return None
         except Exception as e:
-            logger.error(f"Attempt {i+1}/{retries} failed to initialize translator: {e}")
-            if i < retries - 1:
-                time.sleep(1)  # Wait before retrying
+            last_err = e
+            logger.error(f"gtx translate failed (dest={dest_lang}): {e}")
+            return None
+    logger.error(f"gtx translate exhausted retries (dest={dest_lang}): {last_err}")
     return None
-
-# Lazily-initialized translator (round 6 QA): the old code ran
-# get_translator() once at import; if it failed (proxy hiccup, googletrans
-# outage) translations were dead until the next restart. Now the first use
-# (and any later failure) re-probes, at most once every 60s.
-translator = None
-_translator_last_probe = 0.0
-
-
-def _get_translator():
-    global translator, _translator_last_probe
-    if translator is not None:
-        return translator
-    now = time.time()
-    if now - _translator_last_probe < 60:
-        return None
-    _translator_last_probe = now
-    translator = get_translator()
-    return translator
-
-
-def _translate_chunk_uncached(text: str, dest_lang: str = 'ar') -> Optional[str]:
-    """Translate a single chunk of text (no caching — see translate_chunk)."""
-    try:
-        t = _get_translator()
-        if not t:
-            logger.error("Translator not initialized")
-            return None
-
-        if not text:
-            return None
-
-        translation = t.translate(text, dest=dest_lang)
-        return translation.text if translation else None
-
-    except Exception as e:
-        logger.error(f"Error translating chunk: {e}")
-        return None
 
 
 # Success-only cache: failed translations (None) are never cached, so a
@@ -73,12 +88,13 @@ def translate_chunk(text: str, dest_lang: str = 'ar') -> Optional[str]:
     key = (text, dest_lang)
     if key in _chunk_cache:
         return _chunk_cache[key]
-    result = _translate_chunk_uncached(text, dest_lang)
+    result = _gtx_translate(text, dest_lang)
     if result is not None:
         if len(_chunk_cache) >= _CHUNK_CACHE_MAX:
             _chunk_cache.pop(next(iter(_chunk_cache)))
         _chunk_cache[key] = result
     return result
+
 
 SUPPORTED_LANGUAGES = {
     'arabic': 'ar', 'ar': 'ar',
@@ -150,13 +166,6 @@ def translate_to_arabic(text: str) -> Optional[str]:
 
 def translate_text(text: str, dest_lang: str = 'ar') -> Optional[str]:
     try:
-        # NOTE: the module-global `translator` stays None until first use —
-        # always go through _get_translator(), never check the global directly.
-        t = _get_translator()
-        if not t:
-            logger.error("Translator not initialized")
-            return None
-
         if not text:
             logger.warning("Empty text provided for translation")
             return None
@@ -164,7 +173,9 @@ def translate_text(text: str, dest_lang: str = 'ar') -> Optional[str]:
         chunks = [text[i:i+1000] for i in range(0, len(text), 1000)]
         translated_chunks = []
 
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks):
+            if i:
+                time.sleep(_CHUNK_PAUSE)  # stay under Google's burst limit
             translated_chunk = translate_chunk(chunk, dest_lang)
             if translated_chunk:
                 translated_chunks.append(translated_chunk)

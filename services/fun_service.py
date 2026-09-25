@@ -384,7 +384,13 @@ def _today_str(today: Optional[str]) -> str:
 
 
 def get_daily_status(user_id: int, today: str = None) -> Dict:
-    """{'can_play': bool, 'streak': int, 'best_streak': int}."""
+    """{'can_play': bool, 'streak': int, 'best_streak': int}.
+
+    can_play is False once the user has STARTED today's game — starting
+    counts as playing (round 39: previously only a finished game was
+    recorded, so /daily -> /daily or /daily -> /cancel -> /daily silently
+    re-rolled the questions).
+    """
     try:
         today = _today_str(today)
         data = _load_json(DAILY_PATH)
@@ -392,12 +398,34 @@ def get_daily_status(user_id: int, today: str = None) -> Dict:
         if not isinstance(entry, dict):
             entry = {}
         return {
-            "can_play": entry.get("last_played") != today,
+            "can_play": (entry.get("last_played") != today
+                         and entry.get("last_started") != today),
             "streak": int(entry.get("streak", 0) or 0),
             "best_streak": int(entry.get("best_streak", 0) or 0),
         }
     except Exception:
         return {"can_play": True, "streak": 0, "best_streak": 0}
+
+
+def mark_daily_started(user_id: int, today: str = None) -> None:
+    """Record that today's daily game was started (round 39).
+
+    Writes last_started without touching streak/best_streak/last_played —
+    streaks are still computed only when the game is FINISHED via
+    record_daily_play. Never raises.
+    """
+    try:
+        today = _today_str(today)
+        data = _load_json(DAILY_PATH)
+        key = str(user_id)
+        entry = data.get(key, {})
+        if not isinstance(entry, dict):
+            entry = {}
+        entry["last_started"] = today
+        data[key] = entry
+        _save_json(DAILY_PATH, data)
+    except Exception as e:
+        logger.warning(f"mark_daily_started failed: {e}")
 
 
 def record_daily_play(user_id: int, score: int, total: int,
