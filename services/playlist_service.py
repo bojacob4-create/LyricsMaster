@@ -109,6 +109,48 @@ def _dedup_key(title):
     return _clean_song_title(title).lower().strip()
 
 
+def _qualifier_segments(title):
+    """The qualifier parts of a title: parentheticals, brackets, ' - ' tails.
+
+    Only these segments are ever judged for variant/junk markers — the bare
+    title is never flagged, so "Live Your Life" and "Cover Me" stay safe.
+    """
+    t = title or ''
+    segs = re.findall(r'\([^)]*\)', t) + re.findall(r'\[[^\]]*\]', t)
+    parts = t.split(' - ')
+    if len(parts) > 1:
+        segs.append(' - '.join(parts[1:]))
+    return ' '.join(segs).lower()
+
+
+# Qualifier markers that demote a "new" pick to fallback: the recording is
+# genuinely the artist's, but it is not the canonical studio song.
+_SOFT_VARIANT_RES = [
+    r'\blive\b', r'\bunplugged\b', r'\bacoustic\b', r'\bconcert\b',
+    r'\btour\b', r'\bfestival\b', r'\bsession\b', r'\bnpr\b',
+    r'\btiny desk\b', r'\bremix\b', r'\bremaster(?:ed)?\b', r'\bcover\b',
+]
+
+# Qualifier fragments that are never the artist's recording at all —
+# karaoke/tribute/8D/sped-up fare (cf. _JUNK_TITLE_BITS in
+# discovery_service, which guards the mood mixes the same way).
+_JUNK_VARIANT_BITS = ('karaoke', 'tribute', '8d audio', '8d', 'slowed',
+                     'sped up', 'nightcore', '1 hour', '10 hours',
+                     'sing along', 'sax solo', 'reverb version')
+
+
+def _is_soft_variant(title):
+    """A live/cover/remix/remaster qualifier: real recording, not canonical."""
+    quals = _qualifier_segments(title)
+    return any(re.search(p, quals) for p in _SOFT_VARIANT_RES)
+
+
+def _is_junk_variant(title):
+    """Karaoke/tribute/8D-style qualifier: not the artist's recording."""
+    quals = _qualifier_segments(title)
+    return any(b in quals for b in _JUNK_VARIANT_BITS)
+
+
 def _lastfm_all_time(artist, limit):
     """All-time most-played tracks for the artist. [title, ...]."""
     try:
@@ -169,8 +211,17 @@ def _itunes_new_songs(artist, limit):
             seen.add(key)
             picks.append((tname, date))
         picks.sort(key=lambda p: p[1], reverse=True)
+        # Prefer canonical studio recordings: demote live/cover/remix
+        # variants to the back of the line, drop karaoke/tribute junk
+        # outright. A real variant still beats an empty slice, so it stays
+        # as fallback rather than being skipped.
+        clean, variants = [], []
+        for t, d in picks:
+            if _is_junk_variant(t):
+                continue
+            (variants if _is_soft_variant(t) else clean).append((t, d))
         canonical = max(name_votes, key=name_votes.get) if name_votes else None
-        return canonical, picks[:limit]
+        return canonical, (clean + variants)[:limit]
     except Exception as e:
         logger.debug(f"playlist iTunes miss for '{artist}': {e}")
         return None, []

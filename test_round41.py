@@ -22,6 +22,10 @@ def check(name, cond):
     print(f"{'PASS' if cond else 'FAIL'}: {name}")
 
 
+# Originals saved before the mock-heavy sections below rebind them.
+_REAL_ITUNES_NEW_SONGS = PS._itunes_new_songs
+
+
 # ── argument parsing ──────────────────────────────────────────────────────
 a, c, cap, fb = PS.parse_playlist_args(['Tyla'])
 check("bare artist -> default 12", (a, c, cap, fb) == ('Tyla', 12, False, None))
@@ -170,6 +174,74 @@ check("capped notice is honest",
 text = PS.format_playlist(display, songs, capped=False,
                            meta={'short': {'new': 2}, 'rebalanced': True})
 check("shortfall notice names the slice", "new releases" in text)
+
+# ── studio-first ordering in the new slice ──────────────────────────────
+check("live qualifier is a soft variant",
+      PS._is_soft_variant("Stan (Live At Wembley 2014)"))
+check("dash live qualifier is a soft variant",
+      PS._is_soft_variant("Hello - Live at the BRITs"))
+check("remaster is a soft variant",
+      PS._is_soft_variant("Mockingbird (Remastered 2026)"))
+check("cover qualifier is a soft variant",
+      PS._is_soft_variant("Halo (Cover)"))
+check("plain title is not a variant",
+      not PS._is_soft_variant("Stan"))
+check("bare 'Live Your Life' is safe",
+      not PS._is_soft_variant("Live Your Life"))
+check("bare 'Cover Me' is safe",
+      not PS._is_soft_variant("Cover Me"))
+check("karaoke qualifier is junk",
+      PS._is_junk_variant("Stan (Karaoke Version)"))
+check("8D qualifier is junk",
+      PS._is_junk_variant("Stan (8D Audio)"))
+check("plain title is not junk",
+      not PS._is_junk_variant("Stan"))
+
+
+class _FakeResp:
+    status_code = 200
+
+    def __init__(self, payload):
+        self._p = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._p
+
+
+def _fake_itunes(url, params=None, timeout=None):
+    return _FakeResp({'results': [
+        {'artistName': 'Eminem',
+         'trackName': 'Stan (Live At Wembley 2014)',
+         'releaseDate': '2026-08-25T07:00:00Z', 'kind': 'song'},
+        {'artistName': 'Eminem', 'trackName': 'Houdini',
+         'releaseDate': '2026-05-31T07:00:00Z', 'kind': 'song'},
+        {'artistName': 'Eminem', 'trackName': 'Stan (Karaoke)',
+         'releaseDate': '2026-01-01T07:00:00Z', 'kind': 'song'},
+        {'artistName': 'Eminem', 'trackName': 'Mockingbird (Remastered 2026)',
+         'releaseDate': '2026-06-01T07:00:00Z', 'kind': 'song'},
+    ]})
+
+
+_real_get = PS.requests.get
+PS.requests.get = _fake_itunes
+PS._itunes_new_songs = _REAL_ITUNES_NEW_SONGS  # undo earlier section mocks
+try:
+    display, new_pairs = PS._itunes_new_songs('eminem', 10)
+finally:
+    PS.requests.get = _real_get
+
+ordered = [t for t, _ in new_pairs]
+check("studio-first: clean songs lead", ordered[0] == 'Houdini')
+check("studio-first: variants follow newest-first",
+      ordered[1:] == ['Stan (Live At Wembley 2014)',
+                      'Mockingbird (Remastered 2026)'])
+check("studio-first: karaoke dropped",
+      not any('karaoke' in t.lower() for t in ordered))
+check("studio-first: variant survives as fallback",
+      'Stan (Live At Wembley 2014)' in ordered)
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 sys.exit(1 if FAIL else 0)
