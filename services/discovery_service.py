@@ -218,6 +218,40 @@ _SOFT_MOOD_GENRE_CLASH = {
 }
 
 
+# Soft moods must not serve high-energy titles either: a song called
+# "Dance"/"Party"/"Club" wears the artist's own energy label — honor it
+# (round 46: Whitney Houston "I Wanna Dance with Somebody" leaked into a
+# Relaxed /extend set via the random pool).  Titles carrying an explicit
+# soft qualifier ("Slow Dancing in the Dark") are spared.  Word-boundary
+# matched; protects sad/relaxed/focus only, like the gates above.
+_HYPE_TITLE_WORDS = ('dance', 'dancing', 'party', 'parties', 'club',
+                     'twerk', 'mosh', 'rave', 'jump', 'jumping', 'bounce',
+                     'turn up', 'turnt', 'hands up')
+_HYPE_TITLE_RE = re.compile(r'\b(?:' + '|'.join(_HYPE_TITLE_WORDS) + r')\b',
+                            re.I)
+_SOFT_QUALIFIER_RE = re.compile(
+    r'\b(?:slow|slower|slowly|soft|softly|gentle|quiet|lullaby|unplugged|'
+    r'stripped)\b', re.I)
+_SOFT_MOODS = frozenset({'sad', 'relaxed', 'focus'})
+
+
+def _title_fits_soft_mood(title: str, mood: str) -> bool:
+    """True when a candidate title may serve the given mood.
+
+    For sad/relaxed/focus, rejects titles with an unambiguous high-energy
+    marker unless a soft qualifier is present.  Never raises.
+    """
+    try:
+        if mood not in _SOFT_MOODS:
+            return True
+        t = str(title or '')
+        if not _HYPE_TITLE_RE.search(t):
+            return True
+        return bool(_SOFT_QUALIFIER_RE.search(t))
+    except Exception:
+        return True
+
+
 def _norm_title(t: str) -> str:
     """Normalize a song title for dedup: lowercase, drop bracketed extras
     ("(Remix)", "[Live]"), collapse whitespace."""
@@ -937,6 +971,8 @@ def get_extend_recs(songs: List[Dict], n: int = 5) -> List[Dict]:
         for e in GENRE_TOP_SONGS.get(genre, []):
             if _is_excluded_song(e['artist'], e['song'], excluded):
                 continue
+            if not _title_fits_soft_mood(e['song'], mood):
+                continue  # round 46: no hype titles in soft moods
             # Round 45: the vibe is stated once in the message header —
             # per-song reasons carry only the distinctive note (or none).
             note = (e.get('note') or '').strip()
@@ -947,6 +983,8 @@ def get_extend_recs(songs: List[Dict], n: int = 5) -> List[Dict]:
                 continue
             if _is_excluded_song(e['artist'], e['song'], excluded):
                 continue
+            if not _title_fits_soft_mood(e['song'], mood):
+                continue  # round 46: no hype titles in soft moods
             if any(_key(c['artist'], c['name']) == _key(e['artist'], e['song'])
                    for c in cands):
                 continue
@@ -968,6 +1006,8 @@ def get_extend_recs(songs: List[Dict], n: int = 5) -> List[Dict]:
                     break
                 if _is_excluded_song(s['artist'], s['name'], seen):
                     continue
+                if not _title_fits_soft_mood(s['name'], mood):
+                    continue  # round 46: no hype titles in soft moods
                 seen.add(_key(s['artist'], s['name']))
                 out.append({'artist': s['artist'], 'name': s['name'],
                             'reason': s.get('reason') or ''})
