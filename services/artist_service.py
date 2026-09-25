@@ -597,6 +597,67 @@ APPLE_GENRE_MAP = {
     'afrobeats': ('ng', 'Afrobeats'),
 }
 
+# genre key -> Apple RSS genre id for the genre's OWN chart
+# (https://itunes.apple.com/us/rss/topsongs/.../genre=<id>/json).
+# Keys absent here (kpop, afrobeats) have no RSS genre chart and keep the
+# country-chart tag-filter path.
+APPLE_RSS_GENRE_ID = {
+    'pop': '14',
+    'rap': '18',
+    'rnb': '15',
+    'soul': '15',
+    'rock': '21',
+    'country': '6',
+    'latin': '12',
+}
+
+
+def _fetch_apple_genre_chart(genre_id: str, country: str = 'us',
+                             limit: int = 100) -> Optional[List[Dict]]:
+    """Fetch a genre's own Apple chart (e.g. the Pop Top 100)."""
+    try:
+        r = session.get(
+            f'https://itunes.apple.com/{country}/rss/topsongs/'
+            f'limit={limit}/genre={genre_id}/json',
+            timeout=10,
+            headers={'User-Agent': 'LyricsMasterBot/1.0'})
+        if r.status_code != 200:
+            return None
+        entries = r.json().get('feed', {}).get('entry', [])
+        songs = []
+        for e in entries:
+            artist = ((e.get('im:artist') or {}).get('label') or '').strip()
+            name = ((e.get('im:name') or {}).get('label') or '').strip()
+            if not artist or not name:
+                continue
+            songs.append({'artist': artist, 'song': name, 'genres': []})
+        return songs if len(songs) >= 10 else None
+    except Exception as e:
+        logger.debug(f"Apple genre chart fetch error ({genre_id}): {e}")
+        return None
+
+
+_genre_chart_cache: Dict[tuple, dict] = {}
+
+
+def _get_cached_genre_chart(genre_id: str,
+                            country: str = 'us') -> Optional[List[Dict]]:
+    """Hourly-cached genre chart. []/None on any miss. Never raises."""
+    import time
+    now = time.time()
+    key = (country, genre_id)
+    entry = _genre_chart_cache.get(key)
+    if entry and entry['songs'] and \
+            (now - entry['timestamp']) < CHART_CACHE_TTL:
+        return entry['songs']
+    songs = _fetch_apple_genre_chart(genre_id, country)
+    if not songs:
+        songs = _fetch_apple_genre_chart(genre_id, country)  # one retry
+    if songs:
+        _genre_chart_cache[key] = {'songs': songs, 'timestamp': now}
+    return songs
+
+
 # genre key -> Last.fm tag. Fills thin Apple slices so a /top card is always
 # full AND always live — the static curated pool is never served here.
 LASTFM_GENRE_TAG = {
@@ -759,12 +820,16 @@ def _get_lastfm_genre_songs(genre_key: str, exclude_artists=frozenset(),
     return out
 
 
-def _get_live_genre_songs(genre_key: str) -> Optional[List[Dict]]:
+def _get_live_genre_songs(genre_key: str,
+                          deep: bool = False) -> Optional[List[Dict]]:
     """All-live genre top list.
 
-    Tier 1: the genre's home Apple chart slice (kpop -> Korea, afrobeats ->
-    Nigeria, rest -> US), up to 12, artists deduped.
-    Tier 2: Last.fm tag tracks top the card up to 12 when the slice is thin.
+    Tier 1: the genre's Apple chart — with deep=True the genre's OWN chart
+    (pop -> the Pop Top 100 via APPLE_RSS_GENRE_ID; keys without an RSS
+    genre, e.g. kpop/afrobeats, keep the home-country chart slice:
+    kpop -> Korea, afrobeats -> Nigeria, rest -> US), artists deduped.
+    With deep=False (the /top path) the home-country slice, as before.
+    Tier 2: Last.fm tag tracks top the card up when the slice is thin.
     Returns None when EVERY live source fails — callers show an honest
     charts-unreachable message; the static pool is never served here.
     """
@@ -774,14 +839,20 @@ def _get_live_genre_songs(genre_key: str) -> Optional[List[Dict]]:
     country, tags = mapping
     if isinstance(tags, str):
         tags = [tags]
+    # /top (deep=False) keeps its exact round-51 contract: walk to 12,
+    # Last.fm top-up only when the slice is thinner than 7.
+    walk_to, min_full = (30, 30) if deep else (12, 7)
 
     songs = []
     seen_artists = set()
     seen_songs = set()
-    raw = _get_cached_chart(country)
+    gid = APPLE_RSS_GENRE_ID.get(genre_key) if deep else None
+    raw = (_get_cached_genre_chart(gid, country) if gid
+           else _get_cached_chart(country))
     if raw:
         for item in raw:
-            if not any(t in item.get('genres', []) for t in tags):
+            if gid is None and not any(t in item.get('genres', [])
+                                       for t in tags):
                 continue
             akey = item['artist'].lower()
             skey = (akey, item['song'].lower())
@@ -794,13 +865,13 @@ def _get_live_genre_songs(genre_key: str) -> Optional[List[Dict]]:
                 'song': item['song'],
                 'note': 'Charting now on Apple Music',
             })
-            if len(songs) >= 12:
+            if len(songs) >= walk_to:
                 break
 
-    if len(songs) < 7:
+    if len(songs) < min_full:
         songs.extend(_get_lastfm_genre_songs(
             genre_key, exclude_artists=seen_artists,
-            exclude_songs=seen_songs, limit=12 - len(songs)))
+            exclude_songs=seen_songs, limit=walk_to - len(songs)))
 
     return songs if songs else None
 

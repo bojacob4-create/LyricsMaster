@@ -39,7 +39,7 @@ d._itunes_earliest_release = lambda a, t: None  # no network in this suite
 
 # ── rotation over the genre-live path ───────────────────────────────
 _old_live = d._get_live_genre_songs
-d._get_live_genre_songs = lambda g: list(LIVE12)
+d._get_live_genre_songs = lambda g, deep=False: list(LIVE12)
 try:
     d._NEWMUSIC_SEEN.clear()
     c1, lv1 = d.get_new_music("pop", 5, user_id=111)
@@ -99,7 +99,7 @@ finally:
 
 # ── regression: is_new flags still attached ────────────────────────
 d._NEWMUSIC_SEEN.clear()
-d._get_live_genre_songs = lambda g: list(LIVE12[:5])
+d._get_live_genre_songs = lambda g, deep=False: list(LIVE12[:5])
 try:
     songs, _ = d.get_new_music("pop", 5, user_id=111)
     check("regression: is_new present on rotated picks",

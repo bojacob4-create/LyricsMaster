@@ -5094,13 +5094,13 @@ def newmusic_command(update: Update, context: CallbackContext):
 
         if is_live:
             header = ("🔥 *Hot Right Now*\n"
-                      "What everyone's playing on the charts:")
-            footer_note = ("\n_Charts update regularly — "
-                           "🆕 marks releases from the last 2 years._")
+                      "Fresh releases first, then what's charting:")
+            footer_note = ("\n_Freshest first — "
+                           "🆕 marks releases from the last 60 days._")
         else:
             header = ("🔥 *Hot Right Now*\n"
                       "Popular picks while the live chart refreshes:")
-            footer_note = ("_🆕 marks releases from the last 2 years._"
+            footer_note = ("_🆕 marks releases from the last 60 days._"
                            if any(s.get('is_new') for s in songs) else "")
         lines = [header, "━━━━━━━━━━━━━━━━━━━━━", ""]
         rank_emoji = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣']

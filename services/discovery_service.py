@@ -1828,49 +1828,51 @@ def get_new_music(genre: Optional[str] = None,
                   user_id: Optional[int] = None) -> Tuple[List[Dict], bool]:
     """([{'artist','song','note','is_new'}], is_live).
 
-    Uses artist_service.get_trending_songs() (live Apple chart, 1-hour cache)
-    and _get_live_genre_songs() when the genre maps via GENRE_ALIASES /
-    APPLE_GENRE_MAP.  When the chart fetch fails or is empty, falls back to
-    the curated TRENDING_SONGS / GENRE_TOP_SONGS pools and returns
-    is_live=False — the 'note' always labels the source honestly.
-    Every song also carries 'is_new' (released within NEWMUSIC_NEW_YEARS),
-    resolved via free iTunes releaseDate lookups.  Never raises.
+    Live paths: the genre's OWN Apple chart (deep, via _get_live_genre_songs
+    deep=True) or the US trending chart, ordered fresh-first — releases from
+    the last NEWMUSIC_NEW_DAYS days lead (newest first), then chart order.
+    Every song carries 'is_new', resolved via free iTunes releaseDate
+    lookups.  When the chart fetch fails or is empty, falls back to the
+    curated TRENDING_SONGS / GENRE_TOP_SONGS pools and returns is_live=False
+    — the 'note' always labels the source honestly.  Never raises.
 
-    Repeated calls with the same user_id rotate through the live slice
+    Repeated calls with the same user_id rotate through the ordered pool
     (per-genre no-repeat memory, cycling when exhausted) instead of
     serving the identical top-5 every time within the chart cache window.
     Without a user_id the first window is served, as before.
     """
-    songs, is_live = _get_new_music_raw(genre, n, user_id)
-    return _annotate_new_flags(songs), is_live
-
-
-def _get_new_music_raw(genre: Optional[str] = None,
-                       n: int = 5,
-                       user_id: Optional[int] = None) -> Tuple[List[Dict], bool]:
-    """Inner fetch; live paths rotate per user, pool fallbacks stay random."""
     try:
         n = max(1, int(n or 5))
     except Exception:
         n = 5
+    cands, is_live, gkey = _get_new_music_candidates(genre, n)
+    if is_live:
+        cands = _fresh_first(cands)
+    else:
+        cands = _mark_fresh(cands)
+    return _newmusic_rotate(cands, user_id, gkey, n), is_live
+
+
+def _get_new_music_candidates(
+        genre: Optional[str] = None, n: int = 5
+) -> Tuple[List[Dict], bool, str]:
+    """(full candidate list, is_live, rotation key). Never raises."""
     try:
         if genre:
             g = str(genre).lower().strip()
             resolved = GENRE_ALIASES.get(g, g)
             if resolved in APPLE_GENRE_MAP:
                 try:
-                    live = _get_live_genre_songs(resolved)
+                    live = _get_live_genre_songs(resolved, deep=True)
                 except Exception:
                     live = None
                 if live:
-                    cands = [dict(s) for s in live]
-                    return (_newmusic_rotate(cands, user_id, resolved, n),
-                            True)
+                    return ([dict(s) for s in live], True, resolved)
             pool = GENRE_TOP_SONGS.get(resolved)
             if pool:
                 picks = _rng.sample(pool, min(n, len(pool)))
-                return ([dict(s) for s in picks], False)
-            return ([], False)
+                return ([dict(s) for s in picks], False, resolved)
+            return ([], False, resolved)
 
         try:
             songs, is_live = get_trending_songs()
@@ -1885,14 +1887,14 @@ def _get_new_music_raw(genre: Optional[str] = None,
                              'Charting now on Apple Music' if is_live
                              else 'Popular right now')
                 out.append(d)
-            return (_newmusic_rotate(out, user_id, "", n), bool(is_live))
+            return (out, bool(is_live), "")
 
         # Chart empty/down: curated fallback, honestly labeled.
         picks = _rng.sample(TRENDING_SONGS, min(n, len(TRENDING_SONGS)))
-        return ([dict(s) for s in picks], False)
+        return ([dict(s) for s in picks], False, "")
     except Exception as e:
         logger.debug(f"get_new_music failed: {e}")
-        return ([], False)
+        return ([], False, "")
 
 
 # ── /newmusic "new" badges (round 50) ────────────────────────────────────
@@ -1900,7 +1902,7 @@ def _get_new_music_raw(genre: Optional[str] = None,
 # as /playlist's 🆕 slice.  Free iTunes Search releaseDate lookups, cached
 # in memory and run in parallel.  The earliest strict match wins, so a 2024
 # remaster of a 1985 song is NOT marked new.  Never raises.
-NEWMUSIC_NEW_YEARS = 2
+NEWMUSIC_NEW_DAYS = 60  # 'new' = released within the last N days
 _NEWMUSIC_YEAR_CACHE: Dict[tuple, Optional[str]] = {}
 
 
@@ -1938,7 +1940,7 @@ def _itunes_earliest_release(artist: str, title: str) -> Optional[str]:
     return earliest
 
 
-def _annotate_new_flags(songs: List[Dict]) -> List[Dict]:
+def _mark_fresh(songs: List[Dict]) -> List[Dict]:
     """Set s['is_new'] on each song (parallel iTunes lookups, cached).
 
     Works on copies: some callers pass references to shared curated pools,
@@ -1949,7 +1951,7 @@ def _annotate_new_flags(songs: List[Dict]) -> List[Dict]:
         import datetime as _dt
         from concurrent.futures import ThreadPoolExecutor as _TPE
         cutoff = (_dt.date.today()
-                  - _dt.timedelta(days=365 * NEWMUSIC_NEW_YEARS)).isoformat()
+                  - _dt.timedelta(days=NEWMUSIC_NEW_DAYS)).isoformat()
         with _TPE(max_workers=5) as ex:
             futs = {ex.submit(_itunes_earliest_release,
                               s.get("artist", ""), s.get("song", "")): s
@@ -1964,6 +1966,23 @@ def _annotate_new_flags(songs: List[Dict]) -> List[Dict]:
         for s in songs:
             s.setdefault("is_new", False)
     return songs
+
+
+def _fresh_first(songs: List[Dict]) -> List[Dict]:
+    """Fresh releases (newest first), then the rest in chart order.
+
+    Release dates come from the same cache _mark_fresh() just warmed, so
+    the sort adds no network cost.
+    """
+    songs = _mark_fresh(songs)
+    dates = {id(st): (_itunes_earliest_release(st.get("artist", ""),
+                                              st.get("song", ""))
+                      or "")
+             for st in songs if st.get("is_new")}
+    fresh = sorted((st for st in songs if st.get("is_new")),
+                   key=lambda st: dates.get(id(st), ""), reverse=True)
+    rest = [st for st in songs if not st.get("is_new")]
+    return fresh + rest
 
 
 # ── /newmusic rotation (round 51) ────────────────────────────────────────

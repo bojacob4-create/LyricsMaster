@@ -2,7 +2,7 @@
 """Round 50: /newmusic marks genuinely new releases with 🆕.
 
 Free iTunes releaseDate lookups (no OpenAI, no key). 'New' = released
-within the last 2 years, same bar as /playlist's 🆕 slice.
+within the last 60 days's 🆕 slice.
 """
 
 import datetime
@@ -30,7 +30,7 @@ def check(name, cond, detail=""):
 
 
 CUTOFF = (datetime.date.today()
-          - datetime.timedelta(days=365 * d.NEWMUSIC_NEW_YEARS)).isoformat()
+          - datetime.timedelta(days=d.NEWMUSIC_NEW_DAYS)).isoformat()
 NEW_DATE = datetime.date.today().isoformat()
 OLD_DATE = "2015-06-01"
 
@@ -55,7 +55,7 @@ try:
              {"artist": "B", "song": "Old Classic"},
              {"artist": "C", "song": "Total Mystery"}]
     originals = [dict(s) for s in songs]
-    out = d._annotate_new_flags(songs)
+    out = d._mark_fresh(songs)
     check("flags: new/old/unknown",
           out[0]["is_new"] is True and out[1]["is_new"] is False
           and out[2]["is_new"] is False,
@@ -71,7 +71,7 @@ try:
                 "before": (datetime.date.fromisoformat(CUTOFF)
                            - datetime.timedelta(days=1)).isoformat()}[title]
     d._itunes_earliest_release = fake_boundary
-    b = d._annotate_new_flags([{"artist": "A", "song": "on"},
+    b = d._mark_fresh([{"artist": "A", "song": "on"},
                                {"artist": "A", "song": "before"}])
     check("flags: cutoff boundary (on=new, day-before=old)",
           b[0]["is_new"] is True and b[1]["is_new"] is False,
