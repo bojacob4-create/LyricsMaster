@@ -1,0 +1,21 @@
+round: 43
+title: YouTube wrong-artist hard reject + no-lyrics honesty.
+summary: |
+  Your exact reported case: STARGUIDE & DallasK - Lonely linked to
+  Marlon Craft's video and the card claimed "instrumental".
+tests:
+  - name: no-lyrics card is honest
+    section: The reported song
+    command: STARGUIDE & DallasK - Lonely
+    expect: Tap the song to open its card. It says "No lyrics found for this track" — the word "instrumental" appears nowhere.
+    unit_only: false
+  - name: Watch Video never serves another artist's song
+    section: The reported song
+    command: STARGUIDE & DallasK - Lonely → Watch Video
+    expect: The link is a STARGUIDE video, or the bot honestly says no video found. It must NOT open Marlon Craft - Lonely.
+    unit_only: false
+  - name: normal songs unaffected
+    section: Regression
+    command: Adele - Hello → Watch Video
+    expect: Opens Adele's own Hello video as before — correct attribution still wins.
+    unit_only: false
