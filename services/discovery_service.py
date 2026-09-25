@@ -1825,15 +1825,23 @@ _THROWBACK_SEEN: Dict[tuple, set] = {}
 # ──────────────────────────────────────────────────────────────────────────────
 def get_new_music(genre: Optional[str] = None,
                   n: int = 5) -> Tuple[List[Dict], bool]:
-    """([{'artist','song','note'}], is_live).
+    """([{'artist','song','note','is_new'}], is_live).
 
     Uses artist_service.get_trending_songs() (live Apple chart, 1-hour cache)
     and _get_live_genre_songs() when the genre maps via GENRE_ALIASES /
     APPLE_GENRE_MAP.  When the chart fetch fails or is empty, falls back to
     the curated TRENDING_SONGS / GENRE_TOP_SONGS pools and returns
     is_live=False — the 'note' always labels the source honestly.
-    Never raises.
+    Every song also carries 'is_new' (released within NEWMUSIC_NEW_YEARS),
+    resolved via free iTunes releaseDate lookups.  Never raises.
     """
+    songs, is_live = _get_new_music_raw(genre, n)
+    return _annotate_new_flags(songs), is_live
+
+
+def _get_new_music_raw(genre: Optional[str] = None,
+                       n: int = 5) -> Tuple[List[Dict], bool]:
+    """Inner chart/pool fetch for get_new_music (no recency annotation)."""
     try:
         n = max(1, int(n or 5))
     except Exception:
@@ -1876,6 +1884,77 @@ def get_new_music(genre: Optional[str] = None,
     except Exception as e:
         logger.debug(f"get_new_music failed: {e}")
         return ([], False)
+
+
+# ── /newmusic "new" badges (round 50) ────────────────────────────────────
+# "New" = released within the last NEWMUSIC_NEW_YEARS years — the same bar
+# as /playlist's 🆕 slice.  Free iTunes Search releaseDate lookups, cached
+# in memory and run in parallel.  The earliest strict match wins, so a 2024
+# remaster of a 1985 song is NOT marked new.  Never raises.
+NEWMUSIC_NEW_YEARS = 2
+_NEWMUSIC_YEAR_CACHE: Dict[tuple, Optional[str]] = {}
+
+
+def _itunes_earliest_release(artist: str, title: str) -> Optional[str]:
+    """Earliest 'YYYY-MM-DD' releaseDate among strict iTunes matches, else None."""
+    try:
+        import requests as _requests
+    except Exception:
+        return None
+    key = (str(artist or "").lower().strip(),
+           str(title or "").lower().strip())
+    if key in _NEWMUSIC_YEAR_CACHE:
+        return _NEWMUSIC_YEAR_CACHE[key]
+    earliest = None
+    try:
+        r = _requests.get(
+            "https://itunes.apple.com/search",
+            params={"term": f"{artist} {title}", "entity": "song",
+                    "country": "US", "limit": 25},
+            timeout=6,
+            headers={"User-Agent": "LyricsMasterBot/1.0"})
+        for res in (r.json() or {}).get("results", []):
+            if not _itunes_match(artist, title,
+                                 str(res.get("artistName") or ""),
+                                 str(res.get("trackName") or "")):
+                continue
+            d = str(res.get("releaseDate") or "")[:10]
+            if len(d) == 10 and (earliest is None or d < earliest):
+                earliest = d
+    except Exception:
+        earliest = None
+    _NEWMUSIC_YEAR_CACHE[key] = earliest
+    if len(_NEWMUSIC_YEAR_CACHE) > 2000:
+        _NEWMUSIC_YEAR_CACHE.pop(next(iter(_NEWMUSIC_YEAR_CACHE)))
+    return earliest
+
+
+def _annotate_new_flags(songs: List[Dict]) -> List[Dict]:
+    """Set s['is_new'] on each song (parallel iTunes lookups, cached).
+
+    Works on copies: some callers pass references to shared curated pools,
+    which must never gain a (stale-able) 'is_new' key.
+    """
+    songs = [dict(s) for s in songs]
+    try:
+        import datetime as _dt
+        from concurrent.futures import ThreadPoolExecutor as _TPE
+        cutoff = (_dt.date.today()
+                  - _dt.timedelta(days=365 * NEWMUSIC_NEW_YEARS)).isoformat()
+        with _TPE(max_workers=5) as ex:
+            futs = {ex.submit(_itunes_earliest_release,
+                              s.get("artist", ""), s.get("song", "")): s
+                    for s in songs}
+            for f, s in futs.items():
+                try:
+                    rel = f.result(timeout=8)
+                except Exception:
+                    rel = None
+                s["is_new"] = bool(rel and rel >= cutoff)
+    except Exception:
+        for s in songs:
+            s.setdefault("is_new", False)
+    return songs
 
 
 def resolve_newmusic_genre(genre: Optional[str]) -> Optional[str]:
