@@ -44,7 +44,7 @@ def _band_mean(box):
 
 
 # Caption band sits between the QR container (bottom ~1224) and the
-# footer (top ~1280); compare its mean brightness against the blank
+# footer (top ~1294); compare its mean brightness against the blank
 # strip directly below it (glow gradient is negligible across 1px).
 def _band_mean(box):
     px = list(im.crop(box).getdata())
@@ -52,7 +52,7 @@ def _band_mean(box):
 
 
 band = _band_mean((170, 1228, 370, 1258))
-blank = _band_mean((170, 1259, 370, 1274))
+blank = _band_mean((170, 1262, 370, 1288))
 check(f"caption pixels present (band {band:.1f} vs bg {blank:.1f})",
       band > blank + 5, True)
 check("render size unchanged", im.size, (1080, 1350))

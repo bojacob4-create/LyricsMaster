@@ -551,7 +551,7 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
     w1, _ = _text_size(draw, p1, foot)
     w2, _ = _text_size(draw, p2, foot)
     fx = W // 2 - (w1 + w2) // 2
-    fy = H - 70
+    fy = H - 56  # breathing room above: clear of the QR caption
     draw.text((fx, fy), p1, font=foot, fill=(135, 135, 150))
     draw.text((fx + w1, fy), p2, font=foot, fill=accent)
 
