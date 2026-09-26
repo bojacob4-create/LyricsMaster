@@ -9,10 +9,14 @@ Design notes:
     authorization code travels through Telegram chat, so the code alone
     must be worthless without the code_verifier, which never leaves this
     machine.
-  - There is no public callback endpoint on this VM (no inbound network),
-    so the registered redirect URI (http://127.0.0.1:8888/callback) will
-    fail to load in the user's browser — the user copies the ``code=``
-    value from the address bar and pastes it into the chat.
+  - There is no public callback endpoint on this VM (no inbound network).
+    Round 74 adds an optional Cloudflare Worker (see ../spotify-worker/):
+    when SPOTIFY_WORKER_URL/KEY are set, the redirect URI becomes the
+    Worker's public /callback (pretty success page, no copy-paste) and the
+    token endpoint becomes the Worker's /relay/token (the VM's egress
+    proxy blocks accounts.spotify.com/api/token directly). Without the
+    Worker env vars the module falls back to the loopback redirect +
+    paste-the-code flow.
   - Client credentials are read LAZILY from the environment at call time,
     so adding SPOTIFY_CLIENT_ID/SECRET to .env later needs no restart.
   - Token storage is an untracked runtime file (``.spotify_tokens.json``,
@@ -30,6 +34,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -41,12 +46,48 @@ logger = logging.getLogger(__name__)
 
 # ── Spotify endpoints / constants (Feb-2026 shapes) ──────────────────────────
 AUTHORIZE_URL = "https://accounts.spotify.com/authorize"
+# Direct token endpoint. UNREACHABLE from this VM: the egress proxy answers
+# POSTs to it with {"error":"refresh_rejected"} (verified 2026-09-26), so in
+# production these go through the Cloudflare Worker relay instead — see
+# SPOTIFY_TOKEN_URL below. The default is kept for local dev / tests.
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 API_BASE = "https://api.spotify.com/v1"
-# Registered EXACTLY like this in the Spotify developer dashboard.
+# Default loopback redirect, registered in the Spotify dashboard.
 # 'localhost' hostnames are rejected by Spotify; the numeric loopback is not.
-REDIRECT_URI = "http://127.0.0.1:8888/callback"
+_LOOPBACK_REDIRECT = "http://127.0.0.1:8888/callback"
+# Kept as a module constant for backwards compatibility; production code
+# must call _redirect_uri() so the Worker callback can be configured.
+REDIRECT_URI = _LOOPBACK_REDIRECT
 SCOPE = "playlist-modify-private"
+
+
+def _redirect_uri() -> str:
+    """Redirect URI actually used (Worker callback when configured)."""
+    return os.environ.get("SPOTIFY_REDIRECT_URI") or _LOOPBACK_REDIRECT
+
+
+def _token_url() -> str:
+    """Token endpoint actually used (Worker relay when configured)."""
+    return os.environ.get("SPOTIFY_TOKEN_URL") or TOKEN_URL
+
+
+def _worker_base() -> str:
+    """Cloudflare Worker base URL, e.g. https://x.workers.dev ('' if unset)."""
+    return (os.environ.get("SPOTIFY_WORKER_URL") or "").rstrip("/")
+
+
+def _worker_key() -> str:
+    return os.environ.get("SPOTIFY_WORKER_KEY") or ""
+
+
+def worker_configured() -> bool:
+    """True when the Worker relay/callback mode is fully configured."""
+    return bool(_worker_base() and _worker_key())
+
+
+# Authorization codes are ~200+ chars of [A-Za-z0-9_-]; used to sanity-check
+# values coming back from the Worker mailbox (never trust remote input).
+_CODE_SHAPE = re.compile(r"^[A-Za-z0-9_-]{40,512}$")
 
 _HTTP_TIMEOUT = 15
 # Treat tokens expiring within this window as expired (clock skew buffer).
@@ -179,7 +220,7 @@ def build_authorize_url(user_id) -> tuple:
     params = {
         "client_id": _client_id(),
         "response_type": "code",
-        "redirect_uri": REDIRECT_URI,
+        "redirect_uri": _redirect_uri(),
         "scope": SCOPE,
         "code_challenge_method": "S256",
         "code_challenge": challenge,
@@ -207,6 +248,36 @@ def _drop_pending(user_id):
     with _lock:
         _pending_links.pop(str(user_id), None)
         _save_pendings(_pending_links)
+
+
+def fetch_worker_code(state: str):
+    """Poll the Worker mailbox for the authorization code for `state`.
+
+    Round 74: after the user approves on Spotify they land on the Worker's
+    success page; the Worker stashes the code in KV keyed by state and the
+    bot picks it up here. Returns the code string, or None when nothing is
+    there yet / the Worker isn't configured / anything fails. Never raises,
+    never logs the code.
+    """
+    try:
+        if not worker_configured() or not state:
+            return None
+        resp = requests.get(
+            _worker_base() + "/code",
+            params={"state": state},
+            headers={"X-Worker-Key": _worker_key()},
+            timeout=_HTTP_TIMEOUT,
+        )
+        if resp.status_code == 404:
+            return None
+        if resp.status_code != 200:
+            logger.warning(f"[spotify] worker /code -> {resp.status_code}")
+            return None
+        code = ((resp.json() or {}).get("code") or "").strip()
+        return code if _CODE_SHAPE.match(code) else None
+    except Exception as e:
+        logger.warning(f"[spotify] worker /code fetch failed: {e}")
+        return None
 
 
 # ── Token store ──────────────────────────────────────────────────────────────
@@ -273,11 +344,20 @@ def unlink(user_id) -> None:
 
 # ── Token exchange / refresh ─────────────────────────────────────────────────
 def _token_post(payload: dict) -> dict:
-    """POST to the token endpoint with client_secret_basic. Never logs secrets."""
+    """POST to the token endpoint with client_secret_basic. Never logs secrets.
+
+    Round 74: when the Worker relay is configured the POST goes to the
+    relay (which forwards it to Spotify from Cloudflare's network), with
+    the shared worker key as an extra header.
+    """
+    headers = {}
+    if worker_configured():
+        headers["X-Worker-Key"] = _worker_key()
     resp = requests.post(
-        TOKEN_URL,
+        _token_url(),
         data=payload,
         auth=(_client_id(), _client_secret()),
+        headers=headers,
         timeout=_HTTP_TIMEOUT,
     )
     try:
@@ -309,7 +389,7 @@ def exchange_code(code: str, user_id) -> dict:
     body = _token_post({
         "grant_type": "authorization_code",
         "code": code,
-        "redirect_uri": REDIRECT_URI,
+        "redirect_uri": _redirect_uri(),
         "code_verifier": pending["verifier"],
     })
     access = body.get("access_token")

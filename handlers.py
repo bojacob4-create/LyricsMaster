@@ -525,7 +525,7 @@ def _send_spotify_link_prompt(message, user_id) -> None:
     `message` needs reply_text (works with real and fake messages).
     """
     try:
-        url, _state = _spotify_auth.build_authorize_url(user_id)
+        url, state = _spotify_auth.build_authorize_url(user_id)
     except _spotify_auth.SpotifyNotConfigured:
         message.reply_text(
             "💾 *Spotify export*\n\n"
@@ -538,6 +538,25 @@ def _send_spotify_link_prompt(message, user_id) -> None:
         logger.error(f"[spotify] build_authorize_url failed: {e}")
         message.reply_text(
             "😓 Couldn't start the Spotify link. Please try again!")
+        return
+    if _spotify_auth.worker_configured():
+        # ── Round 74: Worker mode — approve in browser, success page,
+        # bot picks up the code from the Worker mailbox in the background.
+        # Nothing to copy, nothing to paste.
+        message.reply_text(
+            "🔗 *Link your Spotify*\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "1️⃣ Tap the button below and approve access in your browser\n"
+            "2️⃣ You'll see a ✅ success page — that's it, nothing to copy\n"
+            "3️⃣ I'll confirm right here in a few seconds\n\n"
+            "I only ever ask for one permission: managing your *private* "
+            "playlists. Nothing else. 🔒\n\n"
+            "The link expires in 15 minutes.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔗 Open Spotify", url=url)]]),
+        )
+        _start_spotify_link_poll(message, user_id, state)
         return
     message.reply_text(
         "🔗 *Link your Spotify*\n"
@@ -553,6 +572,97 @@ def _send_spotify_link_prompt(message, user_id) -> None:
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("🔗 Open Spotify", url=url)]]),
     )
+
+
+# ── Round 74: background completion of a Worker link flow ────────────────────
+_SPOTIFY_POLL_INTERVAL = 5      # seconds between Worker mailbox checks
+_SPOTIFY_POLL_TIMEOUT = 5 * 60  # stop polling after 5 minutes
+
+
+def _start_spotify_link_poll(message, user_id, state) -> None:
+    """Spawn the background thread that finishes a Worker link flow.
+
+    Best-effort: without a real bot/chat (e.g. fakes in tests) the paste
+    fallback in the prompt text still applies, so we just skip polling.
+    """
+    try:
+        bot = message.bot
+        chat_id = message.chat_id
+    except Exception as e:
+        logger.warning(f"[spotify] link poll unavailable ({e}) — paste fallback")
+        return
+    t = threading.Thread(
+        target=_poll_spotify_link,
+        args=(bot, chat_id, user_id, state),
+        daemon=True,
+        name=f"spotify-link-poll-{user_id}",
+    )
+    t.start()
+
+
+def _poll_spotify_link(bot, chat_id, user_id, state) -> None:
+    """Background: wait for the Worker's mailbox code, then finish linking."""
+    deadline = time.time() + _SPOTIFY_POLL_TIMEOUT
+    while time.time() < deadline:
+        time.sleep(_SPOTIFY_POLL_INTERVAL)
+        try:
+            pending = _spotify_auth.get_pending_link(user_id)
+            if not pending or pending.get("state") != state:
+                return  # superseded, pasted manually, expired, or restarted
+            code = _spotify_auth.fetch_worker_code(state)
+            if not code:
+                continue
+            try:
+                info = _spotify_auth.exchange_code(code, user_id)
+            except _spotify_auth.SpotifyLinkError:
+                bot.send_message(
+                    chat_id,
+                    "🔗 That Spotify approval didn't go through.\n"
+                    "Tap 🔗 Open Spotify again for a fresh one — /spotify")
+                return
+            except _spotify_auth.SpotifyNotConfigured:
+                return
+            except Exception as e:
+                logger.error(f"[spotify] worker-link exchange failed: {e}")
+                bot.send_message(
+                    chat_id,
+                    "😓 Something hiccuped while linking Spotify.\n"
+                    "Tap 🔗 Open Spotify to try again — /spotify")
+                return
+            name = info.get("display_name") or info.get("spotify_user_id")
+            who = f" as *{md(name)}*" if name else ""
+            mix = _pending_spotify_mix.get(user_id)
+            if mix and not _spotify_mix_expired(mix):
+                bot.send_message(
+                    chat_id,
+                    f"✅ Spotify linked{who}!\n\n"
+                    f"Tap below to save your *{md(mix['name'])}*:",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton("💾 Save it now",
+                                               callback_data="spsave:")]]),
+                )
+            else:
+                bot.send_message(
+                    chat_id,
+                    f"✅ Spotify linked{who}!\n\n"
+                    "Run /mood or /top and tap *💾 Save to Spotify* "
+                    "under any mix to export it as a private playlist.",
+                    parse_mode="Markdown",
+                )
+            return
+        except Exception as e:
+            logger.warning(f"[spotify] link poll hiccup: {e}")
+    # Timed out with no approval seen.
+    try:
+        pending = _spotify_auth.get_pending_link(user_id)
+        if pending and pending.get("state") == state:
+            bot.send_message(
+                chat_id,
+                "⌛ I didn't catch a Spotify approval — if you already "
+                "approved, tap 🔗 Open Spotify again for a fresh link. /spotify")
+    except Exception:
+        pass
 
 
 def spotify_command(update: Update, context: CallbackContext):
