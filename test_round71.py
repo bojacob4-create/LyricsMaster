@@ -30,6 +30,15 @@ from services import history_service as hs
 _hs_iso = tempfile.mktemp(suffix=".history.json")
 patch.object(hs, "_HISTORY_PATH", _hs_iso).start()
 
+# Snapshot the live file (if it exists — real user activity creates it) so
+# the final check can prove the test run didn't touch it.
+_live_hist = os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", ".history.json"))
+_live_hist_snap = None
+if os.path.exists(_live_hist):
+    with open(_live_hist, "rb") as _f:
+        _live_hist_snap = _f.read()
+
 passed, failed = 0, 0
 
 
@@ -114,7 +123,12 @@ check("empty artist/title ignored", hs.get_history(u4) == [])
 live = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                     "..", ".history.json")
 live = os.path.abspath(live)
-check("live .history.json untouched by tests", not os.path.exists(live))
+_live_after = None
+if os.path.exists(live):
+    with open(live, "rb") as _f:
+        _live_after = _f.read()
+check("live .history.json untouched by tests",
+      _live_after == _live_hist_snap)
 
 print(f"\nround71: {passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

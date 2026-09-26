@@ -63,6 +63,11 @@ from services.playlist_service import (
     parse_playlist_args, build_artist_playlist, format_playlist,
     PLAYLIST_DEFAULT_COUNT, PLAYLIST_MAX_COUNT,
 )
+# Round 73: Spotify export — user-OAuth token lifecycle + track matching.
+# (services/spotify_service.py is the older client-credentials read-only
+# module and stays untouched; this is the separate user-token feature.)
+from services import spotify_auth as _spotify_auth
+from services import spotify_export as _spotify_export
 from input_parser import parse_song_query, search_lyrics_with_fallback, clean_input
 from intent_router import detect_intent
 
@@ -218,7 +223,8 @@ def start_command(update: Update, context: CallbackContext):
         "▫️ */history* — Your recently viewed songs 🕘\n\n"
         "*🎧 Audio*\n"
         "▫️ */mp3 [Artist - Song]* — Get the song as an MP3\n"
-        "▫️ */download [YouTube URL]* — Download a YouTube video\n\n"
+        "▫️ */download [YouTube URL]* — Download a YouTube video\n"
+        "▫️ */spotify* — Save mixes to Spotify 💾\n\n"
         "*🎮 Fun*\n"
         "▫️ */quiz* — Lyrics guessing game\n"
         "▫️ */endquiz* — End current quiz\n"
@@ -284,7 +290,8 @@ def help_command(update: Update, context: CallbackContext):
         "▫️ */history* — Your recently viewed songs 🕘\n\n"
         "*🎧 Audio*\n"
         "▫️ */mp3 [Artist - Song]* — Get the song as an MP3\n"
-        "▫️ */download [YouTube URL]* — Download a YouTube video\n\n"
+        "▫️ */download [YouTube URL]* — Download a YouTube video\n"
+        "▫️ */spotify* — Save mixes to Spotify 💾\n\n"
         "*🎮 Fun*\n"
         "▫️ */quiz* — Lyrics guessing game (110+ songs, 3 game modes!)\n"
         "▫️ */endquiz* — End current quiz\n"
@@ -330,7 +337,7 @@ _KNOWN_COMMANDS = [
     'endquiz', 'throwback', 'mood', 'mp3', 'download',
     'subscribe', 'unsubscribe', 'daily', 'duel', 'emoji', 'mystats',
     'badges', 'wiki', 'about', 'newmusic', 'extend', 'cancel', 'playlist',
-    'history',
+    'history', 'spotify',
 ]
 # NOTE: 'decade' is intentionally absent — it is a callback-button action
 # (decade_buttons → throwback_command), not a slash command. Listing it
@@ -443,6 +450,271 @@ def history_clear_no(update: Update, context: CallbackContext):
         update.message.reply_text("Kept — your history is untouched 👍")
     except Exception as e:
         logger.error(f"Error in history_clear_no: {e}")
+
+
+# ── Round 73: Spotify export (/mood and /top mixes → Spotify playlists) ─────
+# Auth + token lifecycle live in services/spotify_auth.py (OAuth PKCE),
+# track matching + playlist ops in services/spotify_export.py. This block
+# is the thin Telegram glue: /spotify, the 💾 buttons, and the pasted-code
+# handler.
+
+_pending_spotify_mix = {}      # user_id -> {"name", "tracks", "ts"}
+_spotify_save_inflight = set()  # user_ids with a save currently running
+_spotify_save_lock = threading.Lock()
+_MIX_TTL = 6 * 3600            # a rendered mix stays saveable for 6 hours
+_SPOTIFY_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{40,512}$")
+
+
+def _spotify_mix_expired(mix) -> bool:
+    try:
+        return (time.time() - mix.get("ts", 0)) > _MIX_TTL
+    except Exception:
+        return True
+
+
+def _remember_spotify_mix(user_id, name, tracks) -> None:
+    """Remember a rendered mix so its 💾 button can export it later."""
+    try:
+        clean = [((a or "").strip(), (t or "").strip())
+                 for a, t in (tracks or [])]
+        clean = [(a, t) for a, t in clean if a and t]
+        if clean:
+            _pending_spotify_mix[user_id] = {
+                "name": name, "tracks": clean, "ts": time.time()}
+    except Exception as e:
+        logger.warning(f"[spotify] remember_mix failed: {e}")
+
+
+def _spotify_save_button():
+    return [InlineKeyboardButton("💾 Save to Spotify",
+                                 callback_data="spsave:")]
+
+
+def _send_spotify_link_prompt(message, user_id) -> None:
+    """Send the link-Spotify instructions + browser button.
+
+    `message` needs reply_text (works with real and fake messages).
+    """
+    try:
+        url, _state = _spotify_auth.build_authorize_url(user_id)
+    except _spotify_auth.SpotifyNotConfigured:
+        message.reply_text(
+            "💾 *Spotify export*\n\n"
+            "The Spotify connection isn't set up on my side yet — "
+            "it's coming soon. Your mixes are safe to keep enjoying "
+            "meanwhile! 🎧",
+            parse_mode="Markdown")
+        return
+    except Exception as e:
+        logger.error(f"[spotify] build_authorize_url failed: {e}")
+        message.reply_text(
+            "😓 Couldn't start the Spotify link. Please try again!")
+        return
+    message.reply_text(
+        "🔗 *Link your Spotify*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "1️⃣ Tap the button below and approve access in your browser\n"
+        "2️⃣ You'll land on a page that *can't load* — that's expected\n"
+        "3️⃣ Copy the long `code=…` value from the address bar\n"
+        "4️⃣ Paste it here as a message\n\n"
+        "I only ever ask for one permission: managing your *private* "
+        "playlists. Nothing else. 🔒\n\n"
+        "The link expires in 15 minutes.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔗 Open Spotify", url=url)]]),
+    )
+
+
+def spotify_command(update: Update, context: CallbackContext):
+    """Handle /spotify — link status, link, unlink."""
+    user_id = update.effective_user.id
+    try:
+        if not _spotify_auth.is_configured():
+            update.message.reply_text(
+                "💾 *Spotify export*\n\n"
+                "The Spotify connection isn't set up on my side yet — "
+                "it's coming soon. 🎧",
+                parse_mode="Markdown")
+            return
+        tok = _spotify_auth.get_stored(user_id)
+        if tok:
+            name = tok.get("display_name") or tok.get("spotify_user_id")
+            who = f" as *{md(name)}*" if name else ""
+            update.message.reply_text(
+                f"💾 *Spotify*\n\n✅ Linked{who}.\n\n"
+                "Run /mood or /top and tap *💾 Save to Spotify* "
+                "under any mix to export it as a private playlist.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔌 Unlink Spotify",
+                                           callback_data="spunlink:")]]),
+            )
+        else:
+            _send_spotify_link_prompt(update.message, user_id)
+    except Exception as e:
+        logger.error(f"Error in spotify command for user {user_id}: {e}")
+        update.message.reply_text("😓 Something went wrong. Please try again!")
+
+
+def spotify_unlink_callback(update: Update, context: CallbackContext):
+    """"🔌 Unlink" button (callback action 'spunlink')."""
+    user_id = update.effective_user.id
+    try:
+        _spotify_auth.unlink(user_id)
+        update.message.reply_text(
+            "🔌 Spotify unlinked.\n\n"
+            "Your playlists stay in your Spotify library — I just "
+            "can't create new ones until you link again. /spotify anytime! 💾")
+    except Exception as e:
+        logger.error(f"Error unlinking Spotify for user {user_id}: {e}")
+        update.message.reply_text("😓 Something went wrong. Please try again!")
+
+
+def _looks_like_spotify_code(text) -> bool:
+    return bool(_SPOTIFY_CODE_RE.match((text or "").strip()))
+
+
+def try_spotify_code(update: Update, user_id, text) -> bool:
+    """Handle a pasted Spotify OAuth code. Returns True when consumed.
+
+    Only active while the user has a pending link flow AND the text looks
+    like a Spotify code; everything else falls through to normal routing.
+    """
+    try:
+        if not _spotify_auth.get_pending_link(user_id):
+            return False
+        if not _looks_like_spotify_code(text):
+            return False
+    except Exception:
+        return False
+    try:
+        info = _spotify_auth.exchange_code(text.strip(), user_id)
+    except _spotify_auth.SpotifyLinkError:
+        update.message.reply_text(
+            "🔗 That Spotify link expired or the code wasn't valid.\n"
+            "Tap 🔗 Link Spotify again for a fresh one — /spotify")
+        return True
+    except _spotify_auth.SpotifyNotConfigured:
+        update.message.reply_text(
+            "💾 Spotify export isn't set up on my side yet.")
+        return True
+    except Exception as e:
+        logger.error(f"[spotify] code exchange failed: {e}")
+        update.message.reply_text(
+            "😓 That code didn't work. Tap 🔗 Link Spotify for a fresh one.")
+        return True
+    name = info.get("display_name") or info.get("spotify_user_id")
+    who = f" as *{md(name)}*" if name else ""
+    mix = _pending_spotify_mix.get(user_id)
+    if mix and not _spotify_mix_expired(mix):
+        update.message.reply_text(
+            f"✅ Spotify linked{who}!\n\n"
+            f"Tap below to save your *{md(mix['name'])}*:",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("💾 Save it now",
+                                       callback_data="spsave:")]]),
+        )
+    else:
+        update.message.reply_text(
+            f"✅ Spotify linked{who}!\n\n"
+            "Run /mood or /top and tap *💾 Save to Spotify* "
+            "under any mix to export it.",
+            parse_mode="Markdown",
+        )
+    return True
+
+
+def spotify_save_callback(update: Update, context: CallbackContext):
+    """💾 Save to Spotify button (callback action 'spsave')."""
+    user_id = update.effective_user.id
+    message = update.message  # _CallbackFakeMessage over query.message
+    try:
+        if not _spotify_auth.is_configured():
+            message.reply_text(
+                "💾 Spotify export isn't set up on my side yet — "
+                "coming soon! 🎧")
+            return
+        mix = _pending_spotify_mix.get(user_id)
+        if not mix or _spotify_mix_expired(mix):
+            # Keyed by the tapping user: someone else's button (or a stale
+            # one after a restart) finds nothing here.
+            message.reply_text(
+                "That mix isn't available anymore.\n"
+                "Run /mood or /top again, then tap 💾 Save to Spotify. 🎧")
+            return
+        if not _spotify_auth.is_linked(user_id):
+            _send_spotify_link_prompt(message, user_id)
+            return
+        with _spotify_save_lock:
+            if user_id in _spotify_save_inflight:
+                message.reply_text("⏳ Already saving that mix — one moment…")
+                return
+            _spotify_save_inflight.add(user_id)
+        progress = None
+        try:
+            n = len(mix["tracks"])
+            progress = message.reply_text(
+                f"💾 Saving *{md(mix['name'])}* to Spotify…\n"
+                f"⏳ Matching {n} track{'s' if n != 1 else ''}…",
+                parse_mode="Markdown")
+            uris, unresolved = _spotify_export.resolve_tracks(
+                mix["tracks"], user_id)
+            if not uris:
+                progress.edit_text(
+                    "😕 I couldn't confidently match any of those tracks "
+                    "on Spotify, so I didn't create a playlist — better no "
+                    "playlist than wrong songs.\n\n"
+                    "Try again later, or pick another mix! 🎧")
+                return
+            name = _spotify_export.playlist_name(mix["name"])
+            pid, url = _spotify_export.create_playlist(
+                user_id, name, "Made with LyricsMaster 🎵")
+            _spotify_export.add_tracks(user_id, pid, uris)
+            lines = [f"✅ Saved to Spotify: [{md(name)}]({url})",
+                     f"{len(uris)} track{'s' if len(uris) != 1 else ''} "
+                     "added as a private playlist."]
+            if unresolved:
+                lines += ["", "⚠️ Couldn't confidently match:"]
+                lines += [f"• {md(u['artist'])} — {md(u['title'])}"
+                          for u in unresolved[:10]]
+                if len(unresolved) > 10:
+                    lines.append(f"• …and {len(unresolved) - 10} more")
+            progress.edit_text("\n".join(lines), parse_mode="Markdown")
+            logger.info(f"[spotify] saved '{name}' for user {user_id}: "
+                        f"{len(uris)} ok, {len(unresolved)} unresolved")
+        finally:
+            with _spotify_save_lock:
+                _spotify_save_inflight.discard(user_id)
+    except _spotify_auth.SpotifyUnlinked:
+        _close_progress(progress, message, "🔌 Your Spotify session expired.")
+        _send_spotify_link_prompt(message, user_id)
+    except _spotify_auth.SpotifyAPIError as e:
+        logger.error(f"[spotify] save failed for user {user_id}: {e}")
+        _close_progress(
+            progress, message,
+            "😓 Spotify hiccupped while saving (their side or mine).\n"
+            "Nothing was half-saved — try again in a moment! 🔄")
+    except Exception as e:
+        logger.error(f"Error in spotify save for user {user_id}: {e}")
+        _close_progress(progress, message,
+                        "😓 Something went wrong. Please try again!")
+
+
+def _close_progress(progress, message, text):
+    """Turn the 'Saving…' progress message into its final state.
+
+    Edits the progress message when there is one, otherwise sends a fresh
+    reply. Never raises.
+    """
+    try:
+        if progress is not None:
+            progress.edit_text(text)
+        else:
+            message.reply_text(text)
+    except Exception as e:
+        logger.warning(f"[spotify] close_progress failed: {e}")
 
 
 def quiz_command(update: Update, context: CallbackContext):
@@ -891,6 +1163,13 @@ def natural_language_handler(update: Update, context: CallbackContext):
             "Try a shorter song or artist name — like `Adele - Hello`.",
             parse_mode='Markdown',
         )
+        return
+
+    # ── Round 73: pasted Spotify OAuth code ─────────────────────────────────
+    # Only consumes the message while the user has a pending link flow
+    # AND the text looks like a Spotify code; everything else routes
+    # normally. Placed early: a code must never reach the intent router.
+    if try_spotify_code(update, user_id, text):
         return
 
     # ── Round 45: bare "Extend" (no slash) routes to /extend ─────────────────
@@ -1827,6 +2106,8 @@ def callback_query_handler(update: Update, context: CallbackContext):
         'decade': throwback_command,
         'emoji_exit': emoji_exit_callback,
         'history_clear': history_clear_ask,
+        'spsave': spotify_save_callback,
+        'spunlink': spotify_unlink_callback,
     }
 
     # history_clear carries its step in the param: ask/yes/no.
@@ -4802,6 +5083,13 @@ def top_command(update: Update, context: CallbackContext):
                 markup = song_list_buttons(songs) if songs else None
             except Exception:
                 markup = None
+            # Round 73: remember the mix + 💾 button for Spotify export.
+            g_label = (genre.upper() if genre in ('rnb', 'kpop')
+                       else genre.title())
+            markup = _with_spotify_button(
+                markup, user_id, f"Top {g_label}",
+                [(s.get('artist', ''), s.get('song') or s.get('name', ''))
+                 for s in (songs or [])])
             update.message.reply_text(format_top_songs(genre, songs), reply_markup=markup)
         elif resolve_genre_key(query) is None:
             genres = get_available_genres()
@@ -5149,6 +5437,22 @@ def _clean_mix_songs(songs) -> list:
     return out
 
 
+def _with_spotify_button(markup, user_id, mix_name, tracks):
+    """Append the 💾 Save to Spotify row and remember the mix for export.
+
+    Round 73. Never raises and never breaks the host message: on any
+    failure the original markup is returned untouched.
+    """
+    try:
+        _remember_spotify_mix(user_id, mix_name, tracks)
+        if markup is not None:
+            markup.inline_keyboard.append(_spotify_save_button())
+        return markup
+    except Exception as e:
+        logger.warning(f"[spotify] button attach failed: {e}")
+        return markup
+
+
 def _send_mood_mix(update, user_id: int, mood: str):
     """Fetch and send a mood mix (live-first, pool fallback)."""
     label = _MOOD_LABELS.get(mood, mood.title())
@@ -5205,9 +5509,12 @@ def _send_mood_mix(update, user_id: int, mood: str):
         '\n'.join(lines),
         parse_mode='Markdown',
         disable_web_page_preview=True,
-        reply_markup=song_list_buttons(
-            [{'artist': s['artist'], 'song': s['name']} for s in songs]
-        ),
+        reply_markup=_with_spotify_button(
+            song_list_buttons(
+                [{'artist': s['artist'], 'song': s['name']} for s in songs]
+            ),
+            user_id, f"{label} Mix",
+            [(s['artist'], s['name']) for s in songs]),
     )
     logger.info(f"Sent mood mix ({mood}) to user {user_id}")
 

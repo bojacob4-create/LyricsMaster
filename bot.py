@@ -31,6 +31,7 @@ from handlers import (
     song_command, top_command, random_command, playlist_command,
     natural_language_handler, callback_query_handler,
     unknown_command_handler, cancel_command, history_command,
+    spotify_command,
     # Round 4: discovery + fun
     mood_command, extend_command, about_command, throwback_command,
     newmusic_command, duel_command, daily_command, emoji_command,
@@ -203,6 +204,7 @@ class TelegramBotWorker:
                 BotCommand("wiki",        "📚 Artist Wikipedia info"),
                 BotCommand("trending",    "📈 Trending songs now"),
                 BotCommand("history",     "🕘 Your recently viewed songs"),
+                BotCommand("spotify",     "💾 Save mixes to Spotify"),
                 BotCommand("subscribe",   "🔔 Daily song picks"),
                 BotCommand("unsubscribe", "Stop daily updates"),
             ]
@@ -472,6 +474,7 @@ class TelegramBotWorker:
             dp.add_handler(CommandHandler("badges",      badges_command))
             dp.add_handler(CommandHandler("cancel",      cancel_command))
             dp.add_handler(CommandHandler("history",     history_command))
+            dp.add_handler(CommandHandler("spotify",     spotify_command))
 
             dp.add_handler(CallbackQueryHandler(callback_query_handler))
             # Home worker DONE/FAIL signals arrive as channel posts from

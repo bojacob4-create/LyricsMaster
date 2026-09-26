@@ -40,3 +40,7 @@ worker_heartbeat.json
 # Share card runtime state — generated PNG cache + live token registry
 share_cards/
 share_tokens.json
+
+# Round 73: Spotify export runtime state — OAuth tokens, never commit
+.spotify_tokens.json
+.spotify_pending.json
