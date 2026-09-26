@@ -43,15 +43,50 @@ _DEJAVU_REG = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
 # ── Lyric excerpt ──────────────────────────────────────────────────────────
 
+# Lines that are pure decoration from the lyrics source — never real lyrics.
+# (Manrope has no glyph for these, so they rendered as tofu boxes.)
+_DECORATIVE_CHARS = set("♪♫♬♩♭♮♯𝄞")
+
+
+def _is_noise_line(line):
+    s = (line or "").strip()
+    if not s:
+        return True
+    if all(ch in _DECORATIVE_CHARS for ch in s):
+        return True
+    # Punctuation-only stubs ("...", "***", "~~~").
+    if len(s) <= 3 and not any(ch.isalnum() for ch in s):
+        return True
+    return False
+
+
+# Single-word filler openers worth skipping so the card opens on substance.
+_FILLER_OPENERS = {
+    "yeah", "oh", "uh", "uhh", "ah", "ooh", "aah", "hmm", "mm", "la",
+    "hey", "yo", "ho",
+}
+
+
+def _strip_leading_filler(lines):
+    if len(lines) >= 2:
+        first = lines[0].strip().lower().rstrip(",.!?;:")
+        if " " not in first and first in _FILLER_OPENERS:
+            return lines[1:]
+    return lines
+
+
 def extract_excerpt(lyrics, max_lines=5):
     """Return up to `max_lines` lyric lines for the card.
 
     Preference: the [Chorus] section (the singable hook) -> the longest
     section -> the first lines. Section markers are never included.
+    Decorative noise lines (♪ separators etc.) are dropped, and a
+    leading one-word filler ("Yeah", "Oh", ...) is skipped so the card
+    opens on a substantive line.
     """
     if not lyrics:
         return []
-    # Split into (marker, lines) sections.
+    # Split into (marker, lines) sections, dropping decorative noise.
     sections = []
     cur_marker, cur_lines = None, []
     for raw in lyrics.splitlines():
@@ -60,13 +95,14 @@ def extract_excerpt(lyrics, max_lines=5):
             if cur_lines or cur_marker is not None:
                 sections.append((cur_marker, cur_lines))
             cur_marker, cur_lines = line, []
-        elif line:
+        elif line and not _is_noise_line(line):
             cur_lines.append(line)
     if cur_lines or cur_marker is not None:
         sections.append((cur_marker, cur_lines))
 
     def usable(lines):
-        return [l for l in lines if l][:max_lines]
+        sel = [l for l in lines if l][:max_lines + 1]
+        return _strip_leading_filler(sel)[:max_lines]
 
     # 1. Chorus first.
     for marker, lines in sections:
@@ -242,6 +278,17 @@ def fetch_artwork(url, timeout=10):
 
 
 # ── Rendering helpers ──────────────────────────────────────────────────────
+
+def _glyph_font(size):
+    """DejaVu for glyphs the bundled family lacks (e.g. the ♪ placeholder).
+
+    Manrope/Inter have no musical-note glyphs; DejaVu does.
+    """
+    try:
+        return ImageFont.truetype(_DEJAVU_REG, size)
+    except Exception:
+        return ImageFont.load_default()
+
 
 def _font(kind, size):
     """Resolve a kind tag ('bold'/'regular') to the bundled font family.
@@ -449,7 +496,7 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
     else:
         art_sq = Image.new("RGB", (300, 300), (22, 22, 32))
         d2 = ImageDraw.Draw(art_sq)
-        nf = _font(_FONT_REG, 130)
+        nf = _glyph_font(130)  # ♪ missing from Manrope/Inter -> DejaVu
         nw, nh = _text_size(d2, "♪", nf)
         d2.text((150 - nw // 2, 150 - nh // 2 - 10), "♪", font=nf,
                 fill=accent)

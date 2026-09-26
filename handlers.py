@@ -3997,11 +3997,38 @@ _NO_LYRICS_CTX: dict = {}
 _NO_LYRICS_TTL = 15 * 60
 
 
+_VERSION_QUALIFIERS = (
+    "remix", "live", "acoustic", "unplugged", "unpluged", "feat", "ft.",
+    "version", "edit", "rework", "reimagined", "cover", "demo", "reprise",
+    "instrumental", "karaoke", "sped up", "slowed", "8d", "remaster",
+    "lullaby", "tribute",
+)
+
+
+def _title_has_version_qualifier(title):
+    """True when a track title names a *version* of the song.
+
+    Catches parenthetical/bracket qualifiers ("Blinding Lights (Remix)")
+    and bare qualifier words ("blinding lights remix").
+    """
+    t = (title or "").lower()
+    if "(" in t or "[" in t:
+        return True
+    return any(q in t for q in _VERSION_QUALIFIERS)
+
+
 def _itunes_track_lookup(artist, title):
     """Scored iTunes Search lookup for a track.
 
     Returns {'artist','title','artwork','genre','album'} for the first hit
     that genuinely matches the request, else None.  Never raises.
+
+    Version-aware: when the requested title names no version qualifier,
+    an exact (unqualified) title match is preferred over e.g. a remix
+    single that happens to rank first — so the card shows the original
+    song's artwork, not the remix's.  Falls back to the old first-hit
+    behavior when nothing unqualified passes, and never filters when the
+    user explicitly asked for a version ("... remix").
     """
     try:
         from services.lyrics_service import _meets_relevance_floor
@@ -4014,18 +4041,45 @@ def _itunes_track_lookup(artist, title):
                     'country': 'US'},
             timeout=8,
         )
-        for it in r.json().get('results', []):
-            fa = (it.get('artistName') or '').strip()
-            ft = (it.get('trackName') or '').strip()
-            if not fa or not ft:
-                continue
-            if _meets_relevance_floor(term, artist or '', fa, ft):
-                art = (it.get('artworkUrl100') or '').replace('100x100', '600x600')
+        results = r.json().get('results', [])
+        qt = (title or "").lower()
+        # Qualifier words the user asked for ("live", "remix", "feat", ...):
+        # prefer the iTunes hit carrying the same qualifier.
+        prefer = {q for q in _VERSION_QUALIFIERS if q in qt}
+        if "ft" in qt.split():
+            prefer.add("feat")
+
+        def _pick(skip_qualified):
+            cands = []
+            for it in results:
+                fa = (it.get('artistName') or '').strip()
+                ft = (it.get('trackName') or '').strip()
+                if not fa or not ft:
+                    continue
+                if _meets_relevance_floor(term, artist or '', fa, ft):
+                    if skip_qualified and _title_has_version_qualifier(ft):
+                        continue
+                    ft_low = ft.lower()
+                    score = sum(1 for q in prefer if q in ft_low)
+                    cands.append((score, it))
+            # Stable sort: qualifier matches first, iTunes order otherwise.
+            cands.sort(key=lambda c: -c[0])
+            for _, it in cands:
+                art = (it.get('artworkUrl100') or '').replace(
+                    '100x100', '600x600')
                 return {
-                    'artist': fa, 'title': ft, 'artwork': art,
+                    'artist': (it.get('artistName') or '').strip(),
+                    'title': (it.get('trackName') or '').strip(),
+                    'artwork': art,
                     'genre': (it.get('primaryGenreName') or '').strip(),
                     'album': (it.get('collectionName') or '').strip(),
                 }
+            return None
+
+        if _title_has_version_qualifier(title or ''):
+            return _pick(skip_qualified=False)
+        # Prefer the original track's artwork; fall back to first hit.
+        return _pick(skip_qualified=True) or _pick(skip_qualified=False)
     except Exception as e:
         logger.debug(f"[no-lyrics] iTunes lookup failed: {e}")
     return None
