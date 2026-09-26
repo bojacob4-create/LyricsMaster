@@ -490,6 +490,27 @@ check("code regex rejects spaces",
       not H._looks_like_spotify_code("AQD code with spaces here 1234567890"))
 check("code regex rejects song queries",
       not H._looks_like_spotify_code("The Weeknd - Blinding Lights"))
+# ── 12b. full-URL paste extraction (round-73b: pasting the whole callback
+# URL must work — selecting an exact substring on a phone is miserable) ──
+_CODE = "AQBEHtIJ9oUxj2GCJlv7TxxD66rOyKHs7WzeRAtHnkSi-JDjP6wTiqECWuYC7jE4aElRz"
+_FULL_URL = ("http://127.0.0.1:8888/callback?code=" + _CODE
+            + "&state=169570389%3Ad1507470232d9145")
+check("extract code from full callback URL",
+      H._extract_spotify_code(_FULL_URL) == _CODE)
+check("extract code from URL with surrounding whitespace",
+      H._extract_spotify_code("  " + _FULL_URL + "\n") == _CODE)
+check("extract code from bare URL without scheme",
+      H._extract_spotify_code("127.0.0.1:8888/callback?code=" + _CODE) == _CODE)
+check("extract bare code unchanged",
+      H._extract_spotify_code(_CODE) == _CODE)
+check("extract rejects song query",
+      H._extract_spotify_code("The Weeknd - Blinding Lights") is None)
+check("extract rejects URL without code param",
+      H._extract_spotify_code("http://127.0.0.1:8888/callback?error=access_denied") is None)
+check("extract rejects short code in URL",
+      H._extract_spotify_code("http://127.0.0.1:8888/callback?code=abc") is None)
+check("extract rejects empty/None",
+      H._extract_spotify_code("") is None and H._extract_spotify_code(None) is None)
 check("mix expiry honors TTL",
       H._spotify_mix_expired({"ts": time.time() - 7 * 3600}) is True
       and H._spotify_mix_expired({"ts": time.time()}) is False)

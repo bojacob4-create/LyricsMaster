@@ -5,6 +5,7 @@ import re
 import requests
 import threading
 import time
+from urllib.parse import urlparse, parse_qs
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
@@ -463,6 +464,34 @@ _spotify_save_inflight = set()  # user_ids with a save currently running
 _spotify_save_lock = threading.Lock()
 _MIX_TTL = 6 * 3600            # a rendered mix stays saveable for 6 hours
 _SPOTIFY_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{40,512}$")
+_SPOTIFY_CODE_IN_URL_RE = re.compile(r"[?&]code=([A-Za-z0-9_-]{40,512})")
+
+
+def _extract_spotify_code(text):
+    """Pull a Spotify OAuth code out of whatever the user pasted.
+
+    Accepts the full ``http://127.0.0.1:8888/callback?code=…`` URL, a
+    fragment of it, or the bare code on its own — selecting an exact
+    300-character substring on a phone is miserable UX, so the bot does
+    the parsing. Returns the code string, or None when nothing
+    code-shaped is present.
+    """
+    text = (text or "").strip()
+    if not text:
+        return None
+    if "://" in text or text.startswith("http"):
+        try:
+            code = (parse_qs(urlparse(text).query).get("code") or [None])[0]
+        except Exception:
+            code = None
+        if code and _SPOTIFY_CODE_RE.match(code):
+            return code
+    m = _SPOTIFY_CODE_IN_URL_RE.search(text)
+    if m:
+        return m.group(1)
+    if _SPOTIFY_CODE_RE.match(text):
+        return text
+    return None
 
 
 def _spotify_mix_expired(mix) -> bool:
@@ -515,7 +544,7 @@ def _send_spotify_link_prompt(message, user_id) -> None:
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
         "1️⃣ Tap the button below and approve access in your browser\n"
         "2️⃣ You'll land on a page that *can't load* — that's expected\n"
-        "3️⃣ Copy the long `code=…` value from the address bar\n"
+        "3️⃣ Copy the whole address-bar URL (or just the `code=…` value)\n"
         "4️⃣ Paste it here as a message\n\n"
         "I only ever ask for one permission: managing your *private* "
         "playlists. Nothing else. 🔒\n\n"
@@ -578,18 +607,19 @@ def _looks_like_spotify_code(text) -> bool:
 def try_spotify_code(update: Update, user_id, text) -> bool:
     """Handle a pasted Spotify OAuth code. Returns True when consumed.
 
-    Only active while the user has a pending link flow AND the text looks
-    like a Spotify code; everything else falls through to normal routing.
+    Only active while the user has a pending link flow AND the text contains
+    something code-shaped; everything else falls through to normal routing.
     """
     try:
         if not _spotify_auth.get_pending_link(user_id):
             return False
-        if not _looks_like_spotify_code(text):
+        code = _extract_spotify_code(text)
+        if not code:
             return False
     except Exception:
         return False
     try:
-        info = _spotify_auth.exchange_code(text.strip(), user_id)
+        info = _spotify_auth.exchange_code(code, user_id)
     except _spotify_auth.SpotifyLinkError:
         update.message.reply_text(
             "🔗 That Spotify link expired or the code wasn't valid.\n"
