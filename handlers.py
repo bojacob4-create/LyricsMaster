@@ -4034,11 +4034,14 @@ def _title_has_version_qualifier(title):
     return any(q in t for q in _VERSION_QUALIFIERS)
 
 
-def _itunes_track_lookup(artist, title):
+def _itunes_track_lookup_strict(artist, title, timeout=8):
     """Scored iTunes Search lookup for a track.
 
     Returns {'artist','title','artwork','genre','album'} for the first hit
-    that genuinely matches the request, else None.  Never raises.
+    that genuinely matches the request, else None when the track has no
+    match.  Raises on transport failure (network/timeout/bad JSON) so
+    callers can distinguish "couldn't reach iTunes" (transient — retry,
+    don't cache) from "no match" (permanent).
 
     Version-aware: when the requested title names no version qualifier,
     an exact (unqualified) title match is preferred over e.g. a remix
@@ -4047,56 +4050,65 @@ def _itunes_track_lookup(artist, title):
     behavior when nothing unqualified passes, and never filters when the
     user explicitly asked for a version ("... remix").
     """
-    try:
-        from services.lyrics_service import _meets_relevance_floor
-        term = f"{artist or ''} {title or ''}".strip()
-        if not term:
-            return None
-        r = requests.get(
-            'https://itunes.apple.com/search',
-            params={'term': term, 'entity': 'song', 'limit': 10,
-                    'country': 'US'},
-            timeout=8,
-        )
-        results = r.json().get('results', [])
-        qt = (title or "").lower()
-        # Qualifier words the user asked for ("live", "remix", "feat", ...):
-        # prefer the iTunes hit carrying the same qualifier.
-        prefer = {q for q in _VERSION_QUALIFIERS if q in qt}
-        if "ft" in qt.split():
-            prefer.add("feat")
+    from services.lyrics_service import _meets_relevance_floor
+    term = f"{artist or ''} {title or ''}".strip()
+    if not term:
+        return None
+    r = requests.get(
+        'https://itunes.apple.com/search',
+        params={'term': term, 'entity': 'song', 'limit': 10,
+                'country': 'US'},
+        timeout=timeout,
+    )
+    results = r.json().get('results', [])
+    qt = (title or "").lower()
+    # Qualifier words the user asked for ("live", "remix", "feat", ...):
+    # prefer the iTunes hit carrying the same qualifier.
+    prefer = {q for q in _VERSION_QUALIFIERS if q in qt}
+    if "ft" in qt.split():
+        prefer.add("feat")
 
-        def _pick(skip_qualified):
-            cands = []
-            for it in results:
-                fa = (it.get('artistName') or '').strip()
-                ft = (it.get('trackName') or '').strip()
-                if not fa or not ft:
+    def _pick(skip_qualified):
+        cands = []
+        for it in results:
+            fa = (it.get('artistName') or '').strip()
+            ft = (it.get('trackName') or '').strip()
+            if not fa or not ft:
+                continue
+            if _meets_relevance_floor(term, artist or '', fa, ft):
+                if skip_qualified and _title_has_version_qualifier(ft):
                     continue
-                if _meets_relevance_floor(term, artist or '', fa, ft):
-                    if skip_qualified and _title_has_version_qualifier(ft):
-                        continue
-                    ft_low = ft.lower()
-                    score = sum(1 for q in prefer if q in ft_low)
-                    cands.append((score, it))
-            # Stable sort: qualifier matches first, iTunes order otherwise.
-            cands.sort(key=lambda c: -c[0])
-            for _, it in cands:
-                art = (it.get('artworkUrl100') or '').replace(
-                    '100x100', '600x600')
-                return {
-                    'artist': (it.get('artistName') or '').strip(),
-                    'title': (it.get('trackName') or '').strip(),
-                    'artwork': art,
-                    'genre': (it.get('primaryGenreName') or '').strip(),
-                    'album': (it.get('collectionName') or '').strip(),
-                }
-            return None
+                ft_low = ft.lower()
+                score = sum(1 for q in prefer if q in ft_low)
+                cands.append((score, it))
+        # Stable sort: qualifier matches first, iTunes order otherwise.
+        cands.sort(key=lambda c: -c[0])
+        for _, it in cands:
+            art = (it.get('artworkUrl100') or '').replace(
+                '100x100', '600x600')
+            return {
+                'artist': (it.get('artistName') or '').strip(),
+                'title': (it.get('trackName') or '').strip(),
+                'artwork': art,
+                'genre': (it.get('primaryGenreName') or '').strip(),
+                'album': (it.get('collectionName') or '').strip(),
+            }
+        return None
 
-        if _title_has_version_qualifier(title or ''):
-            return _pick(skip_qualified=False)
-        # Prefer the original track's artwork; fall back to first hit.
-        return _pick(skip_qualified=True) or _pick(skip_qualified=False)
+    if _title_has_version_qualifier(title or ''):
+        return _pick(skip_qualified=False)
+    # Prefer the original track's artwork; fall back to first hit.
+    return _pick(skip_qualified=True) or _pick(skip_qualified=False)
+
+
+def _itunes_track_lookup(artist, title):
+    """Never-raises wrapper around _itunes_track_lookup_strict.
+
+    Transport failure and no-match both yield None (historic contract —
+    used by song_command's photo card and _verify_track_exists).
+    """
+    try:
+        return _itunes_track_lookup_strict(artist, title)
     except Exception as e:
         logger.debug(f"[no-lyrics] iTunes lookup failed: {e}")
     return None
@@ -4382,7 +4394,7 @@ def share_card_command(update: Update, context: CallbackContext):
 
         from services.share_card import (
             get_share_token, build_share_link, card_cache_path,
-            extract_excerpt, fetch_artwork, render_share_card,
+            extract_excerpt, render_share_card, resolve_share_artwork,
         )
         token = get_share_token(artist or song, song or artist)
         caption_of = lambda a, s: (
@@ -4401,12 +4413,13 @@ def share_card_command(update: Update, context: CallbackContext):
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             lyr_fut = pool.submit(search_lyrics_with_fallback, query)
-            art_fut = pool.submit(_itunes_track_lookup, artist, song)
+            art_fut = pool.submit(
+                resolve_share_artwork, artist, song,
+                _itunes_track_lookup_strict)
             r_artist, r_song, lyrics, _status = lyr_fut.result()
-            try:
-                art_meta = art_fut.result()
-            except Exception:
-                art_meta = None
+            # resolve_share_artwork never raises; transient tells the
+            # caching step whether this render is safe to keep.
+            art_img, art_transient = art_fut.result()
 
         if not lyrics:
             status_msg.edit_text(
@@ -4421,11 +4434,17 @@ def share_card_command(update: Update, context: CallbackContext):
             status_msg.edit_text(
                 "😕 I couldn't pull a clean excerpt from these lyrics.")
             return
-        art_img = fetch_artwork((art_meta or {}).get("artwork"))
         png = render_share_card(use_artist, use_song, excerpt, art_img,
                                 build_share_link(token))
-        with open(cached, "wb") as f:
-            f.write(png)
+        if art_transient:
+            # Artwork failed transiently: don't cache the placeholder
+            # render — the next share re-attempts the artwork and heals.
+            logger.warning(
+                f"[sharecard] not caching card for "
+                f"'{use_artist} - {use_song}' (transient artwork failure)")
+        else:
+            with open(cached, "wb") as f:
+                f.write(png)
         status_msg.delete()
         _send_with_retry(
             update.message.reply_photo, photo=io.BytesIO(png),

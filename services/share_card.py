@@ -16,6 +16,7 @@ import io
 import json
 import logging
 import os
+import time
 
 import qrcode
 import requests
@@ -264,17 +265,77 @@ def accent_color(rgb):
         return (230, 170, 80)
 
 
-def fetch_artwork(url, timeout=10):
-    """Download artwork -> PIL Image (RGB), or None. Never raises."""
+def fetch_artwork(url, timeout=10, attempts=1):
+    """Download artwork -> PIL Image (RGB), or None. Never raises.
+
+    Retries transient failures up to ``attempts`` times with a short
+    backoff between attempts.  A final failure is debug-logged; callers
+    that need visibility should use resolve_share_artwork().
+    """
     if not url:
         return None
-    try:
-        r = requests.get(url, timeout=timeout)
-        r.raise_for_status()
-        return Image.open(io.BytesIO(r.content)).convert("RGB")
-    except Exception as e:
-        logger.debug(f"[sharecard] artwork fetch failed: {e}")
-        return None
+    last_err = None
+    for attempt in range(max(1, attempts)):
+        try:
+            r = requests.get(url, timeout=timeout)
+            r.raise_for_status()
+            return Image.open(io.BytesIO(r.content)).convert("RGB")
+        except Exception as e:
+            last_err = e
+            if attempt < attempts - 1:
+                time.sleep(_ART_BACKOFF_S[min(attempt, len(_ART_BACKOFF_S) - 1)])
+    logger.debug(f"[sharecard] artwork fetch failed: {last_err}")
+    return None
+
+
+# ── Resilient artwork resolution (round 67) ────────────────────────────────
+
+_ART_ATTEMPTS = 3
+_ART_BACKOFF_S = (1.0, 2.0)
+_ART_TIMEOUT_S = 5
+
+
+def resolve_share_artwork(artist, title, lookup_fn, download_fn=None):
+    """Resolve share-card artwork, retrying transient failures. Never raises.
+
+    ``lookup_fn`` is a strict metadata lookup ``(artist, title, timeout=..)``
+    that raises on transport failure and returns None when the track
+    genuinely has no match.  ``download_fn`` defaults to fetch_artwork.
+
+    Returns ``(PIL image or None, transient: bool)``:
+
+    - ``transient=True``: we had a lead (or couldn't even search) but the
+      network failed — the caller should NOT cache the rendered card, so
+      the next share re-attempts the artwork and heals itself.
+    - ``transient=False``: definitive outcome (artwork, or genuinely
+      missing) — safe to cache, even when the image is None.
+    """
+    download_fn = download_fn or fetch_artwork
+    meta = None
+    for attempt in range(_ART_ATTEMPTS):
+        try:
+            meta = lookup_fn(artist, title, timeout=_ART_TIMEOUT_S)
+            break
+        except Exception as e:
+            if attempt < _ART_ATTEMPTS - 1:
+                time.sleep(_ART_BACKOFF_S[attempt])
+            else:
+                logger.warning(
+                    f"[sharecard] artwork lookup failed for "
+                    f"'{artist} - {title}': {e}")
+                return None, True
+    art_url = (meta or {}).get("artwork")
+    if not art_url:
+        # Search worked but the track has no artwork (or no match at all):
+        # the placeholder is the correct final render — cache it.
+        return None, False
+    img = download_fn(art_url, timeout=_ART_TIMEOUT_S,
+                      attempts=_ART_ATTEMPTS)
+    if img is None:
+        logger.warning(
+            f"[sharecard] artwork download failed for '{artist} - {title}'")
+        return None, True
+    return img, False
 
 
 # ── Rendering helpers ──────────────────────────────────────────────────────
