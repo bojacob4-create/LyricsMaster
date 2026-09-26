@@ -9,7 +9,8 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackContext, MessageHandler, Filters, CommandHandler
-from telegram.error import TelegramError, Unauthorized
+from telegram.error import (TelegramError, Unauthorized, TimedOut, NetworkError,
+                            RetryAfter, BadRequest)
 from buttons import (
     lyrics_buttons, song_dashboard_buttons, artist_buttons, artist_summary_buttons,
     recommend_buttons, song_list_buttons, ambiguous_buttons,
@@ -4294,6 +4295,70 @@ def similar_nolyrics_command(update: Update, context: CallbackContext):
         )
 
 
+# --- Transient upload retry (round 64) ---------------------------------------
+# Telegram uploads occasionally die on transient network faults: read/connect
+# timeouts (PTB TimedOut), connection resets and Telegram-side Bad Gateway
+# (all surface as PTB NetworkError subclasses), plus flood control
+# (RetryAfter). Any one of these used to collapse into the generic
+# "couldn't create the share card" failure even though the payload was fine.
+#
+# _send_with_retry is send-agnostic: pass any bound reply_*/send_* callable
+# plus its kwargs. It retries only transient classes — BadRequest,
+# Unauthorized, etc. raise immediately since retrying those is pointless.
+# File-like payloads are rewound before every attempt so a retry uploads
+# from the start (urllib3 consumes the stream on a partial upload).
+_SEND_ATTEMPTS = 3            # 1 initial try + 2 retries
+_SEND_BACKOFF_S = (1.5, 3.0)  # sleeps between attempts
+_RETRY_AFTER_CAP_S = 15       # never wait out an absurd flood-control delay
+
+
+def _rewind_payloads(kwargs):
+    for value in kwargs.values():
+        seek = getattr(value, "seek", None)
+        if callable(seek):
+            try:
+                value.seek(0)
+            except Exception:
+                pass
+
+
+def _send_with_retry(send_fn, *args, label="telegram send", **kwargs):
+    """Call send_fn(*args, **kwargs), retrying transient network failures.
+
+    Retries telegram.error.TimedOut and other telegram.error.NetworkError
+    failures (read/connect timeouts, connection resets, Telegram Bad
+    Gateway) and honors telegram.error.RetryAfter's own delay (capped).
+    telegram.error.BadRequest is a NetworkError subclass but is NOT
+    retried — 4xx errors never heal by waiting. Raises the last transient
+    error once all attempts are exhausted.
+    """
+    last_err = None
+    for attempt in range(_SEND_ATTEMPTS):
+        try:
+            _rewind_payloads(kwargs)
+            return send_fn(*args, **kwargs)
+        except RetryAfter as e:
+            last_err = e
+            wait = getattr(e, "retry_after", None) or _SEND_BACKOFF_S[
+                min(attempt, len(_SEND_BACKOFF_S) - 1)]
+            wait = min(wait, _RETRY_AFTER_CAP_S)
+            kind = f"flood control (retry_after={wait}s)"
+        except (TimedOut, NetworkError) as e:
+            if isinstance(e, BadRequest):
+                raise  # 4xx: retrying is pointless
+            last_err = e
+            wait = _SEND_BACKOFF_S[min(attempt, len(_SEND_BACKOFF_S) - 1)]
+            kind = f"transient {type(e).__name__}: {e}"
+        if attempt + 1 < _SEND_ATTEMPTS:
+            logger.warning(f"[{label}] {kind} — retrying in {wait}s "
+                           f"(attempt {attempt + 1}/{_SEND_ATTEMPTS})")
+            time.sleep(wait)
+        else:
+            logger.error(f"[{label}] {kind} — giving up "
+                         f"after {_SEND_ATTEMPTS} attempts")
+    raise last_err
+
+
 def share_card_command(update: Update, context: CallbackContext):
     """Handle the '🖼️ Share Card' button — render a branded story-format
     lyric card (round 57). Cards are cached per song token, so re-shares
@@ -4327,8 +4392,10 @@ def share_card_command(update: Update, context: CallbackContext):
         if os.path.exists(cached):
             status_msg.delete()
             with open(cached, "rb") as f:
-                update.message.reply_photo(
-                    photo=f, caption=caption_of(artist or song, song or artist))
+                _send_with_retry(
+                    update.message.reply_photo, photo=f,
+                    caption=caption_of(artist or song, song or artist),
+                    label="share-card photo (cache hit)")
             logger.info(f"[sharecard] cache hit for '{query}' (token {token})")
             return
 
@@ -4360,8 +4427,10 @@ def share_card_command(update: Update, context: CallbackContext):
         with open(cached, "wb") as f:
             f.write(png)
         status_msg.delete()
-        update.message.reply_photo(photo=io.BytesIO(png),
-                                   caption=caption_of(use_artist, use_song))
+        _send_with_retry(
+            update.message.reply_photo, photo=io.BytesIO(png),
+            caption=caption_of(use_artist, use_song),
+            label="share-card photo")
         try:
             log_interaction(user_id, "sharecard")
         except Exception as _e:

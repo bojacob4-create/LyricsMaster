@@ -820,7 +820,9 @@ def auto_award_from_stats(user_id: int) -> List[str]:
         kinds = entry.get("kinds") or {} if isinstance(entry, dict) else {}
         checks = [
             ("quiz_whiz", stats.get("quiz_correct", 0) >= 10),
-            ("explorer", stats.get("total", 0) >= 50),
+            # Round 55+: explorer is about DISTINCT songs discovered
+            # ("songs_explored"), not raw interaction taps.
+            ("explorer", stats.get("songs_explored", 0) >= 50),
             ("lucky", int(kinds.get("random", 0) or 0) >= 25),
             ("streak_7", daily.get("best_streak", 0) >= 7),
         ]

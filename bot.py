@@ -57,7 +57,11 @@ logging.basicConfig(
 install_secret_redaction()
 logger = logging.getLogger(__name__)
 
-IS_PRODUCTION = os.environ.get('REPLIT_DEPLOYMENT') == '1'
+# This machine IS production for the bot (the Replit era is over), so the
+# flag is read from a Replit-independent name too. REPLIT_DEPLOYMENT is kept
+# as a fallback so a Replit deploy would still behave as production there.
+IS_PRODUCTION = (os.environ.get('PRODUCTION') == '1'
+                 or os.environ.get('REPLIT_DEPLOYMENT') == '1')
 
 # Owner's Telegram chat id — used only for critical self-alerts (round 63:
 # getUpdates Conflict). A Conflict is silent by default: the bot just misses
@@ -111,6 +115,25 @@ def _write_heartbeat():
     except Exception:
         pass
 
+
+
+def _conflict_alert_text():
+    """Owner DM text for a getUpdates Conflict — mode-aware (round 64).
+
+    In production the bot holds its ground and keeps polling; in dev mode
+    it yields and pauses. The DM must describe what actually happened.
+    """
+    if IS_PRODUCTION:
+        state = ("so we're fighting over your messages right now — "
+                 "some may be missed. I'm staying online.\n\n"
+                 "If that's your old Replit copy, stop it there. ")
+    else:
+        state = ("so I've paused to avoid a fight over your messages.\n\n"
+                 "If that's your old Replit copy, stop it there and "
+                 "I'll resume on my own. ")
+    return ("⚠️ Another copy of me just started polling with the same token, "
+            + state +
+            "If you don't recognize it, tell Pex — the token may need rotating.")
 
 
 class TelegramBotWorker:
@@ -266,10 +289,7 @@ class TelegramBotWorker:
                 return
             self.updater.bot.send_message(
                 chat_id=int(OWNER_CHAT_ID),
-                text=("⚠️ Another copy of me just started polling with the same token, "
-                      "so I've paused to avoid a fight over your messages.\n\n"
-                      "If that's your old Replit copy, stop it there and I'll resume on my own. "
-                      "If you don't recognize it, tell Pex — the token may need rotating."))
+                text=_conflict_alert_text())
             with open(_CONFLICT_ALERT_FILE, 'w') as f:
                 f.write(str(now))
             logger.info("Conflict owner alert sent")

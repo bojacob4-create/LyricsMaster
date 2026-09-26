@@ -127,7 +127,16 @@ def _run_song_card(query):
          patch.object(h, 'detect_themes', return_value=['heartbreak']), \
          patch.object(h, 'log_interaction', return_value=None):
         h.song_command(update, context)
-    return "\n".join(str(c.args[0]) for c in processing.edit_text.call_args_list if c.args)
+    # The card can go out two ways: edit_text (text path) or reply_photo
+    # caption (photo-header path, added in Round 25). Capture both so the
+    # checks below see the real user-visible card either way.
+    parts = [str(c.args[0]) for c in processing.edit_text.call_args_list
+             if c.args]
+    for c in update.message.reply_photo.call_args_list:
+        caption = c.kwargs.get("caption") if hasattr(c, "kwargs") else None
+        if caption:
+            parts.append(str(caption))
+    return "\n".join(parts)
 
 card = _run_song_card("Adele - Hello")
 check("card has no '🎤 /lyrics' text hint", "🎤 /lyrics" not in card)

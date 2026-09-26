@@ -23,11 +23,14 @@ import handlers as h
 
 TMP = tempfile.mkdtemp(prefix="r55_stats_")
 f.STATS_PATH = os.path.join(TMP, "fun_stats.json")
+f.BADGES_PATH = os.path.join(TMP, "fun_badges.json")
+f.DAILY_PATH = os.path.join(TMP, "fun_daily.json")
 
 
 def _reset():
-    if os.path.exists(f.STATS_PATH):
-        os.remove(f.STATS_PATH)
+    for p in (f.STATS_PATH, f.BADGES_PATH, f.DAILY_PATH):
+        if os.path.exists(p):
+            os.remove(p)
 
 
 def _tagged(uid, genre, n):
@@ -344,6 +347,62 @@ def test_song_pairs():
     assert h._song_pairs([None, "x", {}]) == []
     assert h._song_pairs([{"artist": "A"}]) == [("A", None)]
     print("  _song_pairs: key variants, junk skipped, never raises")
+
+
+# ── 8. Explorer badge: awarded on DISTINCT songs, not taps ─────────────
+# Badge desc: "Discovered 50 songs". auto_award_from_stats must use
+# songs_explored (distinct served songs), not total interactions.
+
+def _serve_distinct(uid, n, start=0):
+    for i in range(start, start + n):
+        f.log_interaction(uid, "recommend", genre="pop",
+                          songs=[(f"Artist{i}", f"Song{i}")])
+
+
+def test_explorer_desc_matches_logic():
+    # The honesty contract: description says "Discovered 50 songs".
+    assert f.BADGES["explorer"]["desc"] == "Discovered 50 songs"
+    print('  explorer desc: "Discovered 50 songs"')
+
+
+def test_explorer_awarded_on_50_distinct_songs():
+    _reset()
+    u = 55601
+    _serve_distinct(u, 50)
+    ms = f.get_music_stats(u)
+    assert ms["songs_explored"] == 50, ms
+    newly = f.auto_award_from_stats(u)
+    assert newly == ["explorer"], newly   # no other badge should fire here
+    # Second call: already awarded, nothing new.
+    assert f.auto_award_from_stats(u) == []
+    print("  50 distinct songs -> explorer awarded once, then idempotent")
+
+
+def test_explorer_not_awarded_on_repeat_taps():
+    _reset()
+    u = 55602
+    # 60 interaction taps but only 5 DISTINCT songs — old code awarded on
+    # total >= 50; honest code must not.
+    for i in range(60):
+        f.log_interaction(u, "recommend", genre="pop",
+                          songs=[("Tyla", f"Track{i % 5}")])
+    ms = f.get_music_stats(u)
+    assert ms["total"] == 60 and ms["songs_explored"] == 5, ms
+    newly = f.auto_award_from_stats(u)
+    assert "explorer" not in newly, newly
+    assert f.get_user_badges(u)["earned"] == []
+    print("  60 taps / 5 distinct songs -> explorer NOT awarded (regression)")
+
+
+def test_explorer_boundary():
+    _reset()
+    u = 55603
+    _serve_distinct(u, 49)
+    assert "explorer" not in f.auto_award_from_stats(u)
+    _serve_distinct(u, 1, start=49)
+    assert f.get_music_stats(u)["songs_explored"] == 50
+    assert "explorer" in f.auto_award_from_stats(u)
+    print("  49 distinct -> no award; 50th distinct -> awarded")
 
 
 if __name__ == "__main__":
