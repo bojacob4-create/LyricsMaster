@@ -469,6 +469,7 @@ class TelegramBotWorker:
             dp.add_handler(CommandHandler("mystats",     mystats_command))
             dp.add_handler(CommandHandler("badges",      badges_command))
             dp.add_handler(CommandHandler("cancel",      cancel_command))
+            dp.add_handler(CommandHandler("history",     history_command))
 
             dp.add_handler(CallbackQueryHandler(callback_query_handler))
             # Home worker DONE/FAIL signals arrive as channel posts from

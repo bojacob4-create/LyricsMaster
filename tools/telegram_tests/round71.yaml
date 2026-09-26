@@ -1,0 +1,40 @@
+round: 71
+title: /history — recently viewed songs
+summary: |
+  Phase 1 of the co-owned improvement suite. Every song dashboard you open
+  is recorded persistently; /history shows them most-recent-first with
+  tappable rows to reopen. Re-viewing bumps to top (no dupes), capped at 30,
+  two-step clear. (Quiz idea scrapped — existing /quiz is enough.)
+tests:
+  - name: empty history
+    command: /history
+    expect: "📭 Your history is empty — with a hint to look up a song"
+    unit_only: false
+  - name: first song recorded
+    command: "/song Tyla - Water  →  then  /history"
+    expect: "/history lists '1. Tyla — Water · today <time>'"
+    unit_only: false
+  - name: ordering newest-first
+    command: "/song Adele - Hello  →  then  /history"
+    expect: "Hello is now #1, Water is #2"
+    unit_only: false
+  - name: re-view bumps, no duplicate
+    command: "/song Tyla - Water  →  then  /history"
+    expect: "Water back at #1, appears exactly once (2 rows total)"
+    unit_only: false
+  - name: tappable row reopens song
+    command: "In /history, tap the 'Adele - Hello' row button"
+    expect: "The Hello song dashboard opens (same as /song Adele - Hello)"
+    unit_only: false
+  - name: clear asks first
+    command: "In /history, tap '🗑 Clear history'"
+    expect: "Bot asks 'Clear all N songs from your history?' with Yes/Keep buttons — nothing cleared yet"
+    unit_only: false
+  - name: clear confirms and wipes
+    command: "Tap 'Yes, clear it'  →  then  /history"
+    expect: "'🗑 History cleared (N songs)' then /history shows the empty state again"
+    unit_only: false
+  - name: clear decline keeps history
+    command: "/song Tyla - Water → /history → 🗑 Clear history → tap 'Keep it'"
+    expect: "'Kept — your history is untouched' and Water is still listed"
+    unit_only: false

@@ -276,7 +276,8 @@ def help_command(update: Update, context: CallbackContext):
         "▫️ */artist* — Quick artist profile\n"
         "▫️ */youtube* — Find the music video\n"
         "▫️ */wiki* — Artist Wikipedia info\n"
-        "▫️ */trending* — Trending songs now\n\n"
+        "▫️ */trending* — Trending songs now\n"
+        "▫️ */history* — Your recently viewed songs 🕘\n\n"
         "*🎧 Audio*\n"
         "▫️ */mp3 [Artist - Song]* — Get the song as an MP3\n"
         "▫️ */download [YouTube URL]* — Download a YouTube video\n\n"
@@ -324,6 +325,7 @@ _KNOWN_COMMANDS = [
     'endquiz', 'throwback', 'mood', 'mp3', 'download',
     'subscribe', 'unsubscribe', 'daily', 'duel', 'emoji', 'mystats',
     'badges', 'wiki', 'about', 'newmusic', 'extend', 'cancel', 'playlist',
+    'history',
 ]
 # NOTE: 'decade' is intentionally absent — it is a callback-button action
 # (decade_buttons → throwback_command), not a slash command. Listing it
@@ -350,6 +352,92 @@ def unknown_command_handler(update: Update, context: CallbackContext):
             )
     except Exception as e:
         logger.warning(f"unknown_command_handler error: {e}")
+
+
+def _render_history(user_id: int):
+    """(text, reply_markup) for the /history list. Shared by the command
+    and the clear-confirmation callbacks."""
+    from buttons import _cb
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from services.history_service import get_history, format_when
+
+    entries = get_history(user_id)
+    if not entries:
+        return ("📭 Your history is empty.\n\n"
+                "Look up any song and it'll show up here ✨"), None
+    lines = ["🕘 *Your recent songs*\n"]
+    rows = []
+    for i, e in enumerate(entries, 1):
+        when = format_when(e["ts"])
+        lines.append(f"{i}. {e['artist']} — {e['title']} · {when}")
+        label = f"{i}. {e['artist']} - {e['title']}"
+        if len(label) > 60:
+            label = label[:57] + "…"
+        rows.append([InlineKeyboardButton(
+            label, callback_data=_cb("song", f"{e['artist']} - {e['title']}"))])
+    rows.append([InlineKeyboardButton(
+        "🗑 Clear history", callback_data=_cb("history_clear", "ask"))])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+
+def history_command(update: Update, context: CallbackContext):
+    """Handle /history — show recently viewed songs, tappable to reopen."""
+    user_id = update.effective_user.id
+    try:
+        text, markup = _render_history(user_id)
+        update.message.reply_text(text, reply_markup=markup,
+                                  parse_mode="Markdown")
+        logger.info(f"[history] shown to user {user_id}")
+    except Exception as e:
+        logger.error(f"Error in history command: {e}")
+        update.message.reply_text(
+            "😓 Couldn't load your history right now. Please try again!")
+
+
+def history_clear_ask(update: Update, context: CallbackContext):
+    """'Clear history' tapped — ask for confirmation (two-step, no oops)."""
+    from buttons import _cb
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from services.history_service import get_history
+    user_id = update.effective_user.id
+    try:
+        n = len(get_history(user_id))
+        if n == 0:
+            update.message.reply_text("Your history is already empty ✨")
+            return
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("Yes, clear it",
+                                 callback_data=_cb("history_clear", "yes")),
+            InlineKeyboardButton("Keep it",
+                                 callback_data=_cb("history_clear", "no")),
+        ]])
+        update.message.reply_text(
+            f"Clear all {n} song{'s' if n != 1 else ''} from your history?",
+            reply_markup=markup)
+    except Exception as e:
+        logger.error(f"Error in history_clear_ask: {e}")
+
+
+def history_clear_yes(update: Update, context: CallbackContext):
+    """Confirmed — wipe the user's history."""
+    from services.history_service import clear_history
+    user_id = update.effective_user.id
+    try:
+        n = clear_history(user_id)
+        update.message.reply_text(
+            f"🗑 History cleared ({n} song{'s' if n != 1 else ''}).\n"
+            "It'll start filling up again as you explore ✨")
+        logger.info(f"[history] cleared for user {user_id} ({n} entries)")
+    except Exception as e:
+        logger.error(f"Error in history_clear_yes: {e}")
+
+
+def history_clear_no(update: Update, context: CallbackContext):
+    """Declined — leave history untouched."""
+    try:
+        update.message.reply_text("Kept — your history is untouched 👍")
+    except Exception as e:
+        logger.error(f"Error in history_clear_no: {e}")
 
 
 def quiz_command(update: Update, context: CallbackContext):
@@ -1733,9 +1821,17 @@ def callback_query_handler(update: Update, context: CallbackContext):
         'mood': mood_command,
         'decade': throwback_command,
         'emoji_exit': emoji_exit_callback,
+        'history_clear': history_clear_ask,
     }
 
-    handler = handler_map.get(action)
+    # history_clear carries its step in the param: ask/yes/no.
+    _hc_step = (param or "").strip().lower() if action == 'history_clear' else ""
+    if action == 'history_clear':
+        handler = {'ask': history_clear_ask,
+                   'yes': history_clear_yes,
+                   'no': history_clear_no}.get(_hc_step, history_clear_ask)
+    else:
+        handler = handler_map.get(action)
     if handler:
         fake_update = type('FakeUpdate', (), {
             'effective_user': update.effective_user,
@@ -4543,6 +4639,12 @@ def song_command(update: Update, context: CallbackContext):
                             songs=[(artist, song)])
         except Exception as _e:
             logger.debug(f"round55 song stats hook failed: {_e}")
+        # Round 71: /history — record the view (persistent, recency-bumped).
+        try:
+            from services.history_service import record_view as _record_view
+            _record_view(user_id, artist, song)
+        except Exception as _e:
+            logger.debug(f"round71 history hook failed: {_e}")
 
         _tan0 = time.time()
         # Round-13d/e: a song opened from a mood mix inherits the mix's mood
