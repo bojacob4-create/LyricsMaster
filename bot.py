@@ -189,6 +189,7 @@ class TelegramBotWorker:
                 BotCommand("download",    "📥 Download a YouTube video"),
                 BotCommand("quiz",        "🎮 Lyrics guessing game"),
                 BotCommand("endquiz",     "End current quiz"),
+                BotCommand("cancel",      "🛑 Quit active game or action"),
                 BotCommand("mood",        "🎧 Mix for your mood"),
                 BotCommand("extend",      "🎶 Finish my playlist"),
                 BotCommand("about",       "💭 Find songs by theme"),
