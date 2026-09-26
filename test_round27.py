@@ -43,11 +43,13 @@ c = cls("Brandi Carlile - Uninvited (Newport Folk Fest 2026)",
 check("live festival video -> live", c['kind'] == 'live' and c['is_live']
       and not c['is_official'], str(c))
 
-c = cls("Tyla - Water (Official Music Video)", "Tyla", "Water")
+c = cls("Tyla - Water (Official Music Video)",
+        "Tyla", "Water", "Tyla")  # round-85: title claim needs a corroborating channel
 check("official music video -> official", c['kind'] == 'official'
       and c['is_official'] and not c['is_live'], str(c))
 
-c = cls("Adele - Hello (Official Lyric Video)", "Adele", "Hello")
+c = cls("Adele - Hello (Official Lyric Video)",
+        "Adele", "Hello", "Adele")  # round-85: corroborating channel
 check("official lyric video -> official (no live note needed)",
       c['kind'] == 'official', str(c))
 
@@ -55,17 +57,17 @@ c = cls("Adele - Hello (Live at the BRIT Awards)", "Adele", "Hello")
 check("'Live at ...' -> live", c['is_live'] and not c['is_official'], str(c))
 
 c = cls("Tim McGraw - Live Like You Were Dying (Official Video)",
-        "Tim McGraw", "Live Like You Were Dying")
+        "Tim McGraw", "Live Like You Were Dying", "Tim McGraw")  # round-85: corroborating channel
 check("song titled 'Live ...' does NOT false-positive as live",
       c['kind'] == 'official' and not c['is_live'], str(c))
 
 c = cls("Live - Lightning Crashes (Official Video)",
-        "Live", "Lightning Crashes")
+        "Live", "Lightning Crashes", "Live")  # round-85: corroborating channel
 check("band named 'Live' does NOT false-positive as live",
       c['kind'] == 'official' and not c['is_live'], str(c))
 
 c = cls("Taylor Swift - All Too Well (Official Live Video)",
-        "Taylor Swift", "All Too Well")
+        "Taylor Swift", "All Too Well", "Taylor Swift")  # round-85: corroborating channel
 check("'Official Live Video' -> live + official (no 'not found' note)",
       c['is_live'] and c['is_official'], str(c))
 

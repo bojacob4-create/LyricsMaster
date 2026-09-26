@@ -135,6 +135,32 @@ def _is_official_channel(channel: str) -> bool:
             or channel_lower.rstrip().endswith('official'))
 
 
+def _channel_corroborates_official(channel: str, artist: str) -> bool:
+    """Round-85: a title's CLAIM of officialness is only trustworthy when the
+    uploader backs it up. A VEVO/'official'-suffixed channel is authoritative
+    on its own; otherwise the channel name must match the artist (their own
+    channel, incl. auto-generated 'Artist - Topic' channels). Any re-upload
+    channel can type '(Official Music Video)' into a title — without
+    corroboration that claim is impersonation, not signal. Shared by the
+    scorer and the kind classifier so they can never disagree (round-79
+    principle).
+    """
+    if _is_official_channel(channel):
+        return True
+    ch_tokens = _normalize(channel).split()
+    an_tokens = _normalize(artist).split()
+    if not ch_tokens or not an_tokens:
+        return False
+
+    def _run_within(hay, needle):
+        n = len(needle)
+        return any(hay[i:i + n] == needle
+                   for i in range(len(hay) - n + 1))
+
+    return (_run_within(ch_tokens, an_tokens)
+            or _run_within(an_tokens, ch_tokens))
+
+
 # Round-80: reaction-video phrasings. "Twins React to X (Official Music
 # Video)" mentions the official video only because it is being reacted to —
 # it must never count as official itself. Kept as phrases (not bare
@@ -181,12 +207,20 @@ def _score_candidate(candidate: Dict, artist: str, song: str) -> int:
     # (it is reacting TO the official video) — it must not earn the
     # official-text bonus for that.
     is_reaction = any(p in title_lower for p in _REACTION_PHRASES)
+    # Round-85: a title's claim of officialness only earns the bonus when the
+    # uploader corroborates it (their own / VEVO / official channel). A
+    # re-upload titled '(Official Music Video)' by a random channel is
+    # impersonation — it must not outrank the artist's genuine upload.
+    # Content-type bonuses (lyric/audio) are ungated: a third-party lyric
+    # video is still a lyric video.
+    corroborated = _channel_corroborates_official(
+        candidate.get('channel', ''), artist)
     if not is_reaction:
-        if 'official music video' in title_lower:
+        if 'official music video' in title_lower and corroborated:
             score += 25
-        elif 'official video' in title_lower:
+        elif 'official video' in title_lower and corroborated:
             score += 22
-        elif 'official audio' in title_lower:
+        elif 'official audio' in title_lower and corroborated:
             score += 18
         elif 'official lyric' in title_lower or 'lyrics' in title_lower:
             score += 15
@@ -274,8 +308,13 @@ def _classify_video_kind(video_title: str, channel: str = '',
     # Round-80: a reaction video mentioning "official music video" (it is
     # reacting TO the official video) is never official itself.
     is_reaction = any(p in title_lower for p in _REACTION_PHRASES)
-    is_official = ((any(m in title_lower for m in _OFFICIAL_MARKERS)
-                    or ('official' in title_lower and is_live)
+    # Round-85: title-claimed officialness requires channel corroboration —
+    # '(Official Music Video)' in a re-uploader's title is impersonation.
+    # A VEVO/official channel stays authoritative on title alone.
+    title_claims_official = (any(m in title_lower for m in _OFFICIAL_MARKERS)
+                             or ('official' in title_lower and is_live))
+    is_official = (((title_claims_official
+                     and _channel_corroborates_official(channel, artist))
                     or _is_official_channel(channel))
                    and not is_reaction)
     is_lyric = (not is_live and not is_official
