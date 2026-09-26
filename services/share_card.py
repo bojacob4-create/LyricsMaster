@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 W, H = 1080, 1350
 BOT_USERNAME = "MGLyricsbot"
 
+# Bump whenever the card visuals change (round 86 did). The cache file
+# name carries the version, so a template change can never serve a stale
+# cached render — old files are simply never looked up again.
+TEMPLATE_VERSION = 2
+
 _REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _TOKEN_FILE = os.path.join(_REPO_DIR, "share_tokens.json")
 _CARD_DIR = os.path.join(_REPO_DIR, "share_cards")
@@ -177,8 +182,10 @@ def build_share_link(token):
 
 
 def card_cache_path(token):
+    # Versioned: a template change (TEMPLATE_VERSION bump) retires every
+    # previously cached render instead of serving it forever.
     os.makedirs(_CARD_DIR, exist_ok=True)
-    return os.path.join(_CARD_DIR, f"{token}.png")
+    return os.path.join(_CARD_DIR, f"{token}_v{TEMPLATE_VERSION}.png")
 
 
 # ── Color ──────────────────────────────────────────────────────────────────

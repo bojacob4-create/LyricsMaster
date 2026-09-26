@@ -162,7 +162,10 @@ try:
           "https://t.me/MGLyricsbot?start=share_abc123")
     p = sc.card_cache_path("abc123")
     check_true("cache dir created", os.path.isdir(sc._CARD_DIR))
-    check_true("cache path", p.endswith("abc123.png"))
+    # Round 86b: cache file names carry the template version so a visual
+    # change retires stale renders instead of serving them forever.
+    check_true("cache path",
+               p.endswith(f"abc123_v{sc.TEMPLATE_VERSION}.png"))
 finally:
     sc._TOKEN_FILE = _orig_token_file
     sc._CARD_DIR = _orig_card_dir
