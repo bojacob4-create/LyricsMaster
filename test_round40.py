@@ -1,4 +1,4 @@
-"""Round 40: /top is 100% live for all 9 genres.
+"""Round 40: /top is 100% live for all genres (10 after round-84 added dance).
 
 - Per-genre home Apple charts (kpop -> Korea, afrobeats -> Nigeria, rest -> US)
 - Last.fm tag tracks fill thin Apple slices (still live, labeled)
@@ -44,9 +44,9 @@ check("resolve empty -> None", AS.resolve_genre_key('') is None)
 
 # ── genre registry ────────────────────────────────────────────────────────
 genres = AS.get_available_genres()
-check("9 genres", len(genres) == 9)
+check("10 genres (round-84 added dance)", len(genres) == 10)
 for _g in ['afrobeats', 'pop', 'rap', 'rnb', 'rock', 'latin', 'country',
-           'soul', 'kpop']:
+           'soul', 'kpop', 'dance']:
     check(f"genre present: {_g}", _g in genres)
 
 # ── home-chart mapping ────────────────────────────────────────────────────

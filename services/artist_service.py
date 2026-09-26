@@ -215,6 +215,14 @@ GENRE_TOP_SONGS = {
         {'artist': 'SEVENTEEN', 'song': 'Super', 'note': 'K-pop synchronization'},
         {'artist': 'IVE', 'song': 'I AM', 'note': 'Catchy K-pop anthem'},
     ],
+    'dance': [
+        {'artist': 'Calvin Harris & Dua Lipa', 'song': 'One Kiss', 'note': 'Dance-pop summer smash'},
+        {'artist': 'Disclosure', 'song': 'Latch', 'note': 'UK house classic'},
+        {'artist': 'David Guetta ft. Sia', 'song': 'Titanium', 'note': 'EDM anthem'},
+        {'artist': 'Swedish House Mafia', 'song': "Don't You Worry Child", 'note': 'Festival mainstage classic'},
+        {'artist': 'Dua Lipa', 'song': 'Houdini', 'note': 'Nu-disco floor filler'},
+        {'artist': 'Charli xcx', 'song': 'Vroom Vroom', 'note': 'Club-pop firestarter'},
+    ],
 }
 
 GENRE_ALIASES = {
@@ -225,6 +233,7 @@ GENRE_ALIASES = {
     'k-pop': 'kpop', 'korean': 'kpop',
     'alternative': 'rock', 'indie': 'rock', 'punk': 'rock', 'metal': 'rock',
     'classic rock': 'rock', 'classic': 'rock',
+    'electronic': 'dance', 'edm': 'dance',
 }
 
 RANDOM_SONGS_POOL = [
@@ -421,7 +430,7 @@ def format_top_songs(genre: str, songs: List[Dict]) -> str:
     genre_emojis = {
         'afrobeats': '🌍', 'pop': '🎤', 'rap': '🎙️', 'rnb': '💜',
         'rock': '🎸', 'latin': '💃', 'country': '🤠', 'kpop': '🇰🇷',
-        'soul': '🎷',
+        'soul': '🎷', 'dance': '🪩',
     }
     emoji = genre_emojis.get(genre, '🎵')
     display_genre = genre.upper() if genre in ('rnb', 'kpop') else genre.title()
@@ -595,6 +604,7 @@ APPLE_GENRE_MAP = {
     'kpop': ('kr', 'K-Pop'),
     'soul': ('us', 'R&B/Soul'),
     'afrobeats': ('ng', 'Afrobeats'),
+    'dance': ('us', 'Dance'),
 }
 
 # genre key -> Apple RSS genre id for the genre's OWN chart
@@ -609,6 +619,7 @@ APPLE_RSS_GENRE_ID = {
     'rock': '21',
     'country': '6',
     'latin': '12',
+    'dance': '17',
 }
 
 
@@ -672,6 +683,7 @@ LASTFM_GENRE_TAG = {
     'kpop': 'k-pop',
     'soul': 'soul',
     'afrobeats': 'afrobeats',
+    'dance': 'dance',
 }
 _genre_tag_cache = {}
 GENRE_TAG_TTL = 6 * 3600
