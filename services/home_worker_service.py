@@ -204,7 +204,7 @@ def _api_send_message(token, chat_id, text):
 
 
 def post_job(chat_id, user_id, url, title="", kind="video",
-             artist="", song="", expected_dur=0):
+             artist="", song="", expected_dur=0, status_msg_id=None):
     """Hand a /download (video) or /mp3 (audio, round-35) to the home worker.
 
     Posts 'JOB {...}' to the worker channel with the MAIN token (the worker
@@ -213,9 +213,10 @@ def post_job(chat_id, user_id, url, title="", kind="video",
     the DONE handler can cache the delivered file_id. Round-37: url may be
     "" for audio jobs (server block wave) — the worker resolves the
     YouTube URL itself over the home connection; expected_dur (seconds,
-    from lrclib) helps it pick the original recording. Returns the job_id,
-    or None when the bridge is disabled/unreachable — the caller then uses
-    the local path. Never raises.
+    from lrclib) helps it pick the original recording. Round-75:
+    status_msg_id is the user's "On it" message, deleted on DONE delivery.
+    Returns the job_id, or None when the bridge is disabled/unreachable —
+    the caller then uses the local path. Never raises.
     """
     try:
         if not worker_enabled():
@@ -232,6 +233,7 @@ def post_job(chat_id, user_id, url, title="", kind="video",
                    "kind": kind,
                    "artist": (artist or "")[:200], "song": (song or "")[:200],
                    "expected_dur": expected_dur,
+                   "status_msg_id": status_msg_id or 0,
                    "requested_at": time.time()}
         text = "JOB " + json.dumps(payload, separators=(",", ":"))
         if not _api_send_message(_env("TELEGRAM_TOKEN"), _worker_channel_id(),

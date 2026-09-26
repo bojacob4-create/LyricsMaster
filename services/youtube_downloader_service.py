@@ -643,8 +643,14 @@ def mp3_forget_failure(artist: str, song: str) -> None:
 
 
 def mp3_retry_enqueue(chat_id: int, user_id: int,
-                      artist: str, song: str) -> bool:
-    """Queue a block-wave-failed request for automatic retry. Never raises."""
+                      artist: str, song: str,
+                      status_msg_id=None) -> bool:
+    """Queue a block-wave-failed request for automatic retry. Never raises.
+
+    Round-75: status_msg_id is the user's "On it" status message (already
+    morphed into the queued notice) — the retry tick deletes it when the
+    MP3 auto-delivers.
+    """
     try:
         from utils import locked_json_update
         os.makedirs(MP3_CACHE_DIR, exist_ok=True)
@@ -653,6 +659,7 @@ def mp3_retry_enqueue(chat_id: int, user_id: int,
         def _update(data):
             data[key] = {'chat_id': chat_id, 'user_id': user_id,
                          'artist': artist, 'song': song,
+                         'status_msg_id': status_msg_id or 0,
                          'ts': _time.time(), 'attempts': 0}
             # keep the queue small — drop expired entries on insert
             now = _time.time()

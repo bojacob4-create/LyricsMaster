@@ -3640,6 +3640,10 @@ def worker_channel_post(update: Update, context: CallbackContext):
                                          fid)
                 except Exception:
                     pass
+                # Round-75: worker-delivered MP3 — the "On it" status
+                # message's job is done (_mp3_status_delete never raises).
+                _mp3_status_delete(context.bot, params["chat_id"],
+                                   entry.get("status_msg_id"))
                 logger.info("[MP3][WORKER][DELIVERED] audio job %s → chat %s",
                             job_id, params["chat_id"])
             note_done(job_id)  # logs [WORKER][DELIVERED]
@@ -3769,6 +3773,42 @@ def wiki_command(update: Update, context: CallbackContext) -> None:
 _mp3_in_progress = set()
 
 
+# Round-75: self-cleaning MP3 status messages. One tap → one status message
+# that never outlives its job: deleted on successful delivery, edited into
+# the queued/failed notice otherwise. Helpers never raise.
+
+def _mp3_status_delete(bot, chat_id, status_msg_id):
+    """Delete an MP3 'working on it' status message. Never raises."""
+    if not status_msg_id:
+        return
+    try:
+        bot.delete_message(chat_id=chat_id, message_id=status_msg_id)
+    except Exception:
+        pass
+
+
+def _mp3_status_update(bot, chat_id, status_msg_id, text):
+    """Replace the MP3 status message content.
+
+    Edits in place so one request never leaves more than one status
+    message behind. If the edit fails (message gone), sends a fresh
+    message instead so the user still sees the notice. Never raises.
+    Returns the (possibly new) status message id, or None.
+    """
+    if status_msg_id:
+        try:
+            bot.edit_message_text(chat_id=chat_id, message_id=status_msg_id,
+                                  text=text)
+            return status_msg_id
+        except Exception:
+            pass
+    try:
+        msg = bot.send_message(chat_id=chat_id, text=text)
+        return msg.message_id if msg is not None else None
+    except Exception:
+        return None
+
+
 def mp3_command(update: Update, context: CallbackContext):
     """Handle the MP3 button — convert a known song to MP3.
 
@@ -3805,18 +3845,19 @@ def mp3_command(update: Update, context: CallbackContext):
         _mp3_in_progress.add(job_key)
 
         chat_id = update.effective_chat.id
-        update.message.reply_text(
-            "🎧 On it!\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"Finding the audio for {raw} and converting…\n\n"
-            "I'll send the MP3 here when it's ready — "
-            "feel free to keep using the bot meanwhile. 🎵"
+        # Round-75: one short status message per request. It identifies the
+        # song (parallel requests stay distinguishable) and is deleted once
+        # the MP3 lands — or edited into the queued/failed notice.
+        status_msg = update.message.reply_text(
+            f"🎧 On it — {raw}…"
         )
+        status_msg_id = (status_msg.message_id
+                         if status_msg is not None else None)
 
         worker = threading.Thread(
             target=_mp3_background_job,
             args=(context.bot, chat_id, user_id,
-                  artist_q, song_q, raw, job_key),
+                  artist_q, song_q, raw, job_key, status_msg_id),
             daemon=True,
             name=f"mp3-{user_id}",
         )
@@ -3831,7 +3872,8 @@ def mp3_command(update: Update, context: CallbackContext):
 
 
 def _mp3_background_job(bot, chat_id, user_id,
-                        artist_q, song_q, raw, job_key):
+                        artist_q, song_q, raw, job_key,
+                        status_msg_id=None):
     """Download and deliver one MP3 in a background thread.
 
     Never blocks the bot's update handling: the user gets an
@@ -3840,13 +3882,16 @@ def _mp3_background_job(bot, chat_id, user_id,
 
     Round-35: instant caches first, then the home worker (streamer
     downloads over the home IP), then the local download path.
+    Round-75: status_msg_id is the "On it" message to delete/edit as the
+    job resolves.
     """
     try:
         from services import youtube_downloader_service as yds
         cached = yds.mp3_cached_lookup(artist_q, song_q)
         if cached is not None:
             success, result = cached
-        elif _mp3_try_worker(bot, chat_id, user_id, artist_q, song_q, raw):
+        elif _mp3_try_worker(bot, chat_id, user_id, artist_q, song_q, raw,
+                             status_msg_id=status_msg_id):
             # Posted to the home worker — DONE/FAIL/timeout handlers
             # deliver from here.
             return
@@ -3854,7 +3899,7 @@ def _mp3_background_job(bot, chat_id, user_id,
             success, result = yds.download_audio_for_song(artist_q, song_q)
 
         _deliver_mp3_result(bot, chat_id, user_id, artist_q, song_q, raw,
-                            success, result)
+                            success, result, status_msg_id=status_msg_id)
 
     except Exception as e:
         logger.error(f"Background MP3 job failed for user {user_id} '{raw}': {e}")
@@ -3870,7 +3915,8 @@ def _mp3_background_job(bot, chat_id, user_id,
         _mp3_in_progress.discard(job_key)
 
 
-def _mp3_try_worker(bot, chat_id, user_id, artist_q, song_q, raw):
+def _mp3_try_worker(bot, chat_id, user_id, artist_q, song_q, raw,
+                   status_msg_id=None):
     """Round-35/37: post an audio job to the home worker.
 
     Round-37: the job goes out with artist/song plus a YouTube URL hint
@@ -3878,6 +3924,9 @@ def _mp3_try_worker(bot, chat_id, user_id, artist_q, song_q, raw):
     worker resolves the URL itself over the home connection — MP3s keep
     flowing from YouTube originals instead of falling back to Audius
     imitations. expected_dur helps the worker pick the right upload.
+
+    Round-75: status_msg_id rides along in the job entry so the
+    DONE handler can delete the "On it" message on delivery.
 
     Returns True when the job was posted — delivery then happens via the
     worker channel's DONE/FAIL/timeout handlers. Returns False when the
@@ -3902,7 +3951,8 @@ def _mp3_try_worker(bot, chat_id, user_id, artist_q, song_q, raw):
             expected = 0
         job_id = post_job(chat_id, user_id, url, title=raw, kind="audio",
                           artist=artist_q, song=song_q,
-                          expected_dur=expected)
+                          expected_dur=expected,
+                          status_msg_id=status_msg_id)
         if not job_id:
             return False
         logger.info("[MP3][WORKER] audio job %s → chat %s (hint=%s)",
@@ -3931,10 +3981,13 @@ def _deliver_mp3_after_worker_fail(bot, entry, fail_code):
         song = entry.get("song", "") or ""
         if not chat_id:
             return
+        status_msg_id = entry.get("status_msg_id")
         if fail_code in ("audio_too_long", "audio_too_large"):
             from services.home_worker_service import HONEST_FAIL_MSGS
-            bot.send_message(chat_id=chat_id,
-                             text=HONEST_FAIL_MSGS[fail_code])
+            # Round-75: edit the "On it" status into the honest notice —
+            # one status message per request, never stacked.
+            _mp3_status_update(bot, chat_id, status_msg_id,
+                               HONEST_FAIL_MSGS[fail_code])
             logger.info("[MP3][WORKER][FALLBACK] permanent-fail (%s) → "
                         "honest notice → chat %s", fail_code, chat_id)
             return
@@ -3943,14 +3996,15 @@ def _deliver_mp3_after_worker_fail(bot, entry, fail_code):
         # notice) is the only thing that lands in chat.
         t = threading.Thread(
             target=_mp3_local_fallback_thread,
-            args=(bot, chat_id, user_id, artist, song),
+            args=(bot, chat_id, user_id, artist, song, status_msg_id),
             daemon=True, name=f"mp3-fallback-{chat_id}")
         t.start()
     except Exception as e:
         logger.warning("[MP3][WORKER][FALLBACK] failed: %s", e)
 
 
-def _mp3_local_fallback_thread(bot, chat_id, user_id, artist, song):
+def _mp3_local_fallback_thread(bot, chat_id, user_id, artist, song,
+                               status_msg_id=None):
     """Run the normal local MP3 download + delivery (worker failed).
 
     Runs on its own thread — never blocks update handling. Never raises.
@@ -3960,7 +4014,7 @@ def _mp3_local_fallback_thread(bot, chat_id, user_id, artist, song):
         raw = f"{artist} - {song}" if song else artist
         success, result = yds.download_audio_for_song(artist, song)
         _deliver_mp3_result(bot, chat_id, user_id, artist, song, raw,
-                            success, result)
+                            success, result, status_msg_id=status_msg_id)
     except Exception as e:
         logger.warning("[MP3][WORKER][FALLBACK] thread failed: %s", e)
         try:
@@ -3973,11 +4027,21 @@ def _mp3_local_fallback_thread(bot, chat_id, user_id, artist, song):
             pass
 
 
+_MP3_QUEUED_TEXT = (
+    "⏳ YouTube is blocking downloads from this server right now.\n\n"
+    "I've queued your MP3 — I'll retry automatically and send it "
+    "here as soon as the block clears. No need to tap again. 🎵"
+)
+
+
 def _deliver_mp3_result(bot, chat_id, user_id, artist_q, song_q, raw,
-                        success, result):
+                        success, result, status_msg_id=None):
     """Deliver one MP3 result: queue-or-honest on failure, send on success.
 
     Shared by the normal background job and the worker-fallback thread.
+    Round-75: status_msg_id is the "On it" status message — deleted on
+    successful delivery, edited into the queued/failed notice otherwise,
+    so one request never leaves more than one status message behind.
     Never raises.
     """
     try:
@@ -3988,27 +4052,31 @@ def _deliver_mp3_result(bot, chat_id, user_id, artist_q, song_q, raw,
             # get the honest notice immediately.
             from services.youtube_downloader_service import (
                 mp3_block_wave_active, mp3_retry_enqueue)
-            if mp3_block_wave_active() and mp3_retry_enqueue(
-                    chat_id, user_id, artist_q, song_q):
-                # Round-13 watch marker: greppable proof of queueing; the
-                # matching [MP3][AUTO-DELIVERED] line in the retry tick
-                # closes the loop when the wave clears.
-                logger.info(f"[MP3][QUEUED] '{artist_q} - {song_q}' → chat "
-                            f"{chat_id}: block wave, will auto-retry")
-                bot.send_message(
-                    chat_id=chat_id,
-                    text="⏳ YouTube is blocking downloads from this server right now.\n\n"
-                         "I've queued your MP3 — I'll retry automatically and send it "
-                         "here as soon as the block clears. No need to tap again. 🎵",
-                )
-            else:
-                # result is the user-facing failure text (incl. YouTube search link).
-                bot.send_message(chat_id=chat_id, text=result)
+            if mp3_block_wave_active():
+                # Round-75: morph the status message into the queued notice
+                # (no stacked second message), and remember its id so the
+                # retry tick can delete it on auto-delivery.
+                queued_id = _mp3_status_update(
+                    bot, chat_id, status_msg_id, _MP3_QUEUED_TEXT)
+                if mp3_retry_enqueue(chat_id, user_id, artist_q, song_q,
+                                     status_msg_id=queued_id):
+                    # Round-13 watch marker: greppable proof of queueing; the
+                    # matching [MP3][AUTO-DELIVERED] line in the retry tick
+                    # closes the loop when the wave clears.
+                    logger.info(f"[MP3][QUEUED] '{artist_q} - {song_q}' → chat "
+                                f"{chat_id}: block wave, will auto-retry")
+                    return
+            # result is the user-facing failure text (incl. YouTube search
+            # link). Round-75: the status message becomes the notice.
+            _mp3_status_update(bot, chat_id, status_msg_id, result)
             return
 
         if result[0] == 'file_id':
             # Tier-0 hit: Telegram already hosts this file — send instantly.
             _, fid, title, uploader = result
+            # Round-75: status message's job is done — remove it before the
+            # audio lands so the two never sit side by side.
+            _mp3_status_delete(bot, chat_id, status_msg_id)
             try:
                 bot.send_audio(
                     chat_id=chat_id,
@@ -4022,23 +4090,29 @@ def _deliver_mp3_result(bot, chat_id, user_id, artist_q, song_q, raw,
                 # re-run the fresh download path instead of dead-ending.
                 logger.warning(f"Stale cached file_id for '{raw}': {send_err}")
                 forget_mp3_file_id(artist_q, song_q)
-                bot.send_message(
+                # Round-75: the "fetching a fresh one" message becomes the
+                # new status message — deleted when the fresh audio lands.
+                retry_msg = bot.send_message(
                     chat_id=chat_id,
                     text="⚡ Cached copy expired — fetching a fresh one…\n"
                          "I'll send it here when it's ready. 🎵",
                 )
+                retry_status_id = (retry_msg.message_id
+                                   if retry_msg is not None else None)
                 success2, result2 = download_audio_for_song(artist_q, song_q)
                 if success2 and result2[0] != 'file_id':
-                    _deliver_fresh_mp3(bot, chat_id, artist_q, song_q, result2)
+                    _deliver_fresh_mp3(bot, chat_id, artist_q, song_q, result2,
+                                       status_msg_id=retry_status_id)
                 else:
-                    bot.send_message(
-                        chat_id=chat_id,
-                        text="❌ Couldn't send the audio file.\n"
-                             "Please try again in a moment. 🔄",
+                    _mp3_status_update(
+                        bot, chat_id, retry_status_id,
+                        "❌ Couldn't send the audio file.\n"
+                        "Please try again in a moment. 🔄",
                     )
             return
 
-        _deliver_fresh_mp3(bot, chat_id, artist_q, song_q, result)
+        _deliver_fresh_mp3(bot, chat_id, artist_q, song_q, result,
+                           status_msg_id=status_msg_id)
     except Exception as e:
         logger.warning(f"_deliver_mp3_result failed for '{raw}': {e}")
 
@@ -4079,6 +4153,10 @@ def mp3_retry_tick(bot):
             if success:
                 mp3_retry_remove(key)
                 try:
+                    # Round-75: the "queued" status message's job is done —
+                    # remove it before the audio lands.
+                    _mp3_status_delete(bot, chat_id,
+                                       entry.get("status_msg_id"))
                     if result[0] == 'file_id':
                         _, fid, title, uploader = result
                         bot.send_audio(
@@ -4086,7 +4164,9 @@ def mp3_retry_tick(bot):
                             caption=f"🎵 {title}\n✅ Ready — your queued MP3",
                             title=title, performer=uploader)
                     else:
-                        _deliver_fresh_mp3(bot, chat_id, artist, song, result)
+                        _deliver_fresh_mp3(bot, chat_id, artist, song, result,
+                                           status_msg_id=entry.get(
+                                               "status_msg_id"))
                     # Round-13 watch marker: the loop-closer for [MP3][QUEUED].
                     # Grep for AUTO-DELIVERED to prove end-to-end auto-delivery
                     # after a genuine block wave (never independently confirmed).
@@ -4102,7 +4182,10 @@ def mp3_retry_tick(bot):
                 continue
             mp3_retry_remove(key)
             try:
-                bot.send_message(chat_id=chat_id, text=result)
+                # Round-75: the "queued" status message becomes the final
+                # notice — no stacked second message.
+                _mp3_status_update(bot, chat_id, entry.get("status_msg_id"),
+                                   result)
             except Exception:
                 pass
         # Round-38: close the loop on exhausted entries. The user was
@@ -4119,12 +4202,14 @@ def mp3_retry_tick(bot):
             logger.info(f"[MP3][RETRY][GAVE-UP] '{artist} - {song}' → "
                         f"chat {chat_id} (3 attempts, wave never cleared)")
             try:
-                bot.send_message(
-                    chat_id=chat_id,
-                    text=f"😞 I tried 3 times to get '{artist} - {song}', "
-                         "but YouTube kept blocking me.\n\n"
-                         "Tap MP3 again whenever you like and I'll fetch "
-                         "it fresh. 🎵",
+                # Round-75: the "queued" status message becomes the final
+                # notice — no stacked second message.
+                _mp3_status_update(
+                    bot, chat_id, entry.get("status_msg_id"),
+                    f"😞 I tried 3 times to get '{artist} - {song}', "
+                    "but YouTube kept blocking me.\n\n"
+                    "Tap MP3 again whenever you like and I'll fetch "
+                    "it fresh. 🎵",
                 )
             except Exception:
                 pass
@@ -4218,9 +4303,17 @@ def video_retry_tick(bot):
         logger.warning(f"video_retry_tick failed: {e}")
 
 
-def _deliver_fresh_mp3(bot, chat_id, artist_q, song_q, result):
-    """Send a freshly downloaded MP3 file and remember its Telegram file_id."""
+def _deliver_fresh_mp3(bot, chat_id, artist_q, song_q, result,
+                       status_msg_id=None):
+    """Send a freshly downloaded MP3 file and remember its Telegram file_id.
+
+    Round-75: the "On it" status message is deleted first, so the chat
+    shows the delivered audio — not the progress chatter beside it.
+    """
     file_path, _info_message, title, uploader = result
+    # Round-75: the status message's job is done — remove it before the
+    # audio lands.
+    _mp3_status_delete(bot, chat_id, status_msg_id)
     try:
         with open(file_path, 'rb') as audio_file:
             sent_msg = bot.send_audio(
@@ -4238,10 +4331,12 @@ def _deliver_fresh_mp3(bot, chat_id, artist_q, song_q, result):
             pass
     except Exception as send_err:
         logger.error(f"Failed to send audio: {send_err}")
-        bot.send_message(
-            chat_id=chat_id,
-            text="❌ The MP3 was created but couldn't be sent.\n"
-                 "It may be too large for Telegram (50MB limit).",
+        # Round-75: status message is already gone — this lands as a fresh
+        # notice via the edit fallback.
+        _mp3_status_update(
+            bot, chat_id, status_msg_id,
+            "❌ The MP3 was created but couldn't be sent.\n"
+            "It may be too large for Telegram (50MB limit).",
         )
     # Never delete files that live in the MP3 cache — they're reused.
     if not is_cached_mp3_path(file_path):
