@@ -157,8 +157,12 @@ def _channel_corroborates_official(channel: str, artist: str) -> bool:
         return any(hay[i:i + n] == needle
                    for i in range(len(hay) - n + 1))
 
-    return (_run_within(ch_tokens, an_tokens)
-            or _run_within(an_tokens, ch_tokens))
+    if _run_within(ch_tokens, an_tokens) or _run_within(an_tokens, ch_tokens):
+        return True
+    # Round-85b: spaceless official channels ('RodWave' for artist 'Rod
+    # Wave'). Equality only, never containment — 'RodWaveFan' must not
+    # corroborate.
+    return ''.join(ch_tokens) == ''.join(an_tokens)
 
 
 # Round-80: reaction-video phrasings. "Twins React to X (Official Music

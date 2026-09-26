@@ -54,6 +54,11 @@ check("r85: unrelated label channel does not corroborate",
       yt._channel_corroborates_official("Some Records", ARTIST) is False)
 check("r85: empty channel does not corroborate",
       yt._channel_corroborates_official("", ARTIST) is False)
+# Round-85b: spaceless official channel ('RodWave' for artist 'Rod Wave')
+check("r85b: spaceless artist channel corroborates",
+      yt._channel_corroborates_official("RodWave", "Rod Wave") is True)
+check("r85b: spaceless fan channel does NOT corroborate",
+      yt._channel_corroborates_official("RodWaveFan", "Rod Wave") is False)
 
 # ── Kind classifier ─────────────────────────────────────────────────
 check("r85: fake-official classifies as 'other', not 'official'",
@@ -94,5 +99,27 @@ check("r85: pick is the artist-channel lyric video, not the fake official",
       f"picked {best['id'] if best else None} score={score}")
 check("r85: winner kind is honest 'lyric'",
       yt._classify_video_kind(best['title'], best['channel'], ARTIST, SONG)['kind'] == 'lyric')
+
+# ── Round-85b production case: Rod Wave - Dope Girl ───────────────────
+# Genuine '(Official Audio)' on the artist's spaceless channel 'RodWave'
+# must beat '(Lyrics)' re-uploads from third-party channels.
+RW_ARTIST, RW_SONG = "Rod Wave", "Dope Girl"
+RW_GENUINE = {'id': 'g9Yo1sLnbjo',
+              'title': 'Rod Wave - Dope Girl (Official Audio)',
+              'channel': 'RodWave'}
+RW_LYRIC_FAKE = {'id': '2-D1AauBSdo',
+                 'title': 'Rod Wave - Dope Girl (Lyrics)',
+                 'channel': 'Rap City'}
+check("r85b: genuine official audio on spaceless channel is 'official'",
+      yt._classify_video_kind(RW_GENUINE['title'], RW_GENUINE['channel'],
+                              RW_ARTIST, RW_SONG)['kind'] == 'official')
+with patch.object(yt, '_fetch_candidates',
+                  return_value=[RW_LYRIC_FAKE, RW_GENUINE]):
+    best, score, seen = yt._search_best(RW_ARTIST, RW_SONG,
+                                        ['rod wave dope girl official music video',
+                                         'rod wave dope girl'])
+check("r85b: pick is the genuine official audio, not the lyric re-upload",
+      best is not None and best['id'] == 'g9Yo1sLnbjo',
+      f"picked {best['id'] if best else None} score={score}")
 
 print(f"\nround85: {passed} passed, {failed} failed")
