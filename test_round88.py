@@ -122,10 +122,12 @@ bright = sum(1 for y in range(1235, 1259) for x in range(150, 391)
 check("QR caption gone", bright, 0)
 
 # ── Cache version bumped for the visual change ──
-check("template version bumped", sc.TEMPLATE_VERSION, 4)
+# (version-agnostic: later rounds bump TEMPLATE_VERSION further)
+check("template version bumped",
+      isinstance(sc.TEMPLATE_VERSION, int) and sc.TEMPLATE_VERSION >= 4, True)
 check("version in cache filename",
       os.path.basename(sc.card_cache_path("ab12cd34ef56")),
-      "ab12cd34ef56_v4.png")
+      f"ab12cd34ef56_v{sc.TEMPLATE_VERSION}.png")
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

@@ -34,7 +34,7 @@ BOT_USERNAME = "MGLyricsbot"
 # caption and moved artwork to 1200px). The cache file name carries the
 # version, so a template change can never serve a stale cached render
 # — old files are simply never looked up again.
-TEMPLATE_VERSION = 4
+TEMPLATE_VERSION = 5
 
 _REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _TOKEN_FILE = os.path.join(_REPO_DIR, "share_tokens.json")
@@ -665,7 +665,7 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
     ImageDraw.Draw(qr_shadow).rounded_rectangle(
         [qx0 - pad + 10, qy0 - pad + 16,
          qx0 + size + pad + 10, qy0 + size + pad + 16],
-        radius=46, fill=(12, 6, 4, 130))
+        radius=40, fill=(12, 6, 4, 130))
     img.alpha_composite(qr_shadow.filter(ImageFilter.GaussianBlur(18)))
     # Round-86: muted warm tile (was flat translucent white) — tinted with
     # the artwork's dominant color so it belongs to the palette. White QR
@@ -674,7 +674,7 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
     cont_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     ImageDraw.Draw(cont_layer).rounded_rectangle(
         [qx0 - pad, qy0 - pad, qx0 + size + pad, qy0 + size + pad],
-        radius=46, fill=qr_tile_rgb + (110,),
+        radius=40, fill=qr_tile_rgb + (110,),
         outline=(255, 255, 255, 30), width=2)
     img.alpha_composite(cont_layer)
     # Round-87: QR modules render at 2x, then downscale with LANCZOS —
