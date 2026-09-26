@@ -530,6 +530,51 @@ check("handler_map routes spsave/spunlink",
 check("paste-code hook in natural_language_handler",
       "try_spotify_code(update, user_id, text)" in _src)
 check("spotify in _KNOWN_COMMANDS", "'spotify'" in _src)
+# ── 12c. ordering regression (round-73c): a pasted callback URL is ~700
+# chars, so the Round-6 length cap must NOT run before the Spotify
+# interception — otherwise the paste dies with "a bit long" (seen live).
+_spotify_pos = _src.find("if try_spotify_code(update, user_id, text):")
+_length_pos = _src.find("if len(text) > 500:")
+check("spotify interception precedes length cap in source",
+      0 < _spotify_pos < _length_pos)
+
+class _FakeMsg:
+    def __init__(self, text):
+        self.text = text
+        self.replies = []
+    def reply_text(self, *a, **k):
+        self.replies.append((a, k))
+
+class _FakeUpdate:
+    def __init__(self, text):
+        self.message = _FakeMsg(text)
+        self.effective_user = type("U", (), {"id": 4242})()
+
+class _StubSpotifyAuth:
+    def __init__(self):
+        self.exchanged = []
+    def get_pending_link(self, uid):
+        return {"state": "s"}  # truthy: a link flow is pending
+    def exchange_code(self, code, uid):
+        self.exchanged.append((code, uid))
+        return {"display_name": "Test User"}
+
+_LONG_CODE = "Q" * 300
+_LONG_URL = ("http://127.0.0.1:8888/callback?code=" + _LONG_CODE
+             + "&state=abc&ubi=" + "Z" * 300)
+assert len(_LONG_URL) > 500, "test URL must exceed the length cap"
+_stub = _StubSpotifyAuth()
+_real_auth = H._spotify_auth
+H._spotify_auth = _stub
+try:
+    _upd = _FakeUpdate(_LONG_URL)
+    H.natural_language_handler(_upd, None)
+finally:
+    H._spotify_auth = _real_auth
+_got_code = _stub.exchanged[0][0] if _stub.exchanged else None
+_too_long = any("bit long" in str(a) for a, k in _upd.message.replies)
+check("700-char callback URL is intercepted, not length-rejected",
+      _got_code == _LONG_CODE and not _too_long)
 
 print(f"\nround73: {passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

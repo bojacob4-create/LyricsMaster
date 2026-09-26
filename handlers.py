@@ -1185,6 +1185,16 @@ def natural_language_handler(update: Update, context: CallbackContext):
     if not text:
         return
 
+    # ── Round 73: pasted Spotify OAuth code ─────────────────────────────────
+    # Only consumes the message while the user has a pending link flow
+    # AND the text contains something code-shaped; everything else routes
+    # normally. Placed FIRST (round-73c): a pasted callback URL is ~700
+    # chars, so the Round-6 length cap below would reject it before this
+    # check ever ran. A code/URL is extracted and consumed here and never
+    # reaches provider APIs, so the cap's purpose is not violated.
+    if try_spotify_code(update, user_id, text):
+        return
+
     # ── Round 6 QA: input length cap ───────────────────────────────────────
     # Multi-thousand-character pastes must never reach provider APIs verbatim.
     if len(text) > 500:
@@ -1193,13 +1203,6 @@ def natural_language_handler(update: Update, context: CallbackContext):
             "Try a shorter song or artist name — like `Adele - Hello`.",
             parse_mode='Markdown',
         )
-        return
-
-    # ── Round 73: pasted Spotify OAuth code ─────────────────────────────────
-    # Only consumes the message while the user has a pending link flow
-    # AND the text looks like a Spotify code; everything else routes
-    # normally. Placed early: a code must never reach the intent router.
-    if try_spotify_code(update, user_id, text):
         return
 
     # ── Round 45: bare "Extend" (no slash) routes to /extend ─────────────────
