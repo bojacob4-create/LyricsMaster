@@ -334,13 +334,46 @@ def translate_to_arabic(text: str) -> Optional[str]:
     return translate_text(text, 'ar')
 
 
+def split_lyrics_chunks(text: str, max_chars: int = 1000) -> list:
+    """Split lyrics into chunks of at most max_chars, breaking ONLY at
+    line boundaries — never mid-word.  The old hard character slice could
+    cut a word in half at a chunk edge (e.g. "Back that shit u" / "p"),
+    leaving orphan fragments that leak into the translated output.
+    "\n".join() of the result reproduces the input exactly.  A single
+    pathological line longer than max_chars is hard-split as a last
+    resort (astronomically rare in real lyrics)."""
+    if not text:
+        return []
+    if len(text) <= max_chars:
+        return [text]
+    chunks, current, current_len = [], [], 0
+    for line in text.split("\n"):
+        if len(line) > max_chars:
+            if current:
+                chunks.append("\n".join(current))
+                current, current_len = [], 0
+            chunks.extend(line[i:i + max_chars]
+                          for i in range(0, len(line), max_chars))
+            continue
+        add = len(line) + (1 if current else 0)  # +1 for the re-added \n
+        if current and current_len + add > max_chars:
+            chunks.append("\n".join(current))
+            current, current_len = [line], len(line)
+        else:
+            current.append(line)
+            current_len += add
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
+
+
 def translate_text(text: str, dest_lang: str = 'ar') -> Optional[str]:
     try:
         if not text:
             logger.warning("Empty text provided for translation")
             return None
 
-        chunks = [text[i:i+1000] for i in range(0, len(text), 1000)]
+        chunks = split_lyrics_chunks(text)
         translated_chunks = []
 
         for i, chunk in enumerate(chunks):

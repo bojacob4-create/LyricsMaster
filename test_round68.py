@@ -27,8 +27,7 @@ passed, failed = 0, 0
 
 def check(name, cond, detail=""):
     global passed, failed
-    if cond:
-        passed += 1
+    if cond:        passed += 1
     else:
         failed += 1
         print(f"FAIL: {name} {detail}")
@@ -38,6 +37,21 @@ def reset():
     ts._chunk_cache.clear()
     ts._gtx_breaker["consec_429"] = 0
     ts._gtx_breaker["until"] = 0.0
+
+
+def _chunk_boundaries_on_lines(body, chunks):
+    """True iff every chunk boundary in `body` sits on a line break —
+    i.e. no chunk ever cuts a word in half."""
+    pos = 0
+    for i, c in enumerate(chunks):
+        if body[pos:pos + len(c)] != c:
+            return False
+        pos += len(c)
+        if i < len(chunks) - 1:
+            if pos >= len(body) or body[pos] != "\n":
+                return False
+            pos += 1  # skip the separator newline
+    return pos == len(body)
 
 
 def gtx_ok(text="مرحبا"):
@@ -238,6 +252,36 @@ with open(_ts_tmp3, "w") as f:
 with patch.object(ts, "_BUDGET_PATH", _ts_tmp3):
     check("budget: new month re-allows fallback", ts._budget_allow() is True)
 os.remove(_ts_tmp3)
+
+# ── 16. Boundary-aware chunking (round-68c) ───────────────────────────────
+# Regression shape from the wild: the old hard 1000-char slice cut
+# "Back that shit up" into "Back that shit u" / "p", and the orphan "p"
+# leaked into the translated output.  Chunks must break only at lines.
+reset()
+_body = "a\n" * 499 + "Back that shit up\n" + "b\n" * 600  # >1000 chars
+_chunks = ts.split_lyrics_chunks(_body)
+check("chunker: 'Back that shit up' survives intact in one chunk",
+      any("Back that shit up" in c for c in _chunks))
+check("chunker: every chunk boundary falls on a line break",
+      _chunk_boundaries_on_lines(_body, _chunks))
+check("chunker: every chunk <= 1000 chars",
+      all(len(c) <= 1000 for c in _chunks))
+check("chunker: join reproduces the input exactly",
+      "\n".join(_chunks) == _body)
+check("chunker: every original line stays whole in one chunk",
+      all(any(ln in c.split("\n") for c in _chunks)
+          for ln in _body.split("\n")))
+check("chunker: short text stays one chunk",
+      ts.split_lyrics_chunks("hello\nworld") == ["hello\nworld"])
+check("chunker: empty text -> no chunks",
+      ts.split_lyrics_chunks("") == [])
+# Pathological single line >1000 chars: hard-split, never crash
+_long_line = "z" * 2500
+_ll_chunks = ts.split_lyrics_chunks(_long_line)
+check("chunker: overlong single line is split without crashing",
+      len(_ll_chunks) == 3 and all(len(c) <= 1000 for c in _ll_chunks))
+check("chunker: overlong line round-trips",
+      "".join(_ll_chunks) == _long_line)
 
 print(f"\nround68: {passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
