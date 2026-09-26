@@ -59,11 +59,22 @@ logger = logging.getLogger(__name__)
 
 IS_PRODUCTION = os.environ.get('REPLIT_DEPLOYMENT') == '1'
 
+# Owner's Telegram chat id — used only for critical self-alerts (round 63:
+# getUpdates Conflict). A Conflict is silent by default: the bot just misses
+# messages. The owner needs to know, because it means a second instance
+# (e.g. the old Replit copy) is polling with the same token.
+OWNER_CHAT_ID = os.environ.get('OWNER_CHAT_ID', '').strip()
+
 # File that persists the last conflict timestamp across dev process restarts.
 # When the Replit workflow restarts bot.py (e.g. after a deploy), the new
 # process reads this file and respects the backoff instead of immediately
 # competing with production again.
 _CONFLICT_STATE_FILE = '/tmp/bot_last_conflict'
+
+# Throttle for the owner Conflict DM (round 63): a prolonged two-instance
+# fight re-triggers the alert on every backoff cycle — at most one DM here.
+_CONFLICT_ALERT_FILE = '/tmp/bot_last_conflict_alert'
+_CONFLICT_ALERT_THROTTLE = 1800  # seconds
 
 
 def _read_conflict_time() -> float:
@@ -193,6 +204,10 @@ class TelegramBotWorker:
                         "Dev instance stopping polling immediately."
                     )
                     self._stop_polling()
+                # Round 63: never suffer a two-instance fight silently. A
+                # Conflict means messages are being missed right now — the
+                # owner has to know (old Replit copy still alive?).
+                self._maybe_alert_owner_conflict()
                 return
 
             if isinstance(context.error, NetworkError):
@@ -230,6 +245,36 @@ class TelegramBotWorker:
                 self.updater.stop()
         except Exception:
             pass
+
+    def _maybe_alert_owner_conflict(self):
+        """DM the owner when another instance polls with our token (round 63).
+
+        A getUpdates Conflict is otherwise silent — the bot just misses
+        messages while the two instances fight. Throttled so a prolonged
+        fight doesn't spam: at most one DM per _CONFLICT_ALERT_THROTTLE.
+        """
+        try:
+            if not OWNER_CHAT_ID or not self.updater:
+                return
+            now = time.time()
+            try:
+                with open(_CONFLICT_ALERT_FILE) as f:
+                    last = float(f.read().strip())
+            except Exception:
+                last = 0.0
+            if now - last < _CONFLICT_ALERT_THROTTLE:
+                return
+            self.updater.bot.send_message(
+                chat_id=int(OWNER_CHAT_ID),
+                text=("⚠️ Another copy of me just started polling with the same token, "
+                      "so I've paused to avoid a fight over your messages.\n\n"
+                      "If that's your old Replit copy, stop it there and I'll resume on my own. "
+                      "If you don't recognize it, tell Pex — the token may need rotating."))
+            with open(_CONFLICT_ALERT_FILE, 'w') as f:
+                f.write(str(now))
+            logger.info("Conflict owner alert sent")
+        except Exception as e:
+            logger.error(f"Conflict owner alert failed: {e}")
 
     def handle_connection_error(self):
         """Handle connection errors with exponential backoff."""

@@ -36,3 +36,7 @@ live_charts_cache.json
 # Home-worker runtime state (live on the server, never commit)
 worker_jobs.json
 worker_heartbeat.json
+
+# Share card runtime state — generated PNG cache + live token registry
+share_cards/
+share_tokens.json

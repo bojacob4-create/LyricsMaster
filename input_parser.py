@@ -1,10 +1,45 @@
 import re
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Optional, Tuple, List
 from services.lyrics_service import search_song_info
 
 logger = logging.getLogger(__name__)
+
+# ── Overall search budget (round 63) ─────────────────────────────────────────
+# Each lyrics source already has a per-call timeout, but the fallback chain
+# (direct x2 -> search x2 -> ovh, times two orderings in parallel) stacks them
+# into a 20s+ hang during a network flap (seen 2026-09-26: 22.5s for a single
+# lookup). This caps the WHOLE search_lyrics_with_fallback call instead, so a
+# stuck downstream fails fast and the caller can answer instead of hanging.
+LYRICS_SEARCH_TIMEOUT = 15.0
+
+
+def _parallel_search(pairs: List[Tuple[str, str]], deadline: float):
+    """Run search_song_info over (artist, song) pairs in parallel, bounded by deadline.
+
+    Returns a list of results (None for timed-out or failed pairs). Never raises.
+    A pair still running when the deadline hits is abandoned — its thread
+    finishes the fallback chain on its own; we just stop waiting for it.
+    """
+    if not pairs:
+        return []
+    pool = ThreadPoolExecutor(max_workers=len(pairs))
+    try:
+        futs = [pool.submit(search_song_info, a, s) for a, s in pairs]
+        out = []
+        for f in futs:
+            try:
+                out.append(f.result(timeout=max(0.0, deadline - time.time())))
+            except FuturesTimeoutError:
+                out.append(None)
+            except Exception:
+                out.append(None)
+        return out
+    finally:
+        # Never block on stragglers.
+        pool.shutdown(wait=False, cancel_futures=True)
 
 # ── Token normalization (mirrors lyrics_service._normalize_tokens) ──────────
 _PUNCT_RE = re.compile(r'[^\w\s]')
@@ -98,30 +133,34 @@ def parse_song_query(raw_input: str) -> List[Tuple[str, str]]:
     return unique
 
 
-def search_lyrics_with_fallback(raw_input: str) -> Tuple[Optional[str], Optional[str], Optional[str], str]:
+def search_lyrics_with_fallback(raw_input: str, timeout: float = LYRICS_SEARCH_TIMEOUT) -> Tuple[Optional[str], Optional[str], Optional[str], str]:
     logger.info(f"Search with fallback for: '{raw_input}'")
     cleaned = clean_input(raw_input)
 
     if not cleaned:
         return None, None, None, "empty_input"
 
-    # ── Separator paths — bidirectional evaluation ────────────────────────
+    # Overall budget for the whole chain (round 63): every stage below shares
+    # this deadline, so a flap can't stack per-call timeouts into a 20s+ hang.
+    deadline = time.time() + timeout
+
+    def _expired() -> bool:
+        return time.time() >= deadline
+
+    # ── Separator paths ─ bidirectional evaluation ────────────────────────
     # Try BOTH (left=artist, right=song) AND (left=song, right=artist),
     # then pick whichever interpretation scores better against the query.
     # This fixes "love - kendrick" where left is actually the song, not the artist.
-    if ' - ' in cleaned or ' – ' in cleaned:
-        sep   = ' - ' if ' - ' in cleaned else ' – '
+    if ' - ' in cleaned or ' \u2013 ' in cleaned:
+        sep   = ' - ' if ' - ' in cleaned else ' \u2013 '
         parts = cleaned.split(sep, 1)
         left  = parts[0].strip()
         right = parts[1].strip()
 
         if left and right:
-            # Both orderings are independent network calls — run them in
+            # Both orderings are independent network calls ─ run them in
             # parallel to halve worst-case latency on this path.
-            with ThreadPoolExecutor(max_workers=2) as _pool:
-                _r1 = _pool.submit(search_song_info, left,  right)  # left=artist
-                _r2 = _pool.submit(search_song_info, right, left)   # right=artist
-                r1, r2 = _r1.result(), _r2.result()
+            r1, r2 = _parallel_search([(left, right), (right, left)], deadline)
             best = _best_of(r1, r2, cleaned)
             if best:
                 logger.info(f"Separator hit (bidirectional): '{best[0]} - {best[1]}'")
@@ -133,40 +172,38 @@ def search_lyrics_with_fallback(raw_input: str) -> Tuple[Optional[str], Optional
         right = parts[1].strip()
 
         if left and right:
-            with ThreadPoolExecutor(max_workers=2) as _pool:
-                _r1 = _pool.submit(search_song_info, left,  right)
-                _r2 = _pool.submit(search_song_info, right, left)
-                r1, r2 = _r1.result(), _r2.result()
+            r1, r2 = _parallel_search([(left, right), (right, left)], deadline)
             best = _best_of(r1, r2, cleaned)
             if best:
                 logger.info(f"Compact-dash hit (bidirectional): '{best[0]} - {best[1]}'")
                 return best[0], best[1], best[2], "direct"
 
-    # ── Generic search — full cleaned string ─────────────────────────────
-    result = search_song_info('', cleaned)
-    if result:
-        found_artist, found_track, lyrics = result
-        logger.info(f"Search found: '{found_artist} - {found_track}'")
-        return found_artist, found_track, lyrics, "search"
+    # ── Generic search ─ full cleaned string ────────────────────────────
+    if not _expired():
+        (result,) = _parallel_search([('', cleaned)], deadline)
+        if result:
+            found_artist, found_track, lyrics = result
+            logger.info(f"Search found: '{found_artist} - {found_track}'")
+            return found_artist, found_track, lyrics, "search"
 
-    # ── Word-split fallback — capped at 3 attempts ────────────────────────
+    # ── Word-split fallback ─ capped at 3 attempts ───────────────────
     words = cleaned.split()
     if len(words) >= 2:
         attempts = 0
         for i in range(len(words) - 1, 0, -1):
-            if attempts >= 3:
+            if attempts >= 3 or _expired():
                 break
             part1 = ' '.join(words[:i])
             part2 = ' '.join(words[i:])
-            with ThreadPoolExecutor(max_workers=2) as _pool:
-                _w1 = _pool.submit(search_song_info, part1, part2)
-                _w2 = _pool.submit(search_song_info, part2, part1)
-                r1, r2 = _w1.result(), _w2.result()
+            r1, r2 = _parallel_search([(part1, part2), (part2, part1)], deadline)
             best = _best_of(r1, r2, cleaned)
             if best:
                 logger.info(f"Word-split hit: '{best[0]} - {best[1]}'")
                 return best[0], best[1], best[2], "word_split"
             attempts += 1
 
-    logger.info(f"All search attempts failed for: '{raw_input}'")
+    if _expired():
+        logger.warning(f"Lyrics search deadline ({timeout}s) exceeded for: '{raw_input}'")
+    else:
+        logger.info(f"All search attempts failed for: '{raw_input}'")
     return None, None, None, "not_found"
