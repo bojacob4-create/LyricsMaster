@@ -22,6 +22,19 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from services import translator_service as ts
 
+# ── Production-state isolation ─────────────────────────────────────────────
+# Sections below drive translate_chunk/_openai_translate through the real
+# _gtx_note_429()/_budget_note() code paths, which persist breaker + budget
+# state to disk. Without this redirect, a test run writes to the LIVE bot's
+# state files (seen 2026-09-26: consec_429=3 leaked into production and kept
+# Google bypassed for 15 real minutes). Keep this above all test sections.
+import tempfile as _iso_tempfile
+_ts_breaker_iso = _iso_tempfile.mktemp(suffix=".json")
+_ts_budget_iso = _iso_tempfile.mktemp(suffix=".json")
+for _iso_p in (patch.object(ts, "_BREAKER_PATH", _ts_breaker_iso),
+               patch.object(ts, "_BUDGET_PATH", _ts_budget_iso)):
+    _iso_p.start()
+
 passed, failed = 0, 0
 
 
@@ -379,5 +392,44 @@ check("budget: 100 concurrent notes total exactly $1.00",
       f"${_bst['estimated_usd']:.4f}")
 os.remove(_bp2)
 
+# ── 19. Test-run isolation: production state files stay untouched ───────────
+# Regression for 2026-09-26: this suite used to leak consec_429=3 into the
+# live bot's breaker file, keeping Google bypassed for 15 real minutes.
+# Drive the real persist code paths hard, then prove the production files
+# (mtime + bytes) are exactly as before the run.
+_prod_breaker = os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), ".translate_breaker.json")
+_prod_budget = os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), ".translate_fallback_budget.json")
+
+
+def _snap(p):
+    try:
+        st = os.stat(p)
+        with open(p, "rb") as f:
+            return (st.st_mtime_ns, f.read())
+    except OSError:
+        return None
+
+
+_snap_b, _snap_g = _snap(_prod_breaker), _snap(_prod_budget)
+reset()
+ts._gtx_note_429()
+ts._gtx_note_429()
+ts._gtx_note_429()          # trips the breaker -> _breaker_persist()
+ts._budget_note(10 ** 6, 10 ** 6)   # -> _budget_persist()
+check("isolation: production breaker file untouched by test run",
+      _snap(_prod_breaker) == _snap_b)
+check("isolation: production budget file untouched by test run",
+      _snap(_prod_budget) == _snap_g)
+check("isolation: breaker state landed in the temp file instead",
+      os.path.exists(_ts_breaker_iso))
+reset()
+
 print(f"\nround68: {passed} passed, {failed} failed")
+for _iso_f in (_ts_breaker_iso, _ts_budget_iso):
+    try:
+        os.remove(_iso_f)
+    except OSError:
+        pass
 sys.exit(1 if failed else 0)

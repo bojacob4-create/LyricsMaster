@@ -61,6 +61,18 @@ def _is_noise_line(line):
     return False
 
 
+def _is_parenthetical_line(line):
+    """A line fully wrapped in (...) — a backing-vocal/ad-lib aside.
+
+    In lyrics data these are overwhelmingly background vocals, ad-libs, or
+    alternate-take fragments ('(yeah)', "('Til I'm in the grave)"). On a
+    share card they read as glitchy duplicates of the real line, so the
+    excerpt prefers main-vocal lines.
+    """
+    s = (line or "").strip()
+    return len(s) >= 2 and s[0] == "(" and s[-1] == ")"
+
+
 # Single-word filler openers worth skipping so the card opens on substance.
 _FILLER_OPENERS = {
     "yeah", "oh", "uh", "uhh", "ah", "ooh", "aah", "hmm", "mm", "la",
@@ -103,7 +115,11 @@ def extract_excerpt(lyrics, max_lines=5):
 
     def usable(lines):
         sel = [l for l in lines if l][:max_lines + 1]
-        return _strip_leading_filler(sel)[:max_lines]
+        # Prefer main-vocal lines: fully-parenthetical lines are backing
+        # vocals/ad-libs. Keep them only if the excerpt would be too thin.
+        main = [l for l in sel if not _is_parenthetical_line(l)]
+        pick = main if len(main) >= 2 else sel
+        return _strip_leading_filler(pick)[:max_lines]
 
     # 1. Chorus first.
     for marker, lines in sections:

@@ -58,6 +58,29 @@ check("no markers -> first lines",
 check("empty lyrics", sc.extract_excerpt(""), [])
 check("none lyrics", sc.extract_excerpt(None), [])
 
+# ── Parenthetical backing-vocal lines are noise (2026-09-26) ───────────────
+# Billie Eilish - BIRDS OF A FEATHER opens its lrclib lyrics with the
+# backing-vocal aside "('Til I'm in the grave)" — the card showed it as a
+# glitchy duplicate of the real line below. Fully-parenthetical lines are
+# dropped from the excerpt unless the card would otherwise be too thin.
+boaf = ("('Til I'm in the grave)\n"
+        "I want you to stay\n"
+        "'Til I'm in the grave\n"
+        "'Til I rot away, dead and buried\n"
+        "'Til I'm in the casket you carry\n"
+        "If you go, I'm going too, uh\n")
+ex_paren = sc.extract_excerpt(boaf)
+check("parenthetical opener dropped",
+      ex_paren[0], "I want you to stay")
+check_true("no parenthetical lines in excerpt",
+           not any(sc._is_parenthetical_line(l) for l in ex_paren))
+check("excerpt still 5 lines", len(ex_paren), 5)
+check("all-parenthetical lyrics kept (no blank card)",
+      sc.extract_excerpt("(yeah)\n(ooh)\n(ah)"), ["(yeah)", "(ooh)", "(ah)"])
+check("partial parens untouched",
+      sc.extract_excerpt("Stay (stay)\nHold me tight"),
+      ["Stay (stay)", "Hold me tight"])
+
 # ── Color ──────────────────────────────────────────────────────────────────
 r, g, b = sc.clamp_glow_color((255, 255, 0))
 lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
