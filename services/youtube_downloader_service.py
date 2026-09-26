@@ -894,9 +894,19 @@ _REMIX_MARKERS = (
 )
 
 
+# Round-81: stylized character swaps, shared through _norm_key_text().
+_CHAR_SWAPS = {'$': 's', '@': 'a'}
+
+
 def _norm_key_text(t: str) -> str:
     t = unicodedata.normalize('NFKD', t or '').encode('ASCII', 'ignore').decode()
-    return re.sub(r'\s+', ' ', t.lower().strip())
+    t = t.lower()
+    # Round-81: stylized character swaps ("Wi$h Li$t" → "wish list"),
+    # mirroring the watch-link scorer's normalizer so both agree on what
+    # the song is called. Unambiguous swaps only — digits stay digits.
+    for src, dst in _CHAR_SWAPS.items():
+        t = t.replace(src, dst)
+    return re.sub(r'\s+', ' ', t.strip())
 
 
 def _mp3_cache_key(artist: str, song: str) -> str:
@@ -971,6 +981,13 @@ def _score_candidate(title: str, uploader: str, duration: int,
     # Round 43: a title explicitly crediting a different artist is never
     # our track (same guard as the watch-link scorer — one shared rule).
     if a and _title_credits_other_artist(title, artist, song):
+        return -1e9
+
+    # Round-81: zero song-title token overlap → never our track (same
+    # guard as the watch-link scorer — one shared rule). Only when a
+    # song was actually named; the artist-only MP3 fallback keeps its
+    # soft scoring below.
+    if _norm_title(song) and not (set(s.split()) & set(t.split())):
         return -1e9
 
     score = 0.0

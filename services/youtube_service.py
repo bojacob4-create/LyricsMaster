@@ -14,8 +14,21 @@ session.headers.update({
 })
 
 
+# Round-81: stylized character swaps, shared by every matcher in this
+# module through _normalize().
+_CHAR_SWAPS = {'$': 's', '@': 'a'}
+
+
 def _normalize(text: str) -> str:
-    return re.sub(r'[^a-z0-9\s]', '', text.lower()).strip()
+    lowered = (text or '').lower()
+    # Round-81: stylized character swaps ("Wi$h Li$t" → "wish list").
+    # Applied before the strip so the song-overlap guard can't
+    # false-reject a video that spells the title differently.
+    # Unambiguous swaps only — digits stay digits ("7 Years" must not
+    # become "t years").
+    for src, dst in _CHAR_SWAPS.items():
+        lowered = lowered.replace(src, dst)
+    return re.sub(r'[^a-z0-9\s]', '', lowered).strip()
 
 
 _ATTR_SEPS = (' - ', ' – ', ' — ', '|')
@@ -141,6 +154,17 @@ def _score_candidate(candidate: Dict, artist: str, song: str) -> int:
     # ('Marlon Craft - Lonely' for a STARGUIDE query) is never our video,
     # no matter how well the song title matches.  Hard reject.
     if artist_n and _title_credits_other_artist(candidate['title'], artist, song):
+        return -100
+
+    # Round-81: a video whose title never mentions the song cannot be the
+    # song's video — no matter how well the artist or channel match
+    # ("Taylor Swift - Elizabeth Taylor" for a "Wi$h Li$t" query scored
+    # 75 on artist+channel+official alone). Hard reject, mirroring the
+    # round-43 wrong-artist reject above. Skipped when no song name was
+    # given (nothing to require). If every candidate is rejected, the
+    # card falls back to an honest YouTube search link instead of a
+    # wrong video.
+    if song_n and song_n not in title:
         return -100
 
     score = 0
