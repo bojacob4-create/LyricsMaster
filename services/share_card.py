@@ -29,10 +29,11 @@ logger = logging.getLogger(__name__)
 W, H = 1080, 1350
 BOT_USERNAME = "MGLyricsbot"
 
-# Bump whenever the card visuals change (round 86 did). The cache file
-# name carries the version, so a template change can never serve a stale
-# cached render — old files are simply never looked up again.
-TEMPLATE_VERSION = 2
+# Bump whenever the card visuals change (round 86 did; round 87's
+# supersampling sharpens all type/QR edges). The cache file name carries
+# the version, so a template change can never serve a stale cached render
+# — old files are simply never looked up again.
+TEMPLATE_VERSION = 3
 
 _REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _TOKEN_FILE = os.path.join(_REPO_DIR, "share_tokens.json")
@@ -517,6 +518,26 @@ def _build_qr_layer(matrix, box, radius=28):
 
 
 def _render(artist, title, excerpt_lines, artwork_img, deep_link):
+    # Round-87: 2x supersampling for type + QR. All type is drawn at 2x on
+    # its own transparent layer (layout math stays in 1x; _tctext/_tfont
+    # scale coordinates/fonts into the layer), then downscaled with LANCZOS
+    # and composited — crisp edges on high-DPI screens even after
+    # Telegram's photo recompression. Background shapes are smooth
+    # gradients; they stay 1x. The QR layer gets the same 2x treatment.
+    S = 2
+    txt = Image.new("RGBA", (W * S, H * S), (0, 0, 0, 0))
+    tdraw = ImageDraw.Draw(txt)
+
+    def _tfont(kind, size):
+        return _font(kind, size * S)
+
+    def _tctext(x, y, s, font, fill, shadow=True):
+        X, Y = x * S, y * S
+        if shadow:
+            tdraw.text((X, Y + 3 * S), s, font=font, fill=(0, 0, 0, 170),
+                       anchor="ma")
+        tdraw.text((X, Y), s, font=font, fill=fill, anchor="ma")
+
     if artwork_img is not None:
         dom_raw = dominant_color(artwork_img)
         vib_raw = vibrant_color(artwork_img)
@@ -542,23 +563,26 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
 
     # Brand mark. Round-86: slightly stronger (was 126,126,140) — it brands
     # cards shared outside Telegram, so it should whisper, not disappear.
-    brand = _font(_FONT_BOLD, 26)
+    # Round-87: drawn on the 2x text layer.
+    brand = _tfont(_FONT_BOLD, 26)
     spaced = " ".join("LYRICS MASTER")
-    _ctext(draw, W // 2, 100, spaced, brand, (154, 154, 170), shadow=False)
+    _tctext(W // 2, 100, spaced, brand, (154, 154, 170), shadow=False)
 
     # Excerpt, auto-fit into the central zone. Round-86: the block rides a
     # touch lower (~65px, ~5% of card height) for vertical balance — it used
     # to sit high with a dead gap above the divider. Clamped so a full
-    # zone can never crowd the divider.
-    font, wrapped = _fit_excerpt(draw, excerpt_lines, max_w=920, max_h=500)
-    line_h = int(font.size * 1.42)
+    # zone can never crowd the divider. Round-87: fit/wrap at 1x for layout,
+    # drawn at 2x (excerpt is always bold — see _fit_excerpt).
+    font1x, wrapped = _fit_excerpt(draw, excerpt_lines, max_w=920, max_h=500)
+    font = _tfont(_FONT_BOLD, font1x.size)
+    line_h = int(font1x.size * 1.42)
     total_h = len(wrapped) * line_h
     zone_top, zone_h = 240, 500
     bar_y = zone_top + zone_h + 22  # round-86: tightened (was +30)
     y = zone_top + (zone_h - total_h) // 2 + 65
     y = min(y, bar_y - total_h - 26)
     for ln in wrapped:
-        _ctext(draw, W // 2, y, ln, font, (245, 241, 234))
+        _tctext(W // 2, y, ln, font, (245, 241, 234))
         y += line_h
 
     # Accent divider in the vibrant color.
@@ -571,16 +595,19 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
     # self-explanatory wherever it travels.
     ay = bar_y + 40  # round-86: tightened (was +46)
     if artist:
-        af = _font(_FONT_BOLD, 48)
-        for ln in _wrap(draw, artist, af, 920)[:1]:
-            _ctext(draw, W // 2, ay, ln, af, (247, 243, 237))
+        af1x = _font(_FONT_BOLD, 48)
+        af = _tfont(_FONT_BOLD, 48)
+        for ln in _wrap(draw, artist, af1x, 920)[:1]:
+            _tctext(W // 2, ay, ln, af, (247, 243, 237))
             ay += 62
     if title:
         # Round-86: semibold-equivalent (bold 38 vs artist's bold 48 —
         # no semibold cut in the bundled family) + a touch brighter.
-        tf = _font(_FONT_BOLD, 38)
-        for ln in _wrap(draw, title, tf, 920)[:1]:
-            _ctext(draw, W // 2, ay, ln, tf, (222, 216, 208))
+        # Round-87: wrapped at 1x, drawn at 2x.
+        tf1x = _font(_FONT_BOLD, 38)
+        tf = _tfont(_FONT_BOLD, 38)
+        for ln in _wrap(draw, title, tf1x, 920)[:1]:
+            _tctext(W // 2, ay, ln, tf, (222, 216, 208))
             ay += 56
 
     # Bottom zone: QR code floating light on the left, album art anchoring
@@ -631,14 +658,20 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
         radius=46, fill=qr_tile_rgb + (110,),
         outline=(255, 255, 255, 30), width=2)
     img.alpha_composite(cont_layer)
-    qr_layer = _build_qr_layer(matrix, box)
+    # Round-87: QR modules render at 2x, then downscale with LANCZOS —
+    # crisp module edges instead of chunky blocks. (Corner-cut math scales
+    # linearly, so the quiet-zone safety margin is unchanged.)
+    qr_layer = _build_qr_layer(matrix, box * S, radius=28 * S)
+    qr_layer = qr_layer.resize((size, size), Image.LANCZOS)
     img.alpha_composite(qr_layer, (qx0, qy0))
     # Whisper-quiet caption beneath the QR: gives a stranger a reason
     # to scan, without disturbing the bottom zone's breathing room.
-    cap = _font(_FONT_REG, 22)
-    cb = draw.textbbox((0, 0), QR_CAPTION, font=cap)
-    draw.text((q_cx - (cb[2] - cb[0]) / 2, qy0 + size + pad + caption_gap),
-              QR_CAPTION, font=cap, fill=(135, 133, 145))
+    # Round-87: drawn on the 2x text layer.
+    cap = _tfont(_FONT_REG, 22)
+    cb = tdraw.textbbox((0, 0), QR_CAPTION, font=cap)
+    tdraw.text((q_cx * S - (cb[2] - cb[0]) / 2,
+                (qy0 + size + pad + caption_gap) * S),
+               QR_CAPTION, font=cap, fill=(135, 133, 145))
 
     # Album art (right) with a vibrant glow shadow behind it.
     if artwork_img is not None:
@@ -667,14 +700,20 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
     # Footer: "Generated by @MGLyricsbot", handle in the accent color.
     # Round-86: slightly more visible (was 135,135,150) — attribution on
     # a shareable artifact should be readable, still the quietest element.
-    foot = _font(_FONT_REG, 28)
+    # Round-87: drawn on the 2x text layer.
+    foot = _tfont(_FONT_REG, 28)
     p1, p2 = "Generated by ", f"@{BOT_USERNAME}"
-    w1, _ = _text_size(draw, p1, foot)
-    w2, _ = _text_size(draw, p2, foot)
-    fx = W // 2 - (w1 + w2) // 2
-    fy = H - 56  # breathing room above: clear of the QR caption
-    draw.text((fx, fy), p1, font=foot, fill=(163, 163, 180))
-    draw.text((fx + w1, fy), p2, font=foot, fill=accent)
+    w1, _ = _text_size(tdraw, p1, foot)
+    w2, _ = _text_size(tdraw, p2, foot)
+    fx = W * S // 2 - (w1 + w2) // 2
+    fy = H * S - 56 * S  # breathing room above: clear of the QR caption
+    tdraw.text((fx, fy), p1, font=foot, fill=(163, 163, 180))
+    tdraw.text((fx + w1, fy), p2, font=foot, fill=accent)
+
+    # Round-87: composite the supersampled text layer over everything.
+    # (No shape overlaps any text, so one top layer is visually identical
+    # to the old interleaved drawing — verified by the round-87 tests.)
+    img.alpha_composite(txt.resize((W, H), Image.LANCZOS), (0, 0))
 
     out = img.convert("RGB")
     buf = io.BytesIO()
