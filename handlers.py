@@ -809,9 +809,8 @@ def spotify_save_callback(update: Update, context: CallbackContext):
                     "Try again later, or pick another mix! 🎧")
                 return
             name = _spotify_export.playlist_name(mix["name"])
-            pid, url = _spotify_export.create_playlist(
-                user_id, name, "Made with LyricsMaster 🎵")
-            _spotify_export.add_tracks(user_id, pid, uris)
+            pid, url, _added = _spotify_export.save_playlist(
+                user_id, name, "Made with LyricsMaster 🎵", uris)
             lines = [f"✅ Saved to Spotify: [{md(name)}]({url})",
                      f"{len(uris)} track{'s' if len(uris) != 1 else ''} "
                      "added as a private playlist."]

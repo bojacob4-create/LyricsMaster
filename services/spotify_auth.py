@@ -526,3 +526,7 @@ def api_get(path: str, user_id, params=None) -> dict:
 
 def api_post(path: str, user_id, json_body=None) -> dict:
     return _do_request("POST", path, user_id, json_body=json_body)
+
+
+def api_delete(path: str, user_id) -> dict:
+    return _do_request("DELETE", path, user_id)

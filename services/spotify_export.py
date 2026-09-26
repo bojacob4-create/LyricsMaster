@@ -31,6 +31,11 @@ _ACCEPT_SCORE = 70
 _SEARCH_LIMIT = 10
 _SEARCH_SLEEP = 0.2  # politeness pause between per-track searches
 _ADD_CHUNK = 100
+# A freshly created playlist can 404 on the items endpoint until Spotify's
+# backend propagates it (seen in the wild 2026-09-26, round 76): retry the
+# failing add a few times with a pause before giving up.
+_ADD_404_RETRIES = 3
+_ADD_404_BACKOFF = 2.0  # seconds between retries
 
 
 # ── Normalization ────────────────────────────────────────────────────────────
@@ -218,8 +223,65 @@ def add_tracks(user_id, playlist_id: str, uris) -> int:
     added = 0
     for i in range(0, len(uris), _ADD_CHUNK):
         chunk = uris[i:i + _ADD_CHUNK]
-        auth.api_post(f"/playlists/{playlist_id}/items", user_id,
-                      json_body={"uris": chunk})
+        _post_items_with_retry(user_id, playlist_id, chunk)
         added += len(chunk)
     logger.info(f"[spotify] added {added} tracks to {playlist_id}")
     return added
+
+
+def _post_items_with_retry(user_id, playlist_id: str, chunk) -> None:
+    """POST one chunk of URIs, retrying a 404 a few times.
+
+    Only 404 is retried: it means the playlist id the create call just
+    returned isn't writable yet (propagation lag). Any other error
+    (auth, rate limit, bad request) surfaces immediately.
+    """
+    last = None
+    for attempt in range(_ADD_404_RETRIES):
+        try:
+            auth.api_post(f"/playlists/{playlist_id}/items", user_id,
+                          json_body={"uris": chunk})
+            if attempt:
+                logger.info(
+                    f"[spotify] add to {playlist_id} recovered "
+                    f"after {attempt} retr{'y' if attempt == 1 else 'ies'}")
+            return
+        except auth.SpotifyAPIError as e:
+            last = e
+            if e.status == 404 and attempt < _ADD_404_RETRIES - 1:
+                logger.warning(
+                    f"[spotify] add -> 404 (attempt {attempt + 1}/"
+                    f"{_ADD_404_RETRIES}); retrying in {_ADD_404_BACKOFF}s "
+                    f"(playlist {playlist_id} may still be propagating)")
+                time.sleep(_ADD_404_BACKOFF)
+            else:
+                raise
+    raise last  # unreachable: the loop always returns or raises
+
+
+def save_playlist(user_id, name: str, description: str, uris):
+    """Create a private playlist and add URIs, atomically.
+
+    If adding tracks fails, the just-created playlist is unfollowed
+    (deleted) so a failed save never leaves an empty orphan behind.
+    Cleanup is best-effort: a failed cleanup is logged and never masks
+    the original error. Returns (playlist_id, open_url, tracks_added).
+    """
+    pid, url = create_playlist(user_id, name, description)
+    try:
+        added = add_tracks(user_id, pid, uris)
+    except Exception:
+        _delete_playlist_quietly(user_id, pid)
+        raise
+    return pid, url, added
+
+
+def _delete_playlist_quietly(user_id, playlist_id: str) -> None:
+    """Best-effort removal of a playlist we just created. Never raises."""
+    try:
+        auth.api_delete(f"/playlists/{playlist_id}/followers", user_id)
+        logger.info(f"[spotify] removed orphan playlist {playlist_id} "
+                    f"after failed save")
+    except Exception as e:
+        logger.warning(f"[spotify] orphan cleanup failed for "
+                       f"{playlist_id}: {e}")
