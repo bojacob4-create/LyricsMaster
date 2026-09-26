@@ -12,6 +12,7 @@ Public interface is unchanged: translate_text, translate_chunk,
 translate_to_arabic, get_language_code, get_language_display,
 get_supported_languages_text, SUPPORTED_LANGUAGES, LANGUAGE_DISPLAY_NAMES.
 """
+import json
 import logging
 import os
 import time
@@ -67,6 +68,72 @@ _OPENAI_MODEL = os.environ.get("OPENAI_NLP_MODEL", "gpt-5.4-mini")
 _openai_client = None
 _openai_client_tried = False
 
+# ── Monthly fallback budget (round 68b, user-approved) ───────────────────────
+# Hard cap on estimated OpenAI fallback spend per calendar month.  Token
+# prices below are deliberately CONSERVATIVE (above any plausible mini-model
+# pricing), so the cap trips early in estimated terms — real spend is
+# guaranteed to stay under the budget when it trips.  Override with env vars
+# for exact accounting.
+_FALLBACK_BUDGET_USD = float(os.environ.get("OPENAI_FALLBACK_BUDGET_USD", "2.00"))
+_FALLBACK_PRICE_IN_PER_1M = float(os.environ.get("OPENAI_FALLBACK_PRICE_IN", "2.00"))
+_FALLBACK_PRICE_OUT_PER_1M = float(os.environ.get("OPENAI_FALLBACK_PRICE_OUT", "8.00"))
+_BUDGET_PATH = os.environ.get(
+    "TRANSLATE_BUDGET_PATH",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))),
+        ".translate_fallback_budget.json"))
+_budget_tripped_logged = False
+
+
+def _budget_month():
+    return time.strftime("%Y-%m")
+
+
+def _budget_load():
+    try:
+        with open(_BUDGET_PATH) as f:
+            st = json.load(f)
+        if st.get("month") != _budget_month():
+            return {"month": _budget_month(), "estimated_usd": 0.0}
+        return {"month": st["month"],
+                "estimated_usd": float(st.get("estimated_usd", 0.0))}
+    except (OSError, ValueError):
+        return {"month": _budget_month(), "estimated_usd": 0.0}
+
+
+def _budget_save(usd):
+    try:
+        tmp = _BUDGET_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"month": _budget_month(), "estimated_usd": usd}, f)
+        os.replace(tmp, _BUDGET_PATH)
+    except OSError as e:
+        logger.warning(f"[translate] budget state save failed: {e}")
+
+
+def _budget_allow():
+    """True if the monthly fallback budget still has room."""
+    global _budget_tripped_logged
+    used = _budget_load()["estimated_usd"]
+    if used >= _FALLBACK_BUDGET_USD:
+        if not _budget_tripped_logged:
+            _budget_tripped_logged = True
+            logger.warning(
+                f"[translate] monthly fallback budget exhausted "
+                f"(${used:.2f} >= ${_FALLBACK_BUDGET_USD:.2f}) — fallback "
+                f"disabled until {_budget_month()} rolls over")
+        return False
+    return True
+
+
+def _budget_note(prompt_chars, completion_chars):
+    """Record estimated spend for one fallback call (~4 chars/token)."""
+    usd = ((prompt_chars / 4) / 1e6 * _FALLBACK_PRICE_IN_PER_1M
+           + (completion_chars / 4) / 1e6 * _FALLBACK_PRICE_OUT_PER_1M)
+    st = _budget_load()
+    _budget_save(st["estimated_usd"] + usd)
+
 
 def _get_openai_client():
     """Lazy-load OpenAI client. Returns None if key absent or package missing."""
@@ -90,25 +157,29 @@ def _openai_translate(text: str, dest_lang: str) -> Optional[str]:
     """Translate one chunk via OpenAI. Returns None on any failure."""
     if not text or not text.strip():
         return None
+    if not _budget_allow():
+        return None
     client = _get_openai_client()
     if not client:
         return None
     lang_name = get_language_display(dest_lang) or dest_lang
+    system = (
+        f"You are a lyrics translator. Translate the user's song "
+        f"lyrics to {lang_name}. Preserve line breaks and verse "
+        f"structure exactly. Output ONLY the translation — no "
+        f"commentary, no quotation marks.")
     try:
         response = client.responses.create(
             model=_OPENAI_MODEL,
             input=[
-                {"role": "system",
-                 "content": (
-                     f"You are a lyrics translator. Translate the user's song "
-                     f"lyrics to {lang_name}. Preserve line breaks and verse "
-                     f"structure exactly. Output ONLY the translation — no "
-                     f"commentary, no quotation marks.")},
+                {"role": "system", "content": system},
                 {"role": "user", "content": text},
             ],
             timeout=30,
         )
         result = response.output_text.strip()
+        if result:
+            _budget_note(len(system) + len(text), len(result))
         return result or None
     except Exception as e:
         logger.error(f"[translate] OpenAI fallback failed (dest={dest_lang}): {e}")

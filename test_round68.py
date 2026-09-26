@@ -198,5 +198,46 @@ with patch.object(ts.requests, "get", side_effect=mixed_get), \
 check("translate_text: joins google + fallback chunks",
       out is not None and "أولا" in out and "ثانيا" in out)
 
+# ── 13. Budget exhausted: fallback disabled, client untouched ─────────────
+import json as _json
+import tempfile as _tempfile
+reset()
+_ts_tmp = _tempfile.mktemp(suffix=".json")
+with open(_ts_tmp, "w") as f:
+    _json.dump({"month": ts._budget_month(), "estimated_usd": 5.00}, f)
+oa = fake_openai("x")
+ts._budget_tripped_logged = False
+with patch.object(ts, "_BUDGET_PATH", _ts_tmp), \
+     patch.object(ts, "_get_openai_client", return_value=oa), no_sleep():
+    check("budget exhausted: fallback returns None",
+          ts._openai_translate("hello", "ar") is None)
+    check("budget exhausted: OpenAI not called",
+          oa.responses.create.call_count == 0)
+os.remove(_ts_tmp)
+
+# ── 14. Successful fallback records estimated spend ────────────────────────
+reset()
+_ts_tmp2 = _tempfile.mktemp(suffix=".json")
+oa = fake_openai("ترجمة")
+with patch.object(ts, "_BUDGET_PATH", _ts_tmp2), \
+     patch.object(ts, "_get_openai_client", return_value=oa), no_sleep():
+    out = ts._openai_translate("hello world", "ar")
+check("budget: translation served", out == "ترجمة")
+with open(_ts_tmp2) as f:
+    _st = _json.load(f)
+check("budget: spend recorded", _st["estimated_usd"] > 0)
+check("budget: short text costs a fraction of a cent",
+      _st["estimated_usd"] < 0.01)
+os.remove(_ts_tmp2)
+
+# ── 15. Month rollover resets the budget ───────────────────────────────────
+reset()
+_ts_tmp3 = _tempfile.mktemp(suffix=".json")
+with open(_ts_tmp3, "w") as f:
+    _json.dump({"month": "1999-01", "estimated_usd": 5.00}, f)
+with patch.object(ts, "_BUDGET_PATH", _ts_tmp3):
+    check("budget: new month re-allows fallback", ts._budget_allow() is True)
+os.remove(_ts_tmp3)
+
 print(f"\nround68: {passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
