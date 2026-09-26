@@ -20,7 +20,7 @@ import time
 
 import qrcode
 import requests
-from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageChops
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageChops, ImageOps
 
 from utils import atomic_json_write, is_section_marker_line
 
@@ -34,7 +34,7 @@ BOT_USERNAME = "MGLyricsbot"
 # caption and moved artwork to 1200px). The cache file name carries the
 # version, so a template change can never serve a stale cached render
 # — old files are simply never looked up again.
-TEMPLATE_VERSION = 5
+TEMPLATE_VERSION = 6
 
 _REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _TOKEN_FILE = os.path.join(_REPO_DIR, "share_tokens.json")
@@ -459,6 +459,50 @@ def _radial_glow(size, rgb, peak_alpha=64):
     return glow.resize((size, size), Image.LANCZOS)
 
 
+def _strip_pillar_bars(img):
+    """Crop uniform dark pillar-box bars baked into the source artwork.
+
+    Some labels ship square art with the (often vertical) photo framed by
+    dark bars on the left/right.  A plain cover-crop of the square changes
+    nothing about them, so detect full-height dark, near-uniform columns
+    and crop to the content box first.  Returns the image unchanged when no
+    bars are found (the common case) -- zero behavior change for clean art.
+
+    Only left/right pillars are stripped: a full-height uniform column
+    cannot be real photo content, while top/bottom dark strips are often
+    just dark parts of the photo itself.
+    """
+    w, h = img.size
+    if w < 200 or h < 200:
+        return img
+    px = img.load()
+
+    def col_is_bar(x):
+        # Welford's online mean/variance over every 8th row.
+        n = 0
+        mean = 0.0
+        m2 = 0.0
+        for y in range(0, h, 8):
+            r, g, b = px[x, y][:3]
+            v = 0.299 * r + 0.587 * g + 0.114 * b
+            n += 1
+            d = v - mean
+            mean += d / n
+            m2 += d * (v - mean)
+        var = m2 / n if n else 0.0
+        return mean < 48 and var < 150
+
+    left = 0
+    while left < w and col_is_bar(left):
+        left += 1
+    right = w - 1
+    while right > left and col_is_bar(right):
+        right -= 1
+    if (left + (w - 1 - right)) / w < 0.05:
+        return img  # no significant bars -- leave the art untouched
+    return img.crop((left, 0, right + 1, h))
+
+
 def _rounded(img, radius):
     mask = Image.new("L", img.size, 0)
     ImageDraw.Draw(mask).rounded_rectangle(
@@ -686,7 +730,10 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
 
     # Album art (right) with a vibrant glow shadow behind it.
     if artwork_img is not None:
-        art_sq = artwork_img.resize((300, 300), Image.LANCZOS)
+        # Round-90: strip label-baked pillar bars, then object-fit cover so
+        # the tile always fills edge-to-edge (non-square/vertical art).
+        art_sq = ImageOps.fit(_strip_pillar_bars(artwork_img), (300, 300),
+                              Image.LANCZOS, centering=(0.5, 0.5))
     else:
         art_sq = Image.new("RGB", (300, 300), (22, 22, 32))
         d2 = ImageDraw.Draw(art_sq)

@@ -41,11 +41,12 @@ def check_true(name, cond):
     check(name, bool(cond), True)
 
 
-# ── Template version bumped ──
-check("TEMPLATE_VERSION == 5", sc.TEMPLATE_VERSION, 5)
+# ── Template version bumped (version-agnostic: must be >= 5, the round-89
+# value; later rounds bump it further without breaking this suite) ──
+check_true("TEMPLATE_VERSION >= 5", sc.TEMPLATE_VERSION >= 5)
 check("version in cache filename",
       os.path.basename(sc.card_cache_path("ab12cd34ef56")),
-      "ab12cd34ef56_v5.png")
+      f"ab12cd34ef56_v{sc.TEMPLATE_VERSION}.png")
 
 # ── No stale 46px radius left anywhere in the renderer ──
 src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
