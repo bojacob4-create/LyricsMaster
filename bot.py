@@ -30,7 +30,7 @@ from handlers import (
     artist_command, trending_command,
     song_command, top_command, random_command, playlist_command,
     natural_language_handler, callback_query_handler,
-    unknown_command_handler, cancel_command,
+    unknown_command_handler, cancel_command, history_command,
     # Round 4: discovery + fun
     mood_command, extend_command, about_command, throwback_command,
     newmusic_command, duel_command, daily_command, emoji_command,
