@@ -38,6 +38,74 @@ _ADD_404_RETRIES = 3
 _ADD_404_BACKOFF = 2.0  # seconds between retries
 
 
+# ── Non-Latin artist bridge (round 77) ───────────────────────────────────────
+# Chart sources may list artists in their native script (Apple Music Korea
+# gives 아이유, not IU). Romanization cannot recover the Latin stage name
+# (아이유 -> "aiyu" != "IU"), so instead we ask Spotify's own artist index
+# to bridge the script: search the raw name, take the top hit's name.
+# Strictly additive — non-Latin artists never clear _ACCEPT_SCORE today, so
+# nothing that matches now can regress; the >=70 threshold + title check
+# downstream still guard against a wrong bridge (it just stays unresolved).
+_NON_LATIN_RANGES = (
+    (0x1100, 0x11FF),   # Hangul Jamo
+    (0x3130, 0x318F),   # Hangul Compatibility Jamo
+    (0xAC00, 0xD7A3),   # Hangul Syllables
+    (0x3040, 0x30FF),   # Hiragana + Katakana
+    (0x3400, 0x4DBF),   # CJK Extension A
+    (0x4E00, 0x9FFF),   # CJK Unified Ideographs
+    (0x0600, 0x06FF),   # Arabic
+    (0x0750, 0x077F),   # Arabic Supplement
+    (0x0400, 0x04FF),   # Cyrillic
+    (0x0500, 0x052F),   # Cyrillic Supplement
+    (0x0E00, 0x0E7F),   # Thai
+    (0x0900, 0x097F),   # Devanagari
+)
+
+# Raw artist name -> bridged Latin name. A None value is a stable "no
+# bridge found" (cached to avoid repeat lookups); transient errors are
+# NOT cached so the next track retries.
+_artist_bridge_cache = {}
+
+
+def _has_non_latin_script(name: str) -> bool:
+    """True if any character is from a non-Latin script block."""
+    return any(
+        any(lo <= ord(ch) <= hi for lo, hi in _NON_LATIN_RANGES)
+        for ch in (name or ""))
+
+
+def _bridge_artist_script(artist: str, user_id):
+    """Map a non-Latin artist name to its Latin stage name via Spotify.
+
+    Returns the bridged name, or the original artist when bridging does
+    not apply, finds nothing, or errors. Never raises.
+    """
+    if not _has_non_latin_script(artist):
+        return artist
+    if artist in _artist_bridge_cache:
+        cached = _artist_bridge_cache[artist]
+        return cached if cached else artist
+    try:
+        data = auth.api_get("/search", user_id,
+                            params={"q": artist, "type": "artist",
+                                    "limit": 3, "market": "US"})
+        items = ((data.get("artists") or {}).get("items")) or []
+        bridged = items[0].get("name") if items else None
+    except Exception as e:
+        # Transient: don't cache, don't bridge — the track simply tries
+        # with its original name (today's behavior).
+        logger.warning(f"[spotify] artist bridge failed for "
+                       f"'{artist}': {e}")
+        return artist
+    _artist_bridge_cache[artist] = bridged
+    if bridged:
+        logger.info(f"[spotify] bridged artist script: "
+                    f"'{artist}' -> '{bridged}'")
+    else:
+        logger.info(f"[spotify] no artist bridge for '{artist}'")
+    return bridged or artist
+
+
 # ── Normalization ────────────────────────────────────────────────────────────
 def _normalize(s: str) -> str:
     """Lowercase, strip diacritics, drop punctuation, collapse spaces."""
@@ -160,10 +228,14 @@ def resolve_tracks(tracks, user_id):
     total = len(tracks)
     for i, (artist, title) in enumerate(tracks, 1):
         try:
-            candidates = search_candidates(artist, title, user_id)
+            # Round 77: bridge non-Latin artist names (아이유 -> IU) via
+            # Spotify's own index before searching. Display + unresolved
+            # reporting keep the original name the user saw in the mix.
+            query_artist = _bridge_artist_script(artist, user_id)
+            candidates = search_candidates(query_artist, title, user_id)
             scored = []
             for c in candidates:
-                score, flags = score_candidate(artist, title, c)
+                score, flags = score_candidate(query_artist, title, c)
                 # popularity may be absent in dev mode — degrade gracefully.
                 pop = c.get("popularity")
                 pop = pop if isinstance(pop, (int, float)) else 0
