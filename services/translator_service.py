@@ -211,6 +211,23 @@ def _get_openai_client():
     return _openai_client
 
 
+def _openai_system_prompt(dest_lang: str) -> str:
+    """System prompt for the OpenAI translation fallback."""
+    lang_name = get_language_display(dest_lang) or dest_lang
+    prompt = (
+        f"You are a lyrics translator. Translate the user's song "
+        f"lyrics to {lang_name}. Preserve line breaks and verse "
+        f"structure exactly. Output ONLY the translation — no "
+        f"commentary, no quotation marks.")
+    if dest_lang == 'ar':
+        # Round-82: pin the dialect. An underspecified "Arabic" lets the
+        # model drift into Egyptian (the most-represented Arabic variety
+        # in its training data); the Google path always returns MSA, so
+        # the fallback must agree.
+        prompt += " Use Modern Standard Arabic (فصحى) — never a regional dialect."
+    return prompt
+
+
 def _openai_translate(text: str, dest_lang: str) -> Optional[str]:
     """Translate one chunk via OpenAI. Returns None on any failure."""
     if not text or not text.strip():
@@ -220,12 +237,7 @@ def _openai_translate(text: str, dest_lang: str) -> Optional[str]:
     client = _get_openai_client()
     if not client:
         return None
-    lang_name = get_language_display(dest_lang) or dest_lang
-    system = (
-        f"You are a lyrics translator. Translate the user's song "
-        f"lyrics to {lang_name}. Preserve line breaks and verse "
-        f"structure exactly. Output ONLY the translation — no "
-        f"commentary, no quotation marks.")
+    system = _openai_system_prompt(dest_lang)
     try:
         response = client.responses.create(
             model=_OPENAI_MODEL,
