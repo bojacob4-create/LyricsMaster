@@ -13,6 +13,7 @@ translate_to_arabic, get_language_code, get_language_display,
 get_supported_languages_text, SUPPORTED_LANGUAGES, LANGUAGE_DISPLAY_NAMES.
 """
 import logging
+import os
 import time
 from typing import Optional
 
@@ -30,10 +31,97 @@ _GTX_BACKOFFS = (2, 4)  # seconds before attempt 2 and 3
 # limit (a song is several rapid requests otherwise).
 _CHUNK_PAUSE = 0.5
 
+# ── 429 circuit breaker (round 68) ─────────────────────────────────────────
+# Google rate-limits this egress IP in waves that outlast any sane retry
+# backoff (the 2026-09-26 wave 429'd every attempt for 20+ minutes).  After
+# _GTX_BREAKER_TRIP consecutive 429 responses, Google is treated as down
+# for _GTX_COOLDOWN_S and translate_chunk goes straight to the OpenAI
+# fallback — no doomed retries, no retry-storm extending the ban.
+_GTX_BREAKER_TRIP = 3
+_GTX_COOLDOWN_S = 15 * 60
+_gtx_breaker = {"consec_429": 0, "until": 0.0}
+
+
+def _gtx_cooling_down() -> bool:
+    return time.time() < _gtx_breaker["until"]
+
+
+def _gtx_note_429() -> None:
+    _gtx_breaker["consec_429"] += 1
+    if _gtx_breaker["consec_429"] >= _GTX_BREAKER_TRIP:
+        _gtx_breaker["until"] = time.time() + _GTX_COOLDOWN_S
+        logger.warning(
+            f"[translate] gtx 429 breaker tripped — Google treated as down "
+            f"for {_GTX_COOLDOWN_S // 60}min, using fallback")
+
+
+def _gtx_note_success() -> None:
+    _gtx_breaker["consec_429"] = 0
+
+
+# ── OpenAI fallback (round 68) ─────────────────────────────────────────────
+# Same tiny model + lazy client pattern as the NLP layer.  Only fires when
+# Google fails, so cost is ~zero (a song is a few hundred tokens at a
+# fraction of a cent).
+_OPENAI_MODEL = os.environ.get("OPENAI_NLP_MODEL", "gpt-5.4-mini")
+_openai_client = None
+_openai_client_tried = False
+
+
+def _get_openai_client():
+    """Lazy-load OpenAI client. Returns None if key absent or package missing."""
+    global _openai_client, _openai_client_tried
+    if _openai_client_tried:
+        return _openai_client
+    _openai_client_tried = True
+    try:
+        from openai import OpenAI
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            logger.debug("[translate] OPENAI_API_KEY not set — fallback disabled")
+            return None
+        _openai_client = OpenAI(api_key=api_key)
+    except ImportError:
+        logger.warning("[translate] openai package missing — fallback disabled")
+    return _openai_client
+
+
+def _openai_translate(text: str, dest_lang: str) -> Optional[str]:
+    """Translate one chunk via OpenAI. Returns None on any failure."""
+    if not text or not text.strip():
+        return None
+    client = _get_openai_client()
+    if not client:
+        return None
+    lang_name = get_language_display(dest_lang) or dest_lang
+    try:
+        response = client.responses.create(
+            model=_OPENAI_MODEL,
+            input=[
+                {"role": "system",
+                 "content": (
+                     f"You are a lyrics translator. Translate the user's song "
+                     f"lyrics to {lang_name}. Preserve line breaks and verse "
+                     f"structure exactly. Output ONLY the translation — no "
+                     f"commentary, no quotation marks.")},
+                {"role": "user", "content": text},
+            ],
+            timeout=30,
+        )
+        result = response.output_text.strip()
+        return result or None
+    except Exception as e:
+        logger.error(f"[translate] OpenAI fallback failed (dest={dest_lang}): {e}")
+        return None
+
 
 def _gtx_translate(text: str, dest_lang: str) -> Optional[str]:
     """Translate one chunk via the gtx endpoint. Returns None on any failure."""
     if not text or not text.strip():
+        return None
+    if _gtx_cooling_down():
+        # Breaker is open: don't burn requests (and user time) on a
+        # rate-limited endpoint — the caller falls through to OpenAI.
         return None
     last_err = None
     for attempt in range(_GTX_MAX_ATTEMPTS):
@@ -56,10 +144,14 @@ def _gtx_translate(text: str, dest_lang: str) -> Optional[str]:
             parts = [seg[0] for seg in segments
                      if isinstance(seg, list) and seg and seg[0]]
             result = "".join(parts).strip()
+            if result:
+                _gtx_note_success()
             return result or None
         except requests.HTTPError as e:
             last_err = e
             status = e.response.status_code if e.response is not None else None
+            if status == 429:
+                _gtx_note_429()
             if status in (429, 500, 502, 503) and attempt < _GTX_MAX_ATTEMPTS - 1:
                 wait = _GTX_BACKOFFS[attempt]
                 logger.warning(
@@ -84,11 +176,18 @@ _CHUNK_CACHE_MAX = 100
 
 
 def translate_chunk(text: str, dest_lang: str = 'ar') -> Optional[str]:
-    """Translate a single chunk of text, caching only successful results."""
+    """Translate a single chunk of text, caching only successful results.
+
+    Google gtx is tried first (free, fast); when it fails — rate-limited,
+    down, or breaker-tripped — the OpenAI fallback takes over so the user
+    still gets a translation instead of "try again later".
+    """
     key = (text, dest_lang)
     if key in _chunk_cache:
         return _chunk_cache[key]
     result = _gtx_translate(text, dest_lang)
+    if result is None:
+        result = _openai_translate(text, dest_lang)
     if result is not None:
         if len(_chunk_cache) >= _CHUNK_CACHE_MAX:
             _chunk_cache.pop(next(iter(_chunk_cache)))
