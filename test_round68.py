@@ -322,5 +322,62 @@ with patch.object(ts, "_BREAKER_PATH", _bp):
     check("breaker: notice flag cleared", ts._breaker_restored_open is False)
 os.remove(_bp)
 
+# ── 18. Parallel OpenAI path (round-69) ────────────────────────────────────
+# Breaker open -> chunks go to OpenAI concurrently: same tokens/cost,
+# no Google burst pause, order preserved.  Google path stays sequential.
+import threading as _threading
+reset()
+ts._gtx_breaker["consec_429"] = 3
+ts._gtx_breaker["until"] = _time.time() + 600
+def _boom(*a, **k):
+    raise AssertionError("Google attempted on the parallel path")
+def _slow_openai(text, dest):
+    _time.sleep(0.2)
+    return f"TR:{text[:3]}"
+with patch.object(ts.requests, "get", side_effect=_boom), \
+     patch.object(ts, "_openai_translate", side_effect=_slow_openai):
+    _t0 = _time.time()
+    _four = "\n".join(c * 600 for c in "abcd")  # 4 chunks, one per line
+    _out = ts.translate_text(_four, "ar")
+    _dt = _time.time() - _t0
+check("parallel: all chunks translated in order",
+      _out == "TR:aaa\nTR:bbb\nTR:ccc\nTR:ddd", repr(_out))
+check("parallel: faster than sequential 4x0.2s", _dt < 0.6, f"{_dt:.2f}s")
+# single chunk takes the direct path
+reset()
+ts._gtx_breaker["consec_429"] = 3
+ts._gtx_breaker["until"] = _time.time() + 600
+with patch.object(ts.requests, "get", side_effect=_boom), \
+     patch.object(ts, "_openai_translate", return_value="TR:single"):
+    check("parallel: single chunk direct",
+          ts.translate_text("hello", "ar") == "TR:single")
+# Google path untouched: sequential with burst pause
+reset()  # breaker closed
+with patch.object(ts.requests, "get", return_value=gtx_ok("أهلا")) as g, \
+     patch.object(ts, "_get_openai_client",
+                  return_value=fake_openai("x")), \
+     patch.object(ts.time, "sleep") as slp:
+    _out2 = ts.translate_text("aaa\n" + "b" * 1200, "ar")
+check("sequential: Google still used per chunk", g.call_count == 3)
+check("sequential: burst pause kept between chunks", slp.call_count >= 2)
+check("sequential: output joined in order",
+      _out2 == "أهلا\nأهلا\nأهلا", repr(_out2))
+# budget survives concurrent writers without lost updates
+reset()
+_bp2 = _tempfile.mktemp(suffix=".json")
+with patch.object(ts, "_BUDGET_PATH", _bp2):
+    def _noter():
+        for _ in range(20):
+            ts._budget_note(4000, 4000)  # $0.01 each
+    _ths = [_threading.Thread(target=_noter) for _ in range(5)]
+    [t.start() for t in _ths]
+    [t.join() for t in _ths]
+    with open(_bp2) as f:
+        _bst = _json.load(f)
+check("budget: 100 concurrent notes total exactly $1.00",
+      abs(_bst["estimated_usd"] - 1.00) < 1e-9,
+      f"${_bst['estimated_usd']:.4f}")
+os.remove(_bp2)
+
 print(f"\nround68: {passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

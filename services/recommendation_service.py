@@ -1,8 +1,10 @@
 import os
 import re
+import json
 import logging
 import random
 import requests
+import threading
 import time
 import unicodedata
 from functools import lru_cache
@@ -2950,6 +2952,53 @@ _RELEASE_YEAR_TTL = 7 * 24 * 3600
 _FRESHNESS_MAX_PENALTY = 30.0   # points off the blended score, at most
 _FRESHNESS_PER_YEAR = 3.0       # points per year of gap vs the source song
 
+# Release years are immutable facts, so the cache is persisted to disk
+# (round 69): the in-memory cache died on every bot restart/deploy, forcing
+# up to 16 iTunes lookups (~3s) on the dashboard's critical path again.
+# Disk persistence makes repeat songs fast permanently.  Same values,
+# same TTL semantics — only the durability changes.
+_YEAR_CACHE_PATH = os.environ.get(
+    "RELEASE_YEARS_PATH",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))),
+        ".release_years.json"))
+_year_cache_lock = threading.Lock()
+_YEAR_KEY_SEP = "\u001f"
+
+
+def _persist_year_cache() -> None:
+    with _year_cache_lock:
+        try:
+            now = time.time()
+            data = {
+                f"{a}{_YEAR_KEY_SEP}{s}": [ts, y]
+                for (a, s), (ts, y) in _release_year_cache.items()
+                if now - ts < _RELEASE_YEAR_TTL  # prune stale on save
+            }
+            tmp = _YEAR_CACHE_PATH + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(data, f)
+            os.replace(tmp, _YEAR_CACHE_PATH)
+        except OSError as e:
+            logger.warning(f"[REC] year cache save failed: {e}")
+
+
+def _load_year_cache() -> None:
+    try:
+        with open(_YEAR_CACHE_PATH) as f:
+            data = json.load(f)
+        now = time.time()
+        for k, (ts, y) in data.items():
+            if now - ts < _RELEASE_YEAR_TTL and _YEAR_KEY_SEP in k:
+                a, s = k.split(_YEAR_KEY_SEP, 1)
+                _release_year_cache[(a, s)] = (float(ts), y)
+    except (OSError, ValueError):
+        pass
+
+
+_load_year_cache()
+
 
 def _norm_title(t: str) -> str:
     t = (t or '').lower()
@@ -2986,6 +3035,7 @@ def _fetch_release_year(artist: str, song: str) -> Optional[int]:
     except Exception:
         pass
     _release_year_cache[key] = (now, year)
+    _persist_year_cache()
     return year
 
 
@@ -2998,7 +3048,9 @@ def _fetch_release_years(pairs) -> Dict[tuple, Optional[int]]:
                if not (p in _release_year_cache and
                        time.time() - _release_year_cache[p][0] < _RELEASE_YEAR_TTL)]
     if missing:
-        with ThreadPoolExecutor(max_workers=8) as ex:
+        # 16 workers: one wave for the typical ~16 lookups instead of two
+        # sequential waves of 8. Same requests, same results — just faster.
+        with ThreadPoolExecutor(max_workers=16) as ex:
             list(ex.map(lambda p: _fetch_release_year(p[0], p[1]), missing))
     return {p: _release_year_cache[p][1] for p in uniq}
 
@@ -3060,7 +3112,43 @@ def _fetch_apple_top_songs() -> List[Dict]:
 
     if candidates:
         _apple_cache['global'] = (now, candidates)
+        _save_apple_cache(now, candidates)
     return candidates
+
+
+# The Apple chart is refetched at most hourly, but the in-memory cache died
+# on every restart — each deploy/VM reboot cost ~2s on the dashboard's
+# critical path.  Persist it with the same 1-hour TTL (round 69).
+_APPLE_CACHE_PATH = os.environ.get(
+    "APPLE_CHART_PATH",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))),
+        ".apple_chart.json"))
+
+
+def _save_apple_cache(ts, candidates) -> None:
+    try:
+        tmp = _APPLE_CACHE_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"ts": ts, "candidates": candidates}, f)
+        os.replace(tmp, _APPLE_CACHE_PATH)
+    except OSError as e:
+        logger.warning(f"[REC] apple chart cache save failed: {e}")
+
+
+def _load_apple_cache() -> None:
+    try:
+        with open(_APPLE_CACHE_PATH) as f:
+            data = json.load(f)
+        ts, candidates = data["ts"], data["candidates"]
+        if time.time() - ts < _CACHE_TTL and candidates:
+            _apple_cache["global"] = (ts, candidates)
+    except (OSError, ValueError, KeyError):
+        pass
+
+
+_load_apple_cache()
 
 
 _APPLE_MIN_QUALITY = 76.0  # Minimum average score for top-5 Apple picks to beat curated

@@ -15,7 +15,9 @@ get_supported_languages_text, SUPPORTED_LANGUAGES, LANGUAGE_DISPLAY_NAMES.
 import json
 import logging
 import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 import requests
@@ -132,6 +134,11 @@ _BUDGET_PATH = os.environ.get(
             os.path.abspath(__file__)))),
         ".translate_fallback_budget.json"))
 _budget_tripped_logged = False
+# Guards the budget file against concurrent fallback threads.  RLock so
+# _budget_note can compose load+save atomically.  (The check-then-act gap
+# between _budget_allow and _budget_note can overshoot by a call or two in
+# a race — bounded to fractions of a cent by the conservative pricing.)
+_budget_lock = threading.RLock()
 
 
 def _budget_month():
@@ -139,25 +146,27 @@ def _budget_month():
 
 
 def _budget_load():
-    try:
-        with open(_BUDGET_PATH) as f:
-            st = json.load(f)
-        if st.get("month") != _budget_month():
+    with _budget_lock:
+        try:
+            with open(_BUDGET_PATH) as f:
+                st = json.load(f)
+            if st.get("month") != _budget_month():
+                return {"month": _budget_month(), "estimated_usd": 0.0}
+            return {"month": st["month"],
+                    "estimated_usd": float(st.get("estimated_usd", 0.0))}
+        except (OSError, ValueError):
             return {"month": _budget_month(), "estimated_usd": 0.0}
-        return {"month": st["month"],
-                "estimated_usd": float(st.get("estimated_usd", 0.0))}
-    except (OSError, ValueError):
-        return {"month": _budget_month(), "estimated_usd": 0.0}
 
 
 def _budget_save(usd):
-    try:
-        tmp = _BUDGET_PATH + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump({"month": _budget_month(), "estimated_usd": usd}, f)
-        os.replace(tmp, _BUDGET_PATH)
-    except OSError as e:
-        logger.warning(f"[translate] budget state save failed: {e}")
+    with _budget_lock:
+        try:
+            tmp = _BUDGET_PATH + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump({"month": _budget_month(), "estimated_usd": usd}, f)
+            os.replace(tmp, _BUDGET_PATH)
+        except OSError as e:
+            logger.warning(f"[translate] budget state save failed: {e}")
 
 
 def _budget_allow():
@@ -179,8 +188,9 @@ def _budget_note(prompt_chars, completion_chars):
     """Record estimated spend for one fallback call (~4 chars/token)."""
     usd = ((prompt_chars / 4) / 1e6 * _FALLBACK_PRICE_IN_PER_1M
            + (completion_chars / 4) / 1e6 * _FALLBACK_PRICE_OUT_PER_1M)
-    st = _budget_load()
-    _budget_save(st["estimated_usd"] + usd)
+    with _budget_lock:
+        st = _budget_load()
+        _budget_save(st["estimated_usd"] + usd)
 
 
 def _get_openai_client():
@@ -415,6 +425,36 @@ def split_lyrics_chunks(text: str, max_chars: int = 1000) -> list:
     return chunks
 
 
+def _translate_chunks_parallel(chunks, dest_lang):
+    """Translate chunks concurrently (breaker-open path only).
+
+    _gtx_translate short-circuits while the breaker is open, so each worker
+    here is effectively an OpenAI call — safe to parallelize, unlike the
+    Google path where concurrency would invite 429s.  Same tokens and cost
+    as sequential, no burst-limit pause needed.  Order is preserved and
+    failed chunks are dropped, matching the sequential path's semantics.
+    """
+    def _one(chunk):
+        try:
+            return translate_chunk(chunk, dest_lang)
+        except Exception as e:
+            logger.warning(f"[translate] parallel chunk failed: {e}")
+            return None
+
+    if len(chunks) == 1:
+        single = _one(chunks[0])
+        return [single] if single else []
+    with ThreadPoolExecutor(max_workers=min(len(chunks), 5),
+                            thread_name_prefix="tr-openai") as ex:
+        results = list(ex.map(_one, chunks))
+    kept = [r for r in results if r]
+    if len(kept) < len(results):
+        logger.warning(
+            f"[translate] parallel path dropped {len(results) - len(kept)} "
+            f"failed chunk(s)")
+    return kept
+
+
 def translate_text(text: str, dest_lang: str = 'ar') -> Optional[str]:
     try:
         if not text:
@@ -422,16 +462,20 @@ def translate_text(text: str, dest_lang: str = 'ar') -> Optional[str]:
             return None
 
         chunks = split_lyrics_chunks(text)
-        translated_chunks = []
-
-        for i, chunk in enumerate(chunks):
-            if i:
-                time.sleep(_CHUNK_PAUSE)  # stay under Google's burst limit
-            translated_chunk = translate_chunk(chunk, dest_lang)
-            if translated_chunk:
-                translated_chunks.append(translated_chunk)
-            else:
-                logger.warning("Received empty translation for chunk")
+        if _gtx_cooling_down():
+            # Google is known down: every chunk goes to OpenAI — run them
+            # concurrently instead of one-at-a-time with a Google pause.
+            translated_chunks = _translate_chunks_parallel(chunks, dest_lang)
+        else:
+            translated_chunks = []
+            for i, chunk in enumerate(chunks):
+                if i:
+                    time.sleep(_CHUNK_PAUSE)  # stay under Google's burst limit
+                translated_chunk = translate_chunk(chunk, dest_lang)
+                if translated_chunk:
+                    translated_chunks.append(translated_chunk)
+                else:
+                    logger.warning("Received empty translation for chunk")
 
         if not translated_chunks:
             logger.error("No chunks were successfully translated")
