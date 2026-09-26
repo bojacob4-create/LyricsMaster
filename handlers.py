@@ -147,10 +147,19 @@ def _award_badge_line(user_id: int, badge_id: str) -> str:
         logger.debug(f"badge award failed: {e}")
     return ""
 
+# Round 60: a share-link arrival is a cold open — introduce the bot with a
+# one-line welcome BEFORE the song card lands, so a stranger learns what
+# it is and what it can do instead of getting a card out of nowhere.
+SHARE_ARRIVAL_WELCOME = (
+    "🎵 Someone shared this song with you!\n\n"
+    "I'm *Lyrics Master* — send me any song and I'll fetch its lyrics, "
+    "translation, MP3, recommendations and more. 👇"
+)
+
+
 def start_command(update: Update, context: CallbackContext):
     """Send a message when the command /start is issued."""
     logger.info(f"User {update.effective_user.id} started the bot")
-
     # Round 57: share-card deep links — t.me/MGLyricsbot?start=share_<token>
     # reopen the exact song card the QR was generated for.
     _args = context.args or []
@@ -165,6 +174,13 @@ def start_command(update: Update, context: CallbackContext):
             logger.info(
                 f"User {update.effective_user.id} arrived via share link "
                 f"(token {_token}): '{_q}'")
+            try:
+                update.message.reply_text(
+                    SHARE_ARRIVAL_WELCOME, parse_mode='Markdown',
+                    disable_web_page_preview=True,
+                )
+            except Exception as e:
+                logger.debug(f"share welcome failed: {e}")
             context.args = _q.split()
             song_command(update, context)
             return

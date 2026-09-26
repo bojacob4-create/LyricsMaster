@@ -403,6 +403,11 @@ def render_share_card(artist, title, excerpt_lines, artwork_img, deep_link):
         return buf.getvalue()
 
 
+# Tiny caption under the QR: a stranger's only question is "why scan?",
+# so this whispers the payoff. Kept small and muted — never a shout.
+QR_CAPTION = "Scan for lyrics & more"
+
+
 def _build_qr_layer(matrix, box, radius=28):
     """White QR modules on a transparent layer, corners softly rounded.
 
@@ -517,6 +522,12 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
     img.alpha_composite(cont_layer)
     qr_layer = _build_qr_layer(matrix, box)
     img.alpha_composite(qr_layer, (qx0, qy0))
+    # Whisper-quiet caption beneath the QR: gives a stranger a reason
+    # to scan, without disturbing the bottom zone's breathing room.
+    cap = _font(_FONT_REG, 22)
+    cb = draw.textbbox((0, 0), QR_CAPTION, font=cap)
+    draw.text((q_cx - (cb[2] - cb[0]) / 2, qy0 + size + pad + 12),
+              QR_CAPTION, font=cap, fill=(135, 133, 145))
 
     # Album art (right) with a vibrant glow shadow behind it.
     if artwork_img is not None:
