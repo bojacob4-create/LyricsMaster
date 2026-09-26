@@ -201,6 +201,7 @@ class TelegramBotWorker:
                 BotCommand("badges",      "🏅 Your achievements"),
                 BotCommand("wiki",        "📚 Artist Wikipedia info"),
                 BotCommand("trending",    "📈 Trending songs now"),
+                BotCommand("history",     "🕘 Your recently viewed songs"),
                 BotCommand("subscribe",   "🔔 Daily song picks"),
                 BotCommand("unsubscribe", "Stop daily updates"),
             ]
