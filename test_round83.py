@@ -184,5 +184,43 @@ with patch.object(handlers, '_build_fallback_artist_profile') as mock_fb:
 check("curated artist path never touches wikipedia",
       not mock_fb.called and '🎤 Tyla' in blob, blob[:80])
 
+# ── Round-83b: display_name vs lookup_name split ─────────────────────────
+# Wikipedia disambiguation ("Adéla (singer)") stays on the card title and
+# wiki URL, but Last.fm and YouTube use the stripped name. The "Pick a
+# song" line only renders when songs exist.
+
+with patch('requests.get', side_effect=_req_get_adela), \
+     patch('services.ai_info_service._search_wikipedia',
+           return_value={'title': 'Adéla (singer)'}), \
+     patch.object(handlers, '_fetch_artist_top_songs',
+                  return_value=[]) as mock_top:
+    prof = handlers._build_fallback_artist_profile('adela')
+check("83b: last.fm queried with stripped name",
+      mock_top.called and mock_top.call_args[0][0] == 'Adéla',
+      str(mock_top.call_args))
+check("83b: youtube url uses stripped name",
+      'search_query=Ad%C3%A9la+official' in prof['text']
+      or 'search_query=Adéla+official' in prof['text'],
+      prof['text'][-160:])
+check("83b: youtube url has no (singer)",
+      '(singer)' not in prof['text'].split('🎬')[1].split('\n')[0], "")
+check("83b: wiki url keeps disambiguation",
+      'Adéla_(singer)' in prof['text'] or 'Ad%C3%A9la_(singer)' in prof['text'], "")
+check("83b: card title keeps disambiguation",
+      prof['text'].startswith('🎤 Adéla (singer)'), prof['text'][:30])
+check("83b: no songs -> no dangling pick-a-song line",
+      'Pick a song below to explore' not in prof['text'], "")
+
+with patch('requests.get', side_effect=_req_get_adela), \
+     patch('services.ai_info_service._search_wikipedia',
+           return_value={'title': 'Adéla (singer)'}), \
+     patch.object(handlers, '_fetch_artist_top_songs',
+                  return_value=['Nicole Kidman']):
+    prof = handlers._build_fallback_artist_profile('adela')
+check("83b: songs present -> pick-a-song line rendered",
+      'Pick a song below to explore' in prof['text'], "")
+check("83b: profile name stays the display name",
+      prof['name'] == 'Adéla (singer)', prof['name'])
+
 print(f"\nround83: {passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

@@ -4523,9 +4523,17 @@ def _build_fallback_artist_profile(query: str):
         if debut_match:
             debut = debut_match.group(1)
 
-        name_slug = display_name.replace(' ', '+')
+        # Round-83b: split display vs lookup names. Wikipedia titles carry
+        # parenthetical disambiguation ("Adéla (singer)") which is correct
+        # for the card title and wiki URL, but poisons exact-match lookups
+        # (Last.fm) and clutters token search (YouTube). The lookup name is
+        # the title with a trailing "(...)" stripped.
+        lookup_name = re.sub(r'\s*\([^()]*\)\s*$', '', display_name).strip() or display_name
+        name_slug = lookup_name.replace(' ', '+')
         wiki_url = f"https://en.wikipedia.org/wiki/{display_name.replace(' ', '_')}"
         yt_url = f"https://www.youtube.com/results?search_query={name_slug}+official"
+
+        top_songs = _fetch_artist_top_songs(lookup_name)
 
         lines = [f"🎤 {display_name}", "━━━━━━━━━━━━━━━━━━━━━\n"]
         if genre:
@@ -4538,9 +4546,10 @@ def _build_fallback_artist_profile(query: str):
         lines.append(f"  📚 {wiki_url}")
         lines.append(f"  🎬 {yt_url}")
         lines.append(f"\n━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("🔥 Pick a song below to explore:")
-
-        top_songs = _fetch_artist_top_songs(display_name)
+        # Only promise song buttons when there are songs to pick — a
+        # dangling "Pick a song below" with no buttons is a broken card.
+        if top_songs:
+            lines.append("🔥 Pick a song below to explore:")
 
         return {
             'name': display_name,
