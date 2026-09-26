@@ -4553,6 +4553,7 @@ def _build_fallback_artist_profile(query: str):
 
         return {
             'name': display_name,
+            'lookup_name': lookup_name,
             'text': '\n'.join(lines),
             'top_songs': top_songs,
         }
@@ -4571,7 +4572,12 @@ def _send_fallback_artist_profile(update, query: str) -> bool:
     if not profile:
         return False
     top_songs = profile.get('top_songs', [])
-    markup = artist_buttons(profile['name'], top_songs) if top_songs else None
+    # Round-83c: buttons query music services with the lookup name
+    # (disambiguation stripped); the Wiki button keeps the display name.
+    markup = artist_buttons(
+        profile['name'], top_songs,
+        lookup_name=profile.get('lookup_name') or profile['name']
+    ) if top_songs else None
     update.message.reply_text(profile['text'], disable_web_page_preview=True,
                               reply_markup=markup)
     return True

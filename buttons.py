@@ -106,15 +106,21 @@ def song_dashboard_buttons(query):
     ])
 
 
-def artist_buttons(artist_name, top_songs=None):
+def artist_buttons(artist_name, top_songs=None, lookup_name=None):
+    # Round-83c: lookup_name is the music-service-safe name (Wikipedia
+    # disambiguation like "(singer)" stripped). Song/Video/Similar buttons
+    # query music services, so they use it; the Wiki button keeps the
+    # display name because it IS the Wikipedia page title. Defaults to
+    # artist_name, so curated cards (no parens) are byte-identical.
+    lookup_name = lookup_name or artist_name
     rows = []
     if top_songs:
         for s in top_songs[:5]:
-            song_query = f"{artist_name} - {s}"
+            song_query = f"{lookup_name} - {s}"
             rows.append([InlineKeyboardButton(f"🎵 {s}", callback_data=_cb("song", song_query))])
     rows.append([
-        InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", artist_name)),
-        InlineKeyboardButton("🔀 Similar Songs", callback_data=_cb("recommend", f"artist:{artist_name}")),
+        InlineKeyboardButton("📺 Video", callback_data=_cb("youtube", lookup_name)),
+        InlineKeyboardButton("🔀 Similar Songs", callback_data=_cb("recommend", f"artist:{lookup_name}")),
     ])
     rows.append([
         InlineKeyboardButton("📚 Wiki", callback_data=_cb("wiki", artist_name)),

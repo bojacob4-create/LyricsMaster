@@ -222,5 +222,45 @@ check("83b: songs present -> pick-a-song line rendered",
 check("83b: profile name stays the display name",
       prof['name'] == 'Adéla (singer)', prof['name'])
 
+# ── Round-83c: buttons use lookup_name; Wiki keeps display name ─────────
+from buttons import artist_buttons as _abtn
+
+
+def _cb_data(markup):
+    out = []
+    for row in markup.inline_keyboard:
+        for b in row:
+            out.append((b.text, b.callback_data or ''))
+    return out
+
+
+cbs = dict(_cb_data(_abtn("Adéla (singer)", ["Ain't In LA"], lookup_name="Adéla")))
+check("83c: video button drops (singer)",
+      '(singer)' not in cbs.get("📺 Video", "") and 'Adéla' in cbs.get("📺 Video", ""),
+      cbs.get("📺 Video", ""))
+check("83c: song button drops (singer)",
+      cbs.get("🎵 Ain't In LA", "") .find('(singer)') == -1
+      and 'Adéla - ' in cbs.get("🎵 Ain't In LA", ""), "")
+check("83c: similar-songs button drops (singer)",
+      '(singer)' not in cbs.get("🔀 Similar Songs", ""), "")
+check("83c: wiki button keeps display name",
+      'Adéla (singer)' in cbs.get("📚 Wiki", ""), cbs.get("📚 Wiki", ""))
+
+# Default (no lookup_name): curated artists byte-identical to before.
+cbs2 = dict(_cb_data(_abtn("Tyla", ["Water"])))
+check("83c: default path unchanged (video)",
+      'Tyla' in cbs2.get("📺 Video", ""), "")
+check("83c: default path unchanged (wiki)",
+      'Tyla' in cbs2.get("📚 Wiki", ""), "")
+
+# Profile dict carries lookup_name for the sender.
+with patch('requests.get', side_effect=_req_get_adela), \
+     patch('services.ai_info_service._search_wikipedia',
+           return_value={'title': 'Adéla (singer)'}), \
+     patch.object(handlers, '_fetch_artist_top_songs', return_value=[]):
+    prof = handlers._build_fallback_artist_profile('adela')
+check("83c: profile exposes lookup_name",
+      prof.get('lookup_name') == 'Adéla', str(prof.get('lookup_name')))
+
 print(f"\nround83: {passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
