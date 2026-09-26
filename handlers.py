@@ -1888,6 +1888,15 @@ def natural_language_handler(update: Update, context: CallbackContext):
                 _fp_msg = _fp_disambig(_seed, 'song', _fp_cands)
             else:
                 _pending_confirmation.pop(user_id, None)
+                # Round-83: dead-end fallback. The song path found NOTHING
+                # (zero candidates), so no song interpretation exists to
+                # protect — a lesser-known artist name resolves via the
+                # Wikipedia fallback instead of the dead-end message below.
+                # _send_fallback_artist_profile only fires for a confirmed
+                # musician page (music-words gate), so mistyped songs keep
+                # the not-found message.
+                if _send_fallback_artist_profile(update, _seed):
+                    return
                 _fp_msg = (
                     f"🔍 I couldn't find a song called *{md(_seed)}*.\n\n"
                     "Please use the format:\n"
@@ -4385,25 +4394,56 @@ def _deliver_fresh_mp3(bot, chat_id, artist_q, song_q, result,
 def _build_fallback_artist_profile(query: str):
     try:
         import requests
-        resp = requests.get(
-            'https://en.wikipedia.org/api/rest_v1/page/summary/' + query.replace(' ', '_'),
-            timeout=5, headers={'User-Agent': 'LyricsMasterBot/1.0'}
-        )
-        if resp.status_code != 200:
-            resp = requests.get(
-                'https://en.wikipedia.org/api/rest_v1/page/summary/' + query.title().replace(' ', '_'),
-                timeout=5, headers={'User-Agent': 'LyricsMasterBot/1.0'}
-            )
-        if resp.status_code != 200:
+        music_words = ['singer', 'rapper', 'musician', 'songwriter', 'artist', 'band', 'group', 'vocalist', 'producer', 'dj', 'mc']
+
+        def _fetch_summary(title: str):
+            try:
+                resp = requests.get(
+                    'https://en.wikipedia.org/api/rest_v1/page/summary/' + title,
+                    timeout=5, headers={'User-Agent': 'LyricsMasterBot/1.0'})
+            except Exception:
+                return None
+            if resp.status_code != 200:
+                return None
+            return resp.json()
+
+        def _passes_music_gate(data) -> bool:
+            desc = (data.get('description') or '').lower()
+            extract = (data.get('extract') or '')
+            return (any(w in desc for w in music_words)
+                    or any(w in extract[:300].lower() for w in music_words))
+
+        # Exact page titles first — zero behavior/latency change for every
+        # query that already resolves today.
+        data = None
+        for _t in (query.replace(' ', '_'), query.title().replace(' ', '_')):
+            _d = _fetch_summary(_t)
+            if _d and _passes_music_gate(_d):
+                data = _d
+                break
+
+        if data is None:
+            # Round-83: exact titles missed the music gate (e.g. "adela"
+            # lands on the "Adela" given-name page). Fall back to Wikipedia
+            # search — the same search /wiki uses — so accented or
+            # ambiguous artist names resolve instead of dying here. Lazy:
+            # only runs when exact lookup already failed, so exact-hit
+            # latency is unchanged.
+            try:
+                from services.ai_info_service import _search_wikipedia as _wiki_search
+                _sr = _wiki_search(f"{query} musician singer") or _wiki_search(query)
+                if _sr and _sr.get('title'):
+                    _d = _fetch_summary(_sr['title'].replace(' ', '_'))
+                    if _d and _passes_music_gate(_d):
+                        data = _d
+            except Exception:
+                pass  # search is best-effort; exact titles already failed
+
+        if data is None:
             return None
 
-        data = resp.json()
         desc = (data.get('description') or '').lower()
         extract = (data.get('extract') or '')
-        music_words = ['singer', 'rapper', 'musician', 'songwriter', 'artist', 'band', 'group', 'vocalist', 'producer', 'dj', 'mc']
-        if not any(w in desc for w in music_words) and not any(w in extract[:300].lower() for w in music_words):
-            return None
-
         display_name = data.get('title', query.title())
         description = data.get('description', '')
 
@@ -4512,6 +4552,22 @@ def _build_fallback_artist_profile(query: str):
         return None
 
 
+def _send_fallback_artist_profile(update, query: str) -> bool:
+    """Round-83: render the Wikipedia fallback artist card.
+
+    Returns True when a card was sent (query resolved to a confirmed
+    musician page), False when the lookup missed entirely.
+    """
+    profile = _build_fallback_artist_profile(query)
+    if not profile:
+        return False
+    top_songs = profile.get('top_songs', [])
+    markup = artist_buttons(profile['name'], top_songs) if top_songs else None
+    update.message.reply_text(profile['text'], disable_web_page_preview=True,
+                              reply_markup=markup)
+    return True
+
+
 def artist_command(update: Update, context: CallbackContext):
     """Handle the /artist command."""
     user_id = update.effective_user.id
@@ -4537,12 +4593,11 @@ def artist_command(update: Update, context: CallbackContext):
             update.message.reply_text(format_artist_info(info), reply_markup=artist_buttons(
                 info['name'], _live_songs))
         else:
-            profile = _build_fallback_artist_profile(query)
-            if profile:
-                top_songs = profile.get('top_songs', [])
-                markup = artist_buttons(profile['name'], top_songs) if top_songs else None
-                update.message.reply_text(profile['text'], disable_web_page_preview=True, reply_markup=markup)
-            else:
+            # Round-83: the curated DB missed — the Wikipedia fallback inside
+            # _send_fallback_artist_profile resolves lesser-known artists
+            # (exact page, then Wikipedia search). Only a truly unknown name
+            # reaches the not-found message.
+            if not _send_fallback_artist_profile(update, query):
                 update.message.reply_text(
                     f"😕 I couldn't find info for \"{query}\".\n\n"
                     f"Try /wiki {query} for a broader search!"
