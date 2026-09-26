@@ -109,6 +109,19 @@ def _extract_candidates(html: str) -> List[Dict]:
     return candidates[:10]
 
 
+def _is_official_channel(channel: str) -> bool:
+    """Round-79: shared official-channel signal.
+
+    A VEVO channel or a channel name ending in 'official' is the artist's
+    authoritative upload. Used by BOTH the scorer (ranking boost) and the
+    kind classifier (labeling) so they can never disagree about what
+    counts as an official channel.
+    """
+    channel_lower = (channel or '').lower()
+    return ('vevo' in channel_lower
+            or channel_lower.rstrip().endswith('official'))
+
+
 def _score_candidate(candidate: Dict, artist: str, song: str) -> int:
     title = _normalize(candidate['title'])
     channel = _normalize(candidate['channel'])
@@ -141,6 +154,14 @@ def _score_candidate(candidate: Dict, artist: str, song: str) -> int:
         score += 15
     elif 'audio' in title_lower:
         score += 10
+
+    # Round-79: the artist's authoritative channel outranks fan uploads with
+    # similar titles. Independent of the title-text bonuses above — a VEVO
+    # upload titled plainly "Artist - Song" still counts as official.
+    # (The wrong-artist hard reject above still runs first: a mismatched
+    # "official" video can never leapfrog a correct match.)
+    if _is_official_channel(candidate.get('channel', '')):
+        score += 25
 
     reject_patterns = [
         'reaction', 'review', 'tutorial', 'cover by', 'karaoke',
@@ -203,7 +224,6 @@ def _classify_video_kind(video_title: str, channel: str = '',
     named "Live" — never false-positives as a live performance.
     """
     title_lower = (video_title or '').lower()
-    channel_lower = (channel or '').lower()
 
     # Strip the known artist/song so their own words can't trip the markers.
     remainder = title_lower
@@ -217,8 +237,7 @@ def _classify_video_kind(video_title: str, channel: str = '',
     # "Official Live Video": the channel marked a live performance official.
     is_official = (any(m in title_lower for m in _OFFICIAL_MARKERS)
                    or ('official' in title_lower and is_live)
-                   or 'vevo' in channel_lower
-                   or channel_lower.rstrip().endswith('official'))
+                   or _is_official_channel(channel))
     is_lyric = (not is_live and not is_official
                 and any(m in title_lower for m in _LYRIC_MARKERS))
 
@@ -250,7 +269,17 @@ def _fetch_candidates(query: str) -> List[Dict]:
 def _search_best(artist: str, song: str, queries: List[str],
                  min_score: int = 20) -> Tuple[Optional[Dict], int,
                                                List[Dict]]:
-    """Run queries in order, return (best_candidate, best_score, all_seen)."""
+    """Run queries in order, return (best_candidate, best_score, all_seen).
+
+    Round-79: the early break is kind-aware. A fan lyric upload can clear
+    the 50-point bar on title match alone (e.g. a brand-new release whose
+    VEVO upload isn't ranking yet) — so a lyric-kind winner does NOT stop
+    the search; the plain query runs and gets a chance to surface the
+    official upload. When several candidates match well, an official-kind
+    upload wins over a higher-scoring fan upload. Live/other winners break
+    exactly as before: a concert-only track keeps its live video
+    (round-27 contract).
+    """
     best_candidate, best_score, seen = None, -100, []
     for query in queries:
         for candidate in _fetch_candidates(query):
@@ -261,8 +290,26 @@ def _search_best(artist: str, song: str, queries: List[str],
             if s > best_score:
                 best_score, best_candidate = s, candidate
         if best_score >= 50:
+            # Round-79: a lyric-kind winner may be shadowing the official
+            # upload (it can clear 50 on title match alone) — keep going so
+            # the plain query gets a chance to surface it. Any other kind
+            # breaks exactly as before.
+            if _classify_video_kind(
+                    best_candidate['title'],
+                    best_candidate.get('channel', ''),
+                    artist, song)['kind'] == 'lyric':
+                continue
             break
     if best_candidate and best_score >= min_score:
+        official = [c for c in seen
+                    if _score_candidate(c, artist, song) >= 50
+                    and _classify_video_kind(
+                        c['title'], c.get('channel', ''),
+                        artist, song)['kind'] == 'official']
+        if official:
+            best_candidate = max(
+                official, key=lambda c: _score_candidate(c, artist, song))
+            best_score = _score_candidate(best_candidate, artist, song)
         return best_candidate, best_score, seen
     return None, best_score, seen
 
