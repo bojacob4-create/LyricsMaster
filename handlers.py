@@ -4399,7 +4399,7 @@ def share_card_command(update: Update, context: CallbackContext):
         token = get_share_token(artist or song, song or artist)
         caption_of = lambda a, s: (
             f"🖼️ {a} — {s}\n"
-            "Share it anywhere — the QR opens this song in @MGLyricsbot ✨")
+            "Scan the QR to open this song in @MGLyricsbot ✨")
         cached = card_cache_path(token)
         if os.path.exists(cached):
             status_msg.delete()
