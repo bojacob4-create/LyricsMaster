@@ -508,12 +508,19 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
     box = max(2, 200 // n)
     size = box * n
     art_cy = zone_y + 150  # vertical center of the album art
-    q_cx, q_cy = 270, int(art_cy)
+    # The QR assembly (tile + caption) rides slightly above center so the
+    # caption tucks just inside the artwork's bottom edge. A caption
+    # dangling past the edge reads as a droop (near-alignment looks
+    # accidental); tucked inside it reads as intentional.
+    pad = 26
+    caption_gap, caption_h = 12, 22
+    art_bottom = zone_y + 300
+    q_cx = 270
+    q_cy = int(art_bottom - 10 - caption_h - caption_gap - pad - size / 2)
     qx0, qy0 = q_cx - size // 2, q_cy - size // 2
     halo = _radial_glow(400, (0, 0, 0), peak_alpha=120).filter(
         ImageFilter.GaussianBlur(55))
     img.alpha_composite(halo, (q_cx - 200, q_cy - 200))
-    pad = 20
     cont_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     ImageDraw.Draw(cont_layer).rounded_rectangle(
         [qx0 - pad, qy0 - pad, qx0 + size + pad, qy0 + size + pad],
@@ -526,7 +533,7 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
     # to scan, without disturbing the bottom zone's breathing room.
     cap = _font(_FONT_REG, 22)
     cb = draw.textbbox((0, 0), QR_CAPTION, font=cap)
-    draw.text((q_cx - (cb[2] - cb[0]) / 2, qy0 + size + pad + 12),
+    draw.text((q_cx - (cb[2] - cb[0]) / 2, qy0 + size + pad + caption_gap),
               QR_CAPTION, font=cap, fill=(135, 133, 145))
 
     # Album art (right) with a vibrant glow shadow behind it.
