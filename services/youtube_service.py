@@ -122,6 +122,15 @@ def _is_official_channel(channel: str) -> bool:
             or channel_lower.rstrip().endswith('official'))
 
 
+# Round-80: reaction-video phrasings. "Twins React to X (Official Music
+# Video)" mentions the official video only because it is being reacted to —
+# it must never count as official itself. Kept as phrases (not bare
+# 'react') so a song genuinely titled "React" is safe. One list, used by
+# the scorer's penalty, the scorer's official-bonus guard, and the kind
+# classifier's official guard.
+_REACTION_PHRASES = ('react to', 'reacts to', 'reaction to', 'reacting to')
+
+
 def _score_candidate(candidate: Dict, artist: str, song: str) -> int:
     title = _normalize(candidate['title'])
     channel = _normalize(candidate['channel'])
@@ -144,16 +153,21 @@ def _score_candidate(candidate: Dict, artist: str, song: str) -> int:
         score += 20
 
     title_lower = candidate['title'].lower()
-    if 'official music video' in title_lower:
-        score += 25
-    elif 'official video' in title_lower:
-        score += 22
-    elif 'official audio' in title_lower:
-        score += 18
-    elif 'official lyric' in title_lower or 'lyrics' in title_lower:
-        score += 15
-    elif 'audio' in title_lower:
-        score += 10
+    # Round-80: a reaction video's title can mention "official music video"
+    # (it is reacting TO the official video) — it must not earn the
+    # official-text bonus for that.
+    is_reaction = any(p in title_lower for p in _REACTION_PHRASES)
+    if not is_reaction:
+        if 'official music video' in title_lower:
+            score += 25
+        elif 'official video' in title_lower:
+            score += 22
+        elif 'official audio' in title_lower:
+            score += 18
+        elif 'official lyric' in title_lower or 'lyrics' in title_lower:
+            score += 15
+        elif 'audio' in title_lower:
+            score += 10
 
     # Round-79: the artist's authoritative channel outranks fan uploads with
     # similar titles. Independent of the title-text bonuses above — a VEVO
@@ -168,10 +182,8 @@ def _score_candidate(candidate: Dict, artist: str, song: str) -> int:
         'instrumental', 'remix by', 'mashup', 'parody', 'behind the scenes',
         'interview', 'podcast', 'explained', 'how to', 'compilation',
         'top 10', 'ranking', 'tier list',
-        # Reaction-video phrasings the bare 'reaction' substring misses:
-        # "Twins React to X (Official Music Video)" etc.  Kept as phrases
-        # (not bare 'react') so a song genuinely titled "React" is safe.
-        'react to', 'reacts to', 'reaction to', 'reacting to',
+        # Round-80: reaction-video phrasings live in _REACTION_PHRASES now.
+        *_REACTION_PHRASES,
     ]
     for pattern in reject_patterns:
         if pattern in title_lower:
@@ -235,9 +247,13 @@ def _classify_video_kind(video_title: str, channel: str = '',
 
     is_live = any(re.search(p, remainder) for p in _LIVE_MARKERS)
     # "Official Live Video": the channel marked a live performance official.
-    is_official = (any(m in title_lower for m in _OFFICIAL_MARKERS)
-                   or ('official' in title_lower and is_live)
-                   or _is_official_channel(channel))
+    # Round-80: a reaction video mentioning "official music video" (it is
+    # reacting TO the official video) is never official itself.
+    is_reaction = any(p in title_lower for p in _REACTION_PHRASES)
+    is_official = ((any(m in title_lower for m in _OFFICIAL_MARKERS)
+                    or ('official' in title_lower and is_live)
+                    or _is_official_channel(channel))
+                   and not is_reaction)
     is_lyric = (not is_live and not is_official
                 and any(m in title_lower for m in _LYRIC_MARKERS))
 
