@@ -99,10 +99,12 @@ check("brand text drawn (2x layer composited)", brand_diff > 60, True)
 check("excerpt text drawn (2x layer composited)", row_diff(400, 700) > 60, True)
 
 # ── Cache version bumped for the visual change ──
-check("template version bumped", sc.TEMPLATE_VERSION, 3)
+# (Version-agnostic: the number itself moves with every visual round.)
+check("template version is a positive int",
+      isinstance(sc.TEMPLATE_VERSION, int) and sc.TEMPLATE_VERSION >= 3, True)
 check("version in cache filename",
       os.path.basename(sc.card_cache_path("ab12cd34ef56")),
-      "ab12cd34ef56_v3.png")
+      f"ab12cd34ef56_v{sc.TEMPLATE_VERSION}.png")
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

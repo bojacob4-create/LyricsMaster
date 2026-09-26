@@ -30,10 +30,11 @@ W, H = 1080, 1350
 BOT_USERNAME = "MGLyricsbot"
 
 # Bump whenever the card visuals change (round 86 did; round 87's
-# supersampling sharpens all type/QR edges). The cache file name carries
-# the version, so a template change can never serve a stale cached render
+# supersampling sharpened all type/QR edges; round 88 removed the QR
+# caption and moved artwork to 1200px). The cache file name carries the
+# version, so a template change can never serve a stale cached render
 # — old files are simply never looked up again.
-TEMPLATE_VERSION = 3
+TEMPLATE_VERSION = 4
 
 _REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _TOKEN_FILE = os.path.join(_REPO_DIR, "share_tokens.json")
@@ -312,6 +313,22 @@ def fetch_artwork(url, timeout=10, attempts=1):
     return None
 
 
+def upgrade_artwork_url(url):
+    """Round-88: prefer the 1200px iTunes variant of a 100px artwork URL."""
+    return (url or "").replace("100x100", "1200x1200")
+
+
+def artwork_fallback_url(url):
+    """Round-88: 600px fallback for a 1200px iTunes artwork URL, else None.
+
+    A few catalog assets lack the bigger file — fall back to the 600px
+    variant rather than treating it as a transient failure.
+    """
+    if url and "1200x1200" in url:
+        return url.replace("1200x1200", "600x600")
+    return None
+
+
 # ── Resilient artwork resolution (round 67) ────────────────────────────────
 
 _ART_ATTEMPTS = 3
@@ -355,6 +372,15 @@ def resolve_share_artwork(artist, title, lookup_fn, download_fn=None):
         return None, False
     img = download_fn(art_url, timeout=_ART_TIMEOUT_S,
                       attempts=_ART_ATTEMPTS)
+    if img is None:
+        # Round-88: the 1200px asset may not exist for older catalog
+        # entries — try the 600px variant before giving up.
+        fb = artwork_fallback_url(art_url)
+        if fb:
+            logger.info(f"[sharecard] 1200px artwork unavailable for "
+                        f"'{artist} - {title}', falling back to 600px")
+            img = download_fn(fb, timeout=_ART_TIMEOUT_S,
+                              attempts=_ART_ATTEMPTS)
     if img is None:
         logger.warning(
             f"[sharecard] artwork download failed for '{artist} - {title}'")
@@ -486,11 +512,6 @@ def render_share_card(artist, title, excerpt_lines, artwork_img, deep_link):
         buf = io.BytesIO()
         img.save(buf, "PNG")
         return buf.getvalue()
-
-
-# Tiny caption under the QR: a stranger's only question is "why scan?",
-# so this whispers the payoff. Kept small and muted — never a shout.
-QR_CAPTION = "Scan for lyrics & more"
 
 
 def _build_qr_layer(matrix, box, radius=28):
@@ -627,15 +648,13 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
     box = max(2, 200 // n)
     size = box * n
     art_cy = zone_y + 150  # vertical center of the album art
-    # The QR assembly (tile + caption) rides slightly above center so the
-    # caption tucks just inside the artwork's bottom edge. A caption
-    # dangling past the edge reads as a droop (near-alignment looks
-    # accidental); tucked inside it reads as intentional.
+    # Round-88: the QR caption is gone (the Telegram message caption
+    # already says "Scan the QR…", so it was pure redundancy) — the QR
+    # tile now centers exactly on the artwork's vertical center, mirroring
+    # the right tile for perfect bottom symmetry.
     pad = 26
-    caption_gap, caption_h = 12, 22
-    art_bottom = zone_y + 300
     q_cx = 270
-    q_cy = int(art_bottom - 10 - caption_h - caption_gap - pad - size / 2)
+    q_cy = art_cy
     qx0, qy0 = q_cx - size // 2, q_cy - size // 2
     halo = _radial_glow(400, (0, 0, 0), peak_alpha=120).filter(
         ImageFilter.GaussianBlur(55))
@@ -664,14 +683,6 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
     qr_layer = _build_qr_layer(matrix, box * S, radius=28 * S)
     qr_layer = qr_layer.resize((size, size), Image.LANCZOS)
     img.alpha_composite(qr_layer, (qx0, qy0))
-    # Whisper-quiet caption beneath the QR: gives a stranger a reason
-    # to scan, without disturbing the bottom zone's breathing room.
-    # Round-87: drawn on the 2x text layer.
-    cap = _tfont(_FONT_REG, 22)
-    cb = tdraw.textbbox((0, 0), QR_CAPTION, font=cap)
-    tdraw.text((q_cx * S - (cb[2] - cb[0]) / 2,
-                (qy0 + size + pad + caption_gap) * S),
-               QR_CAPTION, font=cap, fill=(135, 133, 145))
 
     # Album art (right) with a vibrant glow shadow behind it.
     if artwork_img is not None:
@@ -706,7 +717,7 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
     w1, _ = _text_size(tdraw, p1, foot)
     w2, _ = _text_size(tdraw, p2, foot)
     fx = W * S // 2 - (w1 + w2) // 2
-    fy = H * S - 56 * S  # breathing room above: clear of the QR caption
+    fy = H * S - 56 * S  # breathing room above the bottom edge
     tdraw.text((fx, fy), p1, font=foot, fill=(163, 163, 180))
     tdraw.text((fx + w1, fy), p2, font=foot, fill=accent)
 

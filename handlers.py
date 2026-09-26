@@ -4813,8 +4813,8 @@ def _itunes_track_lookup_strict(artist, title, timeout=8):
         # Stable sort: qualifier matches first, iTunes order otherwise.
         cands.sort(key=lambda c: -c[0])
         for _, it in cands:
-            art = (it.get('artworkUrl100') or '').replace(
-                '100x100', '600x600')
+            from services.share_card import upgrade_artwork_url
+            art = upgrade_artwork_url(it.get('artworkUrl100'))
             return {
                 'artist': (it.get('artistName') or '').strip(),
                 'title': (it.get('trackName') or '').strip(),
