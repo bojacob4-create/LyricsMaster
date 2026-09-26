@@ -19,7 +19,7 @@ import os
 
 import qrcode
 import requests
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageChops
 
 from utils import atomic_json_write, is_section_marker_line
 
@@ -403,6 +403,30 @@ def render_share_card(artist, title, excerpt_lines, artwork_img, deep_link):
         return buf.getvalue()
 
 
+def _build_qr_layer(matrix, box, radius=28):
+    """White QR modules on a transparent layer, corners softly rounded.
+
+    The rounding only ever clips the QR quiet zone, never data modules:
+    the corner cut reaches r - r/sqrt(2) px deep, which must stay
+    shallower than the quiet zone (border * box).
+    """
+    n = len(matrix)
+    size = box * n
+    layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    for r in range(n):
+        for c in range(n):
+            if matrix[r][c]:
+                d.rectangle([c * box, r * box,
+                             (c + 1) * box, (r + 1) * box],
+                            fill=(246, 246, 250, 255))
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, size, size],
+                                           radius=radius, fill=255)
+    layer.putalpha(ImageChops.multiply(layer.getchannel("A"), mask))
+    return layer
+
+
 def _render(artist, title, excerpt_lines, artwork_img, deep_link):
     if artwork_img is not None:
         dom_raw = dominant_color(artwork_img)
@@ -466,29 +490,33 @@ def _render(artist, title, excerpt_lines, artwork_img, deep_link):
     # the right. No divider, no QR caption — whitespace keeps it clean.
     zone_y = 955
 
-    # QR (left): white modules drawn straight onto the card — no white
-    # tile, no border, so it blends into the dark gradient. A soft dark
-    # halo sits behind it so scanners always see strong contrast,
-    # whatever color glow is underneath.
+    # QR (left): white modules on their own layer, masked to soft rounded
+    # corners that rhyme with the album art. A faint rounded container
+    # sits behind it so it feels placed, not floating. The dark halo
+    # underneath keeps scan contrast strong over any color glow.
+    # (Corner rounding only ever clips the QR quiet zone, never modules.)
     qr = qrcode.QRCode(box_size=10, border=2)
     qr.add_data(deep_link)
     qr.make(fit=True)
     matrix = qr.get_matrix()  # includes the quiet-zone border
     n = len(matrix)
-    box = max(2, 230 // n)
+    box = max(2, 200 // n)
     size = box * n
     art_cy = zone_y + 150  # vertical center of the album art
-    qy0 = int(art_cy - size / 2)
-    qx0 = 270 - size // 2
-    halo = _radial_glow(430, (0, 0, 0), peak_alpha=120).filter(
+    q_cx, q_cy = 270, int(art_cy)
+    qx0, qy0 = q_cx - size // 2, q_cy - size // 2
+    halo = _radial_glow(400, (0, 0, 0), peak_alpha=120).filter(
         ImageFilter.GaussianBlur(55))
-    img.alpha_composite(halo, (270 - 215, int(art_cy) - 215))
-    for r in range(n):
-        for c in range(n):
-            if matrix[r][c]:
-                draw.rectangle([qx0 + c * box, qy0 + r * box,
-                                qx0 + (c + 1) * box, qy0 + (r + 1) * box],
-                               fill=(246, 246, 250))
+    img.alpha_composite(halo, (q_cx - 200, q_cy - 200))
+    pad = 20
+    cont_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(cont_layer).rounded_rectangle(
+        [qx0 - pad, qy0 - pad, qx0 + size + pad, qy0 + size + pad],
+        radius=46, fill=(255, 255, 255, 16),
+        outline=(255, 255, 255, 36), width=2)
+    img.alpha_composite(cont_layer)
+    qr_layer = _build_qr_layer(matrix, box)
+    img.alpha_composite(qr_layer, (qx0, qy0))
 
     # Album art (right) with a vibrant glow shadow behind it.
     if artwork_img is not None:
