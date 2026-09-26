@@ -309,6 +309,17 @@ with patch.object(ts, "_BREAKER_PATH", _bp):
     with open(_bp) as f:
         _bst2 = _json.load(f)
     check("breaker: success resets persisted count", _bst2["consec_429"] == 0)
+    # restore notice is logged lazily on first use (import precedes logging)
+    ts._gtx_breaker["consec_429"] = 3
+    ts._gtx_breaker["until"] = _time.time() + 600
+    ts._breaker_restored_open = True
+    _mock_log = MagicMock()
+    with patch.object(ts, "logger", _mock_log):
+        check("breaker: still cooling down", ts._gtx_cooling_down() is True)
+    check("breaker: restore notice logged once",
+          _mock_log.info.call_count == 1
+          and "restored from disk" in _mock_log.info.call_args[0][0])
+    check("breaker: notice flag cleared", ts._breaker_restored_open is False)
 os.remove(_bp)
 
 print(f"\nround68: {passed} passed, {failed} failed")

@@ -50,6 +50,7 @@ _BREAKER_PATH = os.environ.get(
         os.path.dirname(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__)))),
         ".translate_breaker.json"))
+_breaker_restored_open = False
 
 
 def _breaker_persist() -> None:
@@ -63,6 +64,7 @@ def _breaker_persist() -> None:
 
 
 def _breaker_restore() -> None:
+    global _breaker_restored_open
     try:
         with open(_BREAKER_PATH) as f:
             st = json.load(f)
@@ -70,15 +72,21 @@ def _breaker_restore() -> None:
         _gtx_breaker["until"] = float(st.get("until", 0.0))
     except (OSError, ValueError):
         return
-    if _gtx_cooling_down():
+    # Logged lazily on first use: this module imports before the worker
+    # configures logging, so an info() here would be silently dropped.
+    _breaker_restored_open = _gtx_cooling_down()
+
+
+def _gtx_cooling_down() -> bool:
+    global _breaker_restored_open
+    cooling = time.time() < _gtx_breaker["until"]
+    if cooling and _breaker_restored_open:
+        _breaker_restored_open = False
         logger.info(
             "[translate] gtx breaker restored from disk — Google treated "
             f"as down until "
             f"{time.strftime('%H:%M', time.localtime(_gtx_breaker['until']))}")
-
-
-def _gtx_cooling_down() -> bool:
-    return time.time() < _gtx_breaker["until"]
+    return cooling
 
 
 def _gtx_note_429() -> None:
