@@ -283,5 +283,33 @@ check("chunker: overlong single line is split without crashing",
 check("chunker: overlong line round-trips",
       "".join(_ll_chunks) == _long_line)
 
+# ── 17. Breaker persistence across restarts (round-68d) ────────────────────
+# A bot restart used to wipe the breaker, burning 3 doomed Google attempts
+# re-learning an ongoing outage.  State now survives on disk.
+import time as _time
+reset()
+_bp = _tempfile.mktemp(suffix=".json")
+with patch.object(ts, "_BREAKER_PATH", _bp):
+    for _ in range(3):
+        ts._gtx_note_429()
+    check("breaker: tripped in memory", ts._gtx_cooling_down())
+    check("breaker: state persisted to disk", os.path.exists(_bp))
+    with open(_bp) as f:
+        _bst = _json.load(f)
+    check("breaker: disk shows open breaker",
+          _bst["consec_429"] >= 3 and _bst["until"] > _time.time())
+    # simulate a fresh process: wipe memory, restore from disk
+    ts._gtx_breaker["consec_429"] = 0
+    ts._gtx_breaker["until"] = 0.0
+    ts._breaker_restore()
+    check("breaker: restored open after simulated restart",
+          ts._gtx_cooling_down())
+    check("breaker: restored count kept", ts._gtx_breaker["consec_429"] >= 3)
+    ts._gtx_note_success()
+    with open(_bp) as f:
+        _bst2 = _json.load(f)
+    check("breaker: success resets persisted count", _bst2["consec_429"] == 0)
+os.remove(_bp)
+
 print(f"\nround68: {passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

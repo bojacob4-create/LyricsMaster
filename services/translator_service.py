@@ -42,6 +42,40 @@ _GTX_BREAKER_TRIP = 3
 _GTX_COOLDOWN_S = 15 * 60
 _gtx_breaker = {"consec_429": 0, "until": 0.0}
 
+# Breaker state is persisted to disk (round 68d) so a bot restart doesn't
+# wipe it and burn 3 doomed Google attempts re-learning an ongoing outage.
+_BREAKER_PATH = os.environ.get(
+    "GTX_BREAKER_PATH",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))),
+        ".translate_breaker.json"))
+
+
+def _breaker_persist() -> None:
+    try:
+        tmp = _BREAKER_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(_gtx_breaker, f)
+        os.replace(tmp, _BREAKER_PATH)
+    except OSError as e:
+        logger.warning(f"[translate] breaker state save failed: {e}")
+
+
+def _breaker_restore() -> None:
+    try:
+        with open(_BREAKER_PATH) as f:
+            st = json.load(f)
+        _gtx_breaker["consec_429"] = int(st.get("consec_429", 0))
+        _gtx_breaker["until"] = float(st.get("until", 0.0))
+    except (OSError, ValueError):
+        return
+    if _gtx_cooling_down():
+        logger.info(
+            "[translate] gtx breaker restored from disk — Google treated "
+            f"as down until "
+            f"{time.strftime('%H:%M', time.localtime(_gtx_breaker['until']))}")
+
 
 def _gtx_cooling_down() -> bool:
     return time.time() < _gtx_breaker["until"]
@@ -54,10 +88,16 @@ def _gtx_note_429() -> None:
         logger.warning(
             f"[translate] gtx 429 breaker tripped — Google treated as down "
             f"for {_GTX_COOLDOWN_S // 60}min, using fallback")
+    _breaker_persist()
 
 
 def _gtx_note_success() -> None:
-    _gtx_breaker["consec_429"] = 0
+    if _gtx_breaker["consec_429"]:
+        _gtx_breaker["consec_429"] = 0
+        _breaker_persist()
+
+
+_breaker_restore()
 
 
 # ── OpenAI fallback (round 68) ─────────────────────────────────────────────
