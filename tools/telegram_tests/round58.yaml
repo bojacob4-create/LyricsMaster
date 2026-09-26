@@ -1,0 +1,15 @@
+round: 58
+title: Share Card correctness (artwork + excerpt)
+summary: |
+  Artwork is now version-aware (original art, not remix art); excerpts drop
+  decorative ♪ lines and skip leading fillers like "Yeah".
+tests:
+  - name: Blinding Lights artwork
+    command: /song The Weeknd - Blinding Lights
+    expect: Song card photo is the original After Hours artwork (NOT the ROSALÍA remix photo)
+  - name: Blinding Lights Share Card
+    command: tap 🖼️ Share Card
+    expect: Card shows the original artwork; lyrics open on "I've been tryna call" — no "Yeah", no box glyph
+  - name: another remix-prone song
+    command: /song Dua Lipa - Levitating
+    expect: Song card + Share Card show original artwork, excerpt opens on a real lyric line
