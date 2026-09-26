@@ -3455,7 +3455,11 @@ def download_command(update: Update, context: CallbackContext):
         from services.home_worker_service import (
             worker_enabled, worker_alive, post_job)
         if worker_enabled() and worker_alive():
-            job_id = post_job(chat_id, user_id, url)
+            # Round-78: hand the status message id to the job so the DONE
+            # handler can delete the "Downloading…" message on delivery —
+            # the same cleanup the MP3 flow already does.
+            job_id = post_job(chat_id, user_id, url,
+                              status_msg_id=processing_message.message_id)
             if job_id:
                 # Silent handoff: the "📥 Downloading…" message above stays
                 # until the video lands (or the fallback path reports).
@@ -3468,8 +3472,6 @@ def download_command(update: Update, context: CallbackContext):
 
         if success:
             file_path, info_message = result
-            processing_message.edit_text(info_message)
-
             try:
                 with open(file_path, 'rb') as video_file:
                     update.message.reply_video(
@@ -3483,6 +3485,12 @@ def download_command(update: Update, context: CallbackContext):
                     "😕 The video downloaded but was too large to send via Telegram.\n"
                     "Telegram limit is 50MB. Try a shorter video."
                 )
+            else:
+                # Round-78: mirror the MP3 cleanup — the status message's
+                # job is done once the video lands. Best-effort; a delete
+                # failure never masks the successful delivery.
+                _mp3_status_delete(context.bot, chat_id,
+                                   processing_message.message_id)
 
             cleanup_video(file_path)
 
@@ -3498,7 +3506,9 @@ def download_command(update: Update, context: CallbackContext):
             # Gating on the breaker alone would also queue genuine failures
             # (bad URL, private video, ...) that merely happened mid-wave.
             if (download_hit_block_wave() and mp3_block_wave_active()
-                    and video_retry_enqueue(chat_id, user_id, url)):
+                    and video_retry_enqueue(
+                        chat_id, user_id, url,
+                        status_msg_id=processing_message.message_id)):
                 # Greppable proof of queueing; the matching
                 # [VIDEO][AUTO-DELIVERED] line in the retry tick closes the
                 # loop when the wave clears.
@@ -3520,18 +3530,25 @@ def download_command(update: Update, context: CallbackContext):
         )
 
 
-def _deliver_video_local(bot, chat_id, user_id, url, fail_code=None):
+def _deliver_video_local(bot, chat_id, user_id, url, fail_code=None,
+                         status_msg_id=None):
     """Local fallback for a home-worker job: today's download path.
 
     Used when the worker reports FAIL or goes silent past the timeout.
     Permanent worker failures (too_long/too_large) get the honest notice
     immediately; anything else runs the normal local download + queue flow.
+    Round-78: status_msg_id is the job's "Downloading…" message, deleted
+    on successful local delivery / carried into the retry queue.
     Never raises.
     """
     try:
         if fail_code in ("too_long", "too_large"):
             from services.home_worker_service import HONEST_FAIL_MSGS
-            bot.send_message(chat_id=chat_id, text=HONEST_FAIL_MSGS[fail_code])
+            # Round-78: edit the tracked "Downloading…" status into the
+            # honest notice — one status message per request, never stacked
+            # (mirrors the MP3 fallback).
+            _mp3_status_update(bot, chat_id, status_msg_id,
+                               HONEST_FAIL_MSGS[fail_code])
             logger.info("[WORKER][FALLBACK] permanent-fail (%s) → honest "
                         "notice → chat %s", fail_code, chat_id)
             return
@@ -3546,6 +3563,9 @@ def _deliver_video_local(bot, chat_id, user_id, url, fail_code=None):
                         supports_streaming=True)
                 logger.info("[WORKER][FALLBACK] local download delivered "
                             "→ chat %s", chat_id)
+                # Round-78: the original "Downloading…" status (tracked on
+                # the job) is done. Best-effort; never masks delivery.
+                _mp3_status_delete(bot, chat_id, status_msg_id)
             except Exception as e:
                 logger.warning("[WORKER][FALLBACK] send failed: %s", e)
             finally:
@@ -3555,16 +3575,22 @@ def _deliver_video_local(bot, chat_id, user_id, url, fail_code=None):
                 mp3_block_wave_active, video_retry_enqueue,
                 download_hit_block_wave)
             if (download_hit_block_wave() and mp3_block_wave_active()
-                    and video_retry_enqueue(chat_id, user_id, url)):
+                    and video_retry_enqueue(
+                        chat_id, user_id, url,
+                        status_msg_id=status_msg_id)):
                 logger.info("[WORKER][FALLBACK] local also wave-blocked → "
                             "queued '%s'", url)
-                bot.send_message(
-                    chat_id=chat_id,
-                    text="⏳ YouTube is blocking downloads from this server right now.\n\n"
-                         "I've queued your download — I'll retry automatically and send "
-                         "the video here as soon as the block clears. No need to tap again. 📥")
+                # Round-78: edit the tracked status into the queued notice
+                # (fresh message only when nothing is tracked) — the retry
+                # tick deletes/edits it later by the same id.
+                _mp3_status_update(
+                    bot, chat_id, status_msg_id,
+                    "⏳ YouTube is blocking downloads from this server right now.\n\n"
+                    "I've queued your download — I'll retry automatically and send "
+                    "the video here as soon as the block clears. No need to tap again. 📥")
             else:
-                bot.send_message(chat_id=chat_id, text=result)
+                # Round-78: honest failure edits the tracked status in place.
+                _mp3_status_update(bot, chat_id, status_msg_id, result)
     except Exception as e:
         logger.warning("[WORKER][FALLBACK] failed: %s", e)
 
@@ -3624,7 +3650,8 @@ def worker_channel_post(update: Update, context: CallbackContext):
                                                    fail_code=None)
                 elif entry:
                     _deliver_video_local(context.bot, entry["chat_id"],
-                                         entry["user_id"], entry["video_url"])
+                                         entry["user_id"], entry["video_url"],
+                                         status_msg_id=entry.get("status_msg_id"))
                 return
             if is_audio:
                 # Remember Telegram's file_id so the next request for this
@@ -3645,6 +3672,13 @@ def worker_channel_post(update: Update, context: CallbackContext):
                                    entry.get("status_msg_id"))
                 logger.info("[MP3][WORKER][DELIVERED] audio job %s → chat %s",
                             job_id, params["chat_id"])
+            else:
+                # Round-78: worker-delivered video — the "Downloading…"
+                # status message's job is done (same helper, never raises).
+                _mp3_status_delete(context.bot, params["chat_id"],
+                                   entry.get("status_msg_id"))
+                logger.info("[VIDEO][WORKER][DELIVERED] video job %s → chat %s",
+                            job_id, params["chat_id"])
             note_done(job_id)  # logs [WORKER][DELIVERED]
         elif sig[0] == "fail":
             _, job_id, code = sig
@@ -3661,7 +3695,8 @@ def worker_channel_post(update: Update, context: CallbackContext):
                 if entry:
                     _deliver_video_local(context.bot, entry["chat_id"],
                                          entry["user_id"], entry["video_url"],
-                                         fail_code=code)
+                                         fail_code=code,
+                                         status_msg_id=entry.get("status_msg_id"))
     except Exception as e:
         logger.warning("worker_channel_post failed: %s", e)
 
@@ -3685,7 +3720,8 @@ def worker_timeout_tick(bot):
                         "local fallback", job_id)
             _deliver_video_local(bot, entry.get("chat_id"),
                                  entry.get("user_id"),
-                                 entry.get("video_url", ""))
+                                 entry.get("video_url", ""),
+                                 status_msg_id=entry.get("status_msg_id"))
     except Exception as e:
         logger.warning("worker_timeout_tick failed: %s", e)
 
@@ -4262,6 +4298,10 @@ def video_retry_tick(bot):
                     # after a genuine block wave.
                     logger.info(f"[VIDEO][AUTO-DELIVERED] '{video_id}' → "
                                 f"chat {chat_id} (attempt {attempt_no}, wave cleared)")
+                    # Round-78: the queued notice's job is done — delete it,
+                    # mirroring the MP3 auto-delivery cleanup. Never raises.
+                    _mp3_status_delete(bot, chat_id,
+                                       entry.get('status_msg_id'))
                 except Exception as e:
                     logger.warning(f"[VIDEO][RETRY] delivery failed: {e}")
                 finally:
@@ -4273,10 +4313,11 @@ def video_retry_tick(bot):
                 logger.info(f"[VIDEO][RETRY] '{video_id}' still blocked — stays queued")
                 continue
             video_retry_remove(key)
-            try:
-                bot.send_message(chat_id=chat_id, text=result)
-            except Exception:
-                pass
+            # Round-78: honest failure edits the queued notice in place
+            # (falls back to a fresh message when nothing is tracked) —
+            # the MP3 contract, no stacked messages.
+            _mp3_status_update(bot, chat_id, entry.get('status_msg_id'),
+                               result)
         # Round-38: close the loop on exhausted entries — one honest
         # notice each, then gone for good (same as the MP3 queue).
         for entry in exhausted:
@@ -4288,16 +4329,15 @@ def video_retry_tick(bot):
                 continue
             logger.info(f"[VIDEO][RETRY][GAVE-UP] '{video_id}' → "
                         f"chat {chat_id} (3 attempts, wave never cleared)")
-            try:
-                bot.send_message(
-                    chat_id=chat_id,
-                    text="😞 I tried 3 times to download your video, "
-                         "but YouTube kept blocking me.\n\n"
-                         "Send the link again whenever you like and I'll "
-                         "fetch it fresh. 🎬",
-                )
-            except Exception:
-                pass
+            # Round-78: the gave-up notice edits the queued notice in place
+            # (fresh message only when nothing is tracked) — no stacking.
+            _mp3_status_update(
+                bot, chat_id, entry.get('status_msg_id'),
+                "😞 I tried 3 times to download your video, "
+                "but YouTube kept blocking me.\n\n"
+                "Send the link again whenever you like and I'll "
+                "fetch it fresh. 🎬",
+            )
     except Exception as e:
         logger.warning(f"video_retry_tick failed: {e}")
 

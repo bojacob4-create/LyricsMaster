@@ -769,8 +769,15 @@ def _video_retry_key(user_id: int, video_id: str) -> str:
     return f"{user_id}:{video_id}"
 
 
-def video_retry_enqueue(chat_id: int, user_id: int, url: str) -> bool:
-    """Queue a block-wave-failed /download for automatic retry. Never raises."""
+def video_retry_enqueue(chat_id: int, user_id: int, url: str,
+                        status_msg_id=None) -> bool:
+    """Queue a block-wave-failed /download for automatic retry. Never raises.
+
+    Round-78: status_msg_id is the chat message currently showing the
+    queued notice (the edited "Downloading…" message) — the retry tick
+    deletes it on auto-delivery / edits it on honest failure, mirroring
+    the MP3 cleanup contract.
+    """
     try:
         from utils import locked_json_update
         video_id = extract_video_id(url) or url
@@ -780,7 +787,8 @@ def video_retry_enqueue(chat_id: int, user_id: int, url: str) -> bool:
         def _update(data):
             data[key] = {'chat_id': chat_id, 'user_id': user_id,
                          'url': url, 'video_id': video_id,
-                         'ts': _time.time(), 'attempts': 0}
+                         'ts': _time.time(), 'attempts': 0,
+                         'status_msg_id': status_msg_id or 0}
             # keep the queue small — drop expired entries on insert
             now = _time.time()
             for k in [k for k, v in data.items()
