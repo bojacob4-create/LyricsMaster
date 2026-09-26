@@ -4284,7 +4284,7 @@ def _similar_nolyrics_core(update, context, fresh):
 
 
 def similar_nolyrics_command(update: Update, context: CallbackContext):
-    """Handle '🎧 Similar Songs' on the no-lyrics card."""
+    """Handle '🔀 Similar Songs' on the no-lyrics card."""
     try:
         _similar_nolyrics_core(update, context, fresh=False)
     except Exception as e:

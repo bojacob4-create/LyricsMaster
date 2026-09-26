@@ -15,7 +15,7 @@ that the user see" — report first, then fix. Findings:
 
 Fixes: /start rewritten (full coverage, same section+▫️ style as /help);
 Audio section added to /help; button labels unified to the majority form
-("📺 Video", "🎧 Similar Songs", "🎵 Lyrics"); text-hint duplication removed;
+("📺 Video", "🔀 Similar Songs" — 🎧 reserved for MP3-only, "🎵 Lyrics"); text-hint duplication removed;
 'decade' dropped from _KNOWN_COMMANDS; /mp3 + /download registered as real
 slash commands and added to the bot menu; mood mix uses plain "1." numbering.
 
@@ -93,8 +93,11 @@ def _all_button_texts():
                 texts.append(btn.text)
     return texts
 btn_texts = _all_button_texts()
-check("no bare '🎧 Similar' (all '🎧 Similar Songs')",
-      not any(t == "🎧 Similar" for t in btn_texts), str(btn_texts))
+check("no bare '🎧 Similar' (all '🔀 Similar Songs')",
+      not any(t in ("🎧 Similar", "🎧 Similar Songs") for t in btn_texts), str(btn_texts))
+check("every 'Similar Songs' button uses 🔀 (🎧 is MP3-only)",
+      all(t.startswith("🔀") for t in btn_texts if "Similar Songs" in t),
+      str(btn_texts))
 check("no '🎵 Full Lyrics' (all '🎵 Lyrics')",
       not any(t == "🎵 Full Lyrics" for t in btn_texts), str(btn_texts))
 check("no '📺 YouTube' (all '📺 Video')",
